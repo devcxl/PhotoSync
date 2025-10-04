@@ -12,10 +12,6 @@ object RawWrapper {
     external fun decodeThumbnail(path: String): ByteArray?
     external fun decodeToRGB(path: String): ByteArray?
 
-    // New: decode from in-memory bytes (for SAF)
-    external fun decodeThumbnailFromBytes(bytes: ByteArray): ByteArray?
-    external fun decodeToRGBFromBytes(bytes: ByteArray): ByteArray?
-
     /**
      * 解码嵌入 JPEG 缩略图并转成 Bitmap；失败返回 null。
      */
@@ -24,11 +20,6 @@ object RawWrapper {
         return BitmapFactory.decodeByteArray(jpg, 0, jpg.size)
     }
 
-    /** 将 decodeThumbnailFromBytes 的结果转 Bitmap */
-    fun decodeThumbnailBitmap(bytes: ByteArray): Bitmap? {
-        val jpg = decodeThumbnailFromBytes(bytes) ?: return null
-        return BitmapFactory.decodeByteArray(jpg, 0, jpg.size)
-    }
 
     /**
      * 完整解码 RAW -> 8bit RGB，返回 Bitmap (ARGB_8888，Alpha 固定 0xFF)。失败返回 null。
@@ -38,11 +29,7 @@ object RawWrapper {
         return rgbResultToBitmap(data, reuse)
     }
 
-    /** 从内存字节解码到 Bitmap */
-    fun decodeToBitmap(bytes: ByteArray, reuse: Bitmap? = null): Bitmap? {
-        val data = decodeToRGBFromBytes(bytes) ?: return null
-        return rgbResultToBitmap(data, reuse)
-    }
+
 
     fun rgbResultToBitmap(data: ByteArray, reuse: Bitmap? = null): Bitmap? {
         if (data.size < 8) return null

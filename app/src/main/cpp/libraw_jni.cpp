@@ -12,12 +12,11 @@
 extern "C" JNIEXPORT jstring JNICALL
 Java_cn_devcxl_photosync_wrapper_RawWrapper_version(JNIEnv* env, jobject /*thiz*/) {
     const char* v = libraw_version();
+    ALOGI("LibRaw Version is  %s", v);
     return env->NewStringUTF(v ? v : "unknown");
 }
 
-
-// Decode embedded thumbnail (JPEG) and return as byte[]; returns null on failure.
-// Only handles JPEG thumbnails; if not JPEG returns null.
+// 解码缩略图，返回 JPEG
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_cn_devcxl_photosync_wrapper_RawWrapper_decodeThumbnail(JNIEnv* env, jobject /*thiz*/, jstring jpath) {
     if(!jpath) return nullptr;
@@ -30,6 +29,9 @@ Java_cn_devcxl_photosync_wrapper_RawWrapper_decodeThumbnail(JNIEnv* env, jobject
         env->ReleaseStringUTFChars(jpath, cpath);
         return nullptr;
     }
+
+    ALOGI("============= thumb (%d) ", proc.thumbOK());
+
     ret = proc.unpack_thumb();
     if(ret != LIBRAW_SUCCESS) {
         ALOGE("unpack_thumb failed (%d) %s", ret, cpath);
@@ -86,8 +88,43 @@ Java_cn_devcxl_photosync_wrapper_RawWrapper_decodeToRGB(JNIEnv* env, jobject /*t
         env->ReleaseStringUTFChars(jpath, cpath);
         return nullptr;
     }
-    // Force 8-bit output
+
+    // 设置去马赛克算法
+    // 0 线性插值（最快，质量最低）
+    // 1 VNG 插值（良好的平衡）
+    // 3 AHD插值（高质量）
+    // 4 DCB 插值（质量最高，速度最慢）
+    proc.imgdata.params.user_qual = 4;
+
+    // output_bps 是用于设置输出图像的位深度的参数
+    // 这个参数控制处理后图像的每个样本(每个颜色通道)使用多少位来表示:
+    // 8 位(默认值):标准的 8 位输出
+    // 16 位:高精度 16 位输出
     proc.imgdata.params.output_bps = 8;
+
+    // 设置输出色彩空间
+    // 要将输出色彩空间设置为 Adobe RGB,您需要设置 imgdata.params.output_color 参数为 1。 API-datastruct.html:653-656
+    // 可用的色彩空间选项包括:
+    // 0: raw (相机原始色彩空间)
+    // 1: sRGB
+    // 2: Adobe RGB
+    // 3: Wide Gamut RGB
+    // 4: ProPhoto RGB
+    // 5: XYZ
+    // 6: ACES
+    // 7: DCI-P3
+    // 8: Rec. 2020
+    proc.imgdata.params.output_color = 1;
+
+    // 降噪
+    proc.imgdata.params.med_passes = 1;
+
+    proc.imgdata.params.aber[0] = 1.0;      // Chromatic aberration correction R
+    proc.imgdata.params.aber[1] = 1.0;      // Chromatic aberration correction G
+    proc.imgdata.params.aber[2] = 1.0;      // Chromatic aberration correction B
+    proc.imgdata.params.gamm[0] = 1.0/2.4;  // Gamma correction
+    proc.imgdata.params.gamm[1] = 12.92;    // Gamma toe slope
+
     ret = proc.dcraw_process();
     if(ret != LIBRAW_SUCCESS) {
         ALOGE("dcraw_process failed (%d) %s", ret, cpath);
@@ -142,6 +179,10 @@ Java_cn_devcxl_photosync_wrapper_RawWrapper_decodeToRGB(JNIEnv* env, jobject /*t
     buffer[7] = (unsigned char)((height >> 24) & 0xFF);
     // Copy RGB payload
     std::memcpy(buffer.get() + 8, img->data, pixelBytes);
+
+    // LibRAW decoding complete - no denoising applied here
+    // Denoising will be handled by OpenCV in the Java/Kotlin layer
+
     env->SetByteArrayRegion(out, 0, static_cast<jsize>(total), reinterpret_cast<jbyte*>(buffer.get()));
 
     libraw_dcraw_clear_mem(img);
@@ -150,129 +191,4 @@ Java_cn_devcxl_photosync_wrapper_RawWrapper_decodeToRGB(JNIEnv* env, jobject /*t
     return out;
 }
 
-// Decode thumbnail from in-memory bytes using LibRaw::open_buffer
-extern "C" JNIEXPORT jbyteArray JNICALL
-Java_cn_devcxl_photosync_wrapper_RawWrapper_decodeThumbnailFromBytes(JNIEnv* env, jobject /*thiz*/, jbyteArray jbytes) {
-    if(!jbytes) return nullptr;
-    jsize len = env->GetArrayLength(jbytes);
-    if(len <= 0) return nullptr;
-    jboolean isCopy = JNI_FALSE;
-    jbyte* dataPtr = env->GetByteArrayElements(jbytes, &isCopy);
-    if(!dataPtr) return nullptr;
 
-    LibRaw proc;
-    int ret = proc.open_buffer(reinterpret_cast<void*>(dataPtr), static_cast<size_t>(len));
-    if(ret != LIBRAW_SUCCESS) {
-        ALOGE("open_buffer for thumb failed (%d)", ret);
-        env->ReleaseByteArrayElements(jbytes, dataPtr, JNI_ABORT);
-        return nullptr;
-    }
-    ret = proc.unpack_thumb();
-    if(ret != LIBRAW_SUCCESS) {
-        ALOGE("unpack_thumb (buffer) failed (%d)", ret);
-        proc.recycle();
-        env->ReleaseByteArrayElements(jbytes, dataPtr, JNI_ABORT);
-        return nullptr;
-    }
-    if(proc.imgdata.thumbnail.tformat != LIBRAW_THUMBNAIL_JPEG) {
-        ALOGE("Thumbnail (buffer) not JPEG, format=%d", proc.imgdata.thumbnail.tformat);
-        proc.recycle();
-        env->ReleaseByteArrayElements(jbytes, dataPtr, JNI_ABORT);
-        return nullptr;
-    }
-    unsigned char* tdata = reinterpret_cast<unsigned char*>(proc.imgdata.thumbnail.thumb);
-    unsigned int tlen = proc.imgdata.thumbnail.tlength;
-    if(!tdata || tlen == 0) {
-        proc.recycle();
-        env->ReleaseByteArrayElements(jbytes, dataPtr, JNI_ABORT);
-        return nullptr;
-    }
-    jbyteArray out = env->NewByteArray(static_cast<jsize>(tlen));
-    if(out) env->SetByteArrayRegion(out, 0, static_cast<jsize>(tlen), reinterpret_cast<jbyte*>(tdata));
-
-    proc.recycle();
-    env->ReleaseByteArrayElements(jbytes, dataPtr, JNI_ABORT);
-    return out;
-}
-
-// Decode full image to 8-bit RGB from in-memory bytes using LibRaw::open_buffer
-extern "C" JNIEXPORT jbyteArray JNICALL
-Java_cn_devcxl_photosync_wrapper_RawWrapper_decodeToRGBFromBytes(JNIEnv* env, jobject /*thiz*/, jbyteArray jbytes) {
-    if(!jbytes) return nullptr;
-    jsize len = env->GetArrayLength(jbytes);
-    if(len <= 0) return nullptr;
-    jboolean isCopy = JNI_FALSE;
-    jbyte* dataPtr = env->GetByteArrayElements(jbytes, &isCopy);
-    if(!dataPtr) return nullptr;
-
-    LibRaw proc;
-    int ret = proc.open_buffer(reinterpret_cast<void*>(dataPtr), static_cast<size_t>(len));
-    if(ret != LIBRAW_SUCCESS) {
-        ALOGE("open_buffer failed (%d)", ret);
-        env->ReleaseByteArrayElements(jbytes, dataPtr, JNI_ABORT);
-        return nullptr;
-    }
-    ret = proc.unpack();
-    if(ret != LIBRAW_SUCCESS) {
-        ALOGE("unpack (buffer) failed (%d)", ret);
-        proc.recycle();
-        env->ReleaseByteArrayElements(jbytes, dataPtr, JNI_ABORT);
-        return nullptr;
-    }
-    proc.imgdata.params.output_bps = 8;
-    ret = proc.dcraw_process();
-    if(ret != LIBRAW_SUCCESS) {
-        ALOGE("dcraw_process (buffer) failed (%d)", ret);
-        proc.recycle();
-        env->ReleaseByteArrayElements(jbytes, dataPtr, JNI_ABORT);
-        return nullptr;
-    }
-    libraw_processed_image_t* img = proc.dcraw_make_mem_image(&ret);
-    if(!img || ret != LIBRAW_SUCCESS) {
-        ALOGE("dcraw_make_mem_image (buffer) failed (%d)", ret);
-        if(img) libraw_dcraw_clear_mem(img);
-        proc.recycle();
-        env->ReleaseByteArrayElements(jbytes, dataPtr, JNI_ABORT);
-        return nullptr;
-    }
-    if(img->bits != 8 || img->colors != 3) {
-        ALOGE("Unexpected (buffer) bits=%d colors=%d", img->bits, img->colors);
-        libraw_dcraw_clear_mem(img);
-        proc.recycle();
-        env->ReleaseByteArrayElements(jbytes, dataPtr, JNI_ABORT);
-        return nullptr;
-    }
-    uint32_t width = img->width;
-    uint32_t height = img->height;
-    size_t pixelBytes = static_cast<size_t>(width) * static_cast<size_t>(height) * 3u;
-    size_t total = 8 + pixelBytes;
-    if(pixelBytes == 0 || !img->data) {
-        libraw_dcraw_clear_mem(img);
-        proc.recycle();
-        env->ReleaseByteArrayElements(jbytes, dataPtr, JNI_ABORT);
-        return nullptr;
-    }
-    jbyteArray out = env->NewByteArray(static_cast<jsize>(total));
-    if(!out) {
-        libraw_dcraw_clear_mem(img);
-        proc.recycle();
-        env->ReleaseByteArrayElements(jbytes, dataPtr, JNI_ABORT);
-        return nullptr;
-    }
-    std::unique_ptr<unsigned char[]> buffer(new unsigned char[total]);
-    buffer[0] = (unsigned char)(width & 0xFF);
-    buffer[1] = (unsigned char)((width >> 8) & 0xFF);
-    buffer[2] = (unsigned char)((width >> 16) & 0xFF);
-    buffer[3] = (unsigned char)((width >> 24) & 0xFF);
-    buffer[4] = (unsigned char)(height & 0xFF);
-    buffer[5] = (unsigned char)((height >> 8) & 0xFF);
-    buffer[6] = (unsigned char)((height >> 16) & 0xFF);
-    buffer[7] = (unsigned char)((height >> 24) & 0xFF);
-    std::memcpy(buffer.get() + 8, img->data, pixelBytes);
-    env->SetByteArrayRegion(out, 0, static_cast<jsize>(total), reinterpret_cast<jbyte*>(buffer.get()));
-
-    libraw_dcraw_clear_mem(img);
-    proc.recycle();
-    env->ReleaseByteArrayElements(jbytes, dataPtr, JNI_ABORT);
-    return out;
-}

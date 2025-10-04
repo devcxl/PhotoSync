@@ -44,12 +44,11 @@ find_library(cpp_shared_lib c++_shared)
 find_library(log_lib log)
 find_library(android_lib android)
 
-target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${LIBRAW_ROOT}/include)
+target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
+    ${LIBRAW_ROOT}/include
+)
 
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE LIBRAW_NODLL)
-
-# Ensure we export all needed symbols even under LTO (optional):
-# set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
 
 # Link
 target_link_libraries(${CMAKE_PROJECT_NAME}

@@ -1,11 +1,10 @@
 package cn.devcxl.photosync.activity
 
 import android.Manifest
-import android.R
 import android.app.PendingIntent
 import android.content.ContentValues
 import android.content.Intent
-import android.content.IntentFilter
+import android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.hardware.usb.UsbDevice
@@ -16,18 +15,12 @@ import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
-import android.view.Gravity
 import android.view.View
-import android.widget.FrameLayout
-import android.widget.ImageButton
-import android.widget.LinearLayout
-import android.widget.ProgressBar
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.enableEdgeToEdge
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import androidx.viewpager2.widget.ViewPager2
 import cn.devcxl.photosync.ptp.params.SyncParams
 import cn.devcxl.photosync.ptp.usbcamera.BaselineInitiator
 import cn.devcxl.photosync.ptp.usbcamera.InitiatorFactory
@@ -39,14 +32,16 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import cn.devcxl.photosync.adapter.PhotoPagerAdapter
+import cn.devcxl.photosync.databinding.ActivityTakingPhotoBinding
 import cn.devcxl.photosync.wrapper.RawWrapper
+import cn.devcxl.photosync.utils.OpenCVDenoiser
 
 class TakingPhotoActivity : ComponentActivity() {
-
 
     private val TAG = "TakingPhotoActivity"
     private var isOpenConnected: Boolean = false
     private var bi: BaselineInitiator? = null
+    private var isOpenCVReady = false
 
     companion object {
         private const val REQ_WRITE_STORAGE = 2001
@@ -54,77 +49,53 @@ class TakingPhotoActivity : ComponentActivity() {
     }
 
     // Gallery components
-    private lateinit var viewPager: ViewPager2
-    private lateinit var progressBar: ProgressBar
-    private lateinit var exportButton: ImageButton
     private val items = mutableListOf<PhotoItem>()
     private lateinit var adapter: PhotoPagerAdapter
     private var pendingExportIndex: Int? = null
 
+    private lateinit var binding: ActivityTakingPhotoBinding
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val root = LinearLayout(this)
-        root.keepScreenOn = true
-        root.orientation = LinearLayout.VERTICAL
+        binding = ActivityTakingPhotoBinding.inflate(layoutInflater)
+        setContentView(binding.root)
 
-        // Preview container with overlay
-        val previewContainer = FrameLayout(this)
-        val previewLp = LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            0,
-            1f
-        )
+        requestedOrientation = SCREEN_ORIENTATION_LANDSCAPE
 
-        viewPager = ViewPager2(this).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-            isSaveEnabled = true
-        }
+        // Initialize adapter
         adapter = PhotoPagerAdapter(items) { item ->
             // load bitmap thumbnail/full for the page on background
             decodeBestEffortBitmap(item)
         }
-        viewPager.adapter = adapter
 
-        progressBar = ProgressBar(this, null, R.attr.progressBarStyleHorizontal).apply {
-            max = 100
-            progress = 0
-            visibility = View.GONE
-            // Overlay at bottom
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM
-            )
-        }
-        exportButton = ImageButton(this).apply {
-            setImageResource(R.drawable.ic_menu_save)
-            contentDescription = "导出到相册"
-            background = null
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP or Gravity.END
-            ).apply {
-                marginEnd = (16 * resources.displayMetrics.density).toInt()
-                topMargin = (16 * resources.displayMetrics.density).toInt()
-            }
-            setOnClickListener { exportCurrent() }
-            visibility = View.VISIBLE
-        }
+        // Setup ViewPager2
+        binding.viewPager.adapter = adapter
 
-        previewContainer.addView(viewPager)
-        previewContainer.addView(progressBar)
-        previewContainer.addView(exportButton)
-        root.addView(previewContainer, previewLp)
+        // Setup export button click listener
+        binding.exportButton.setOnClickListener { exportCurrent() }
 
-        setContentView(root)
         enableEdgeToEdge()
 
         getAllUsbDevices()
         connectMTPDevice()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // 简化的OpenCV初始化
+        try {
+            // 尝试直接初始化OpenCV
+            if (org.opencv.android.OpenCVLoader.initDebug()) {
+                Log.d(TAG, "OpenCV库初始化成功")
+                isOpenCVReady = true
+            } else {
+                Log.w(TAG, "OpenCV库初始化失败")
+                isOpenCVReady = false
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "OpenCV初始化异常", e)
+            isOpenCVReady = false
+        }
     }
 
     override fun onDestroy() {
@@ -179,7 +150,6 @@ class TakingPhotoActivity : ComponentActivity() {
             if (device == null) continue
             if (!usbManager.hasPermission(device)) {
                 requestUsbPermission(device)
-                // 等待用户授权结果通过广播回调
                 continue
             } else {
                 performConnect(device)
@@ -219,10 +189,10 @@ class TakingPhotoActivity : ComponentActivity() {
                         ((transterByteLength * 100L) / totalByteLength).toInt().coerceIn(0, 100)
                     } else 0
                     runOnUiThread {
-                        if (progressBar.visibility != View.VISIBLE) {
-                            progressBar.visibility = View.VISIBLE
+                        if (binding.progressBar.visibility != View.VISIBLE) {
+                            binding.progressBar.visibility = View.VISIBLE
                         }
-                        progressBar.progress = progressPercent
+                        binding.progressBar.progress = progressPercent
                     }
                 }
 
@@ -231,7 +201,7 @@ class TakingPhotoActivity : ComponentActivity() {
                         TAG,
                         "file (" + fileHandle + ") downloaded at " + localFile.absolutePath + ",time: " + timeduring + "ms"
                     )
-                    runOnUiThread { progressBar.visibility = View.GONE }
+                    runOnUiThread { binding.progressBar.visibility = View.GONE }
 
                     // 仅处理 CR3 文件，添加到画廊并尝试解码
                     if (localFile.extension.equals("cr3", ignoreCase = true)) {
@@ -253,7 +223,7 @@ class TakingPhotoActivity : ComponentActivity() {
         runOnUiThread {
             items.add(item)
             adapter.notifyItemInserted(items.size - 1)
-            viewPager.setCurrentItem(items.size - 1, true)
+            binding.viewPager.setCurrentItem(items.size - 1, true)
         }
     }
 
@@ -287,7 +257,7 @@ class TakingPhotoActivity : ComponentActivity() {
             Toast.makeText(this, "没有可导出的照片", Toast.LENGTH_SHORT).show()
             return
         }
-        val index = viewPager.currentItem.coerceIn(0, items.lastIndex)
+        val index = binding.viewPager.currentItem.coerceIn(0, items.lastIndex)
         if (Build.VERSION.SDK_INT <= 28) {
             val granted = ContextCompat.checkSelfPermission(
                 this,
@@ -311,21 +281,48 @@ class TakingPhotoActivity : ComponentActivity() {
         Toast.makeText(this, "正在导出 ${item.name ?: "照片"}", Toast.LENGTH_SHORT).show()
         Thread {
             val path = item.path
-            val bmp = if (path != null) {
+            val originalBmp = if (path != null) {
                 try {
-                    RawWrapper.decodeToBitmap(path)
+                    RawWrapper.decodeThumbnailBitmap(path)
                 } catch (t: Throwable) {
                     null
                 }
             } else null
-            if (bmp == null) {
+
+            if (originalBmp == null) {
                 runOnUiThread {
                     Toast.makeText(this, "导出失败：解码失败", Toast.LENGTH_LONG).show()
                 }
                 return@Thread
             }
+
+//            // 应用OpenCV降噪处理
+//            val processedBmp = if (isOpenCVReady) {
+//                runOnUiThread {
+//                    Toast.makeText(this, "正在进行降噪处理...", Toast.LENGTH_SHORT).show()
+//                }
+//                try {
+//                    Log.d(TAG, "开始OpenCV降噪处理")
+//                    val denoisedBitmap = OpenCVDenoiser.denoiseBitmap(originalBmp)
+//                    Log.d(TAG, "OpenCV降噪处理完成")
+//                    denoisedBitmap
+//                } catch (e: Exception) {
+//                    Log.e(TAG, "降噪处理异常，使用原始图像", e)
+//                    runOnUiThread {
+//                        Toast.makeText(this, "降噪处理失败，保存原始图像", Toast.LENGTH_SHORT).show()
+//                    }
+//                    originalBmp
+//                }
+//            } else {
+//                Log.w(TAG, "OpenCV未就绪，保存原始图像")
+//                runOnUiThread {
+//                    Toast.makeText(this, "降噪功能未就绪，保存原始图像", Toast.LENGTH_SHORT).show()
+//                }
+//                originalBmp
+//            }
+
             val displayName = makeExportName(item.name)
-            val saved = saveBitmapToGallery(bmp, displayName)
+            val saved = saveBitmapToGallery(originalBmp, displayName)
             runOnUiThread {
                 if (saved != null) {
                     Toast.makeText(this, "已保存到相册: ${displayName}", Toast.LENGTH_LONG).show()

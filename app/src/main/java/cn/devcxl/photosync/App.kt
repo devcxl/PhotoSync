@@ -7,6 +7,9 @@ import android.util.Log
 import cn.devcxl.photosync.receiver.UsbPermissionReceiver
 import cn.devcxl.photosync.receiver.UsbReceiver
 import cn.devcxl.photosync.wrapper.RawWrapper
+import org.opencv.android.OpenCVLoader
+
+
 
 
 /**
@@ -21,11 +24,21 @@ class App : Application() {
         addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
     }
 
+    init {
+        if (!OpenCVLoader.initDebug()) {
+            Log.e("OpenCV", "无法初始化 OpenCV");
+        } else {
+            Log.d("OpenCV", "OpenCV 初始化成功");
+        }
+    }
+
     companion object {
         private var instance: App? = null
         fun get(): App? {
             return instance
         }
+
+
     }
 
     override fun onCreate() {

@@ -31,7 +31,8 @@
         <activity android:name=".activity.TakingPhotoActivity"
                   android:exported="false"
                   android:label="@string/title_take_photo"
-                  android:theme="@style/Theme.PhotoSync">
+                  android:screenOrientation="landscape"
+                  android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
             <intent-filter>
                 <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"/>
             </intent-filter>
