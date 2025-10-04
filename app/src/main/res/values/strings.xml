@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">PhotoSync</string>
+    <string name="title_take_photo">TakingPhoto</string>
+    <string name="title_home">TakingPhoto1</string>
+    <string name="title_dashboard">TakingPhoto2</string>
+    <string name="title_notifications">TakingPhoto3</string>
+</resources>

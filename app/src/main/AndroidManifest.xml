@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+          xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-feature android:name="android.hardware.usb.host" android:required="false"/>
+    <!-- Legacy permission for API <= 28 to write to public Pictures directory -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28"/>
+
+    <application
+            android:name=".App"
+            android:allowBackup="true"
+            android:dataExtractionRules="@xml/data_extraction_rules"
+            android:fullBackupContent="@xml/backup_rules"
+            android:icon="@mipmap/ic_launcher"
+            android:label="@string/app_name"
+            android:roundIcon="@mipmap/ic_launcher_round"
+            android:supportsRtl="true"
+            android:theme="@style/Theme.PhotoSync">
+        <activity
+                android:name=".activity.MainActivity"
+                android:exported="true"
+                android:label="@string/app_name"
+                android:theme="@style/Theme.PhotoSync">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+
+
+        <activity android:name=".activity.TakingPhotoActivity"
+                  android:exported="false"
+                  android:label="@string/title_take_photo"
+                  android:theme="@style/Theme.PhotoSync">
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"/>
+            </intent-filter>
+            <meta-data
+                    android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
+                    android:resource="@xml/device_filter"/>
+        </activity>
+
+
+    </application>
+
+</manifest>
