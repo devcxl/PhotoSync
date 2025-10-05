@@ -33,6 +33,7 @@ import java.util.Date
 import java.util.Locale
 import cn.devcxl.photosync.adapter.PhotoPagerAdapter
 import cn.devcxl.photosync.databinding.ActivityTakingPhotoBinding
+import cn.devcxl.photosync.utils.ImageDenoiseUtils
 import cn.devcxl.photosync.wrapper.RawWrapper
 import cn.devcxl.photosync.utils.OpenCVDenoiser
 
@@ -73,6 +74,10 @@ class TakingPhotoActivity : ComponentActivity() {
 
         // Setup export button click listener
         binding.exportButton.setOnClickListener { exportCurrent() }
+
+        binding.denoise.setOnClickListener {
+            denoiseBitmap()
+        }
 
         enableEdgeToEdge()
 
@@ -231,7 +236,7 @@ class TakingPhotoActivity : ComponentActivity() {
         val path = item.path ?: return
         Thread {
             val bmpThumb = try {
-                RawWrapper.decodeThumbnailBitmap(path)
+                RawWrapper.decodeToBitmap(path)
             } catch (t: Throwable) {
                 null
             }
@@ -276,6 +281,35 @@ class TakingPhotoActivity : ComponentActivity() {
         exportIndex(index)
     }
 
+
+    private fun denoiseBitmap() {
+
+        Toast.makeText(this, "开始降噪！！！", Toast.LENGTH_SHORT).show()
+        if (items.isEmpty()) {
+            Toast.makeText(this, "没有可导出的照片", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val index = binding.viewPager.currentItem.coerceIn(0, items.lastIndex)
+
+        val item = items[index]
+
+        Thread {
+            val denoise = ImageDenoiseUtils.multiScaleDenoise(item.bitmap, 5, 10)
+
+            runOnUiThread {
+                val index = items.indexOfFirst { it.path == item.path }
+                if (index >= 0) {
+                    items[index] = item.copy(bitmap = denoise)
+                    adapter.notifyItemChanged(index)
+
+                    Toast.makeText(this, "降噪成功！！！", Toast.LENGTH_SHORT).show()
+                }
+            }
+
+        }.start()
+    }
+
+
     private fun exportIndex(index: Int) {
         val item = items[index]
         Toast.makeText(this, "正在导出 ${item.name ?: "照片"}", Toast.LENGTH_SHORT).show()
@@ -283,7 +317,7 @@ class TakingPhotoActivity : ComponentActivity() {
             val path = item.path
             val originalBmp = if (path != null) {
                 try {
-                    RawWrapper.decodeThumbnailBitmap(path)
+                    RawWrapper.decodeToBitmap(path)
                 } catch (t: Throwable) {
                     null
                 }
@@ -295,31 +329,6 @@ class TakingPhotoActivity : ComponentActivity() {
                 }
                 return@Thread
             }
-
-//            // 应用OpenCV降噪处理
-//            val processedBmp = if (isOpenCVReady) {
-//                runOnUiThread {
-//                    Toast.makeText(this, "正在进行降噪处理...", Toast.LENGTH_SHORT).show()
-//                }
-//                try {
-//                    Log.d(TAG, "开始OpenCV降噪处理")
-//                    val denoisedBitmap = OpenCVDenoiser.denoiseBitmap(originalBmp)
-//                    Log.d(TAG, "OpenCV降噪处理完成")
-//                    denoisedBitmap
-//                } catch (e: Exception) {
-//                    Log.e(TAG, "降噪处理异常，使用原始图像", e)
-//                    runOnUiThread {
-//                        Toast.makeText(this, "降噪处理失败，保存原始图像", Toast.LENGTH_SHORT).show()
-//                    }
-//                    originalBmp
-//                }
-//            } else {
-//                Log.w(TAG, "OpenCV未就绪，保存原始图像")
-//                runOnUiThread {
-//                    Toast.makeText(this, "降噪功能未就绪，保存原始图像", Toast.LENGTH_SHORT).show()
-//                }
-//                originalBmp
-//            }
 
             val displayName = makeExportName(item.name)
             val saved = saveBitmapToGallery(originalBmp, displayName)
@@ -359,7 +368,7 @@ class TakingPhotoActivity : ComponentActivity() {
     private fun saveBitmapToGallery(bitmap: Bitmap, displayName: String): Uri? {
         return try {
             val mime = "image/jpeg"
-            val quality = 95
+            val quality = 100
             if (Build.VERSION.SDK_INT >= 29) {
                 val values = ContentValues().apply {
                     put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)

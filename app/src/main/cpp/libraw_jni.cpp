@@ -29,9 +29,6 @@ Java_cn_devcxl_photosync_wrapper_RawWrapper_decodeThumbnail(JNIEnv* env, jobject
         env->ReleaseStringUTFChars(jpath, cpath);
         return nullptr;
     }
-
-    ALOGI("============= thumb (%d) ", proc.thumbOK());
-
     ret = proc.unpack_thumb();
     if(ret != LIBRAW_SUCCESS) {
         ALOGE("unpack_thumb failed (%d) %s", ret, cpath);
@@ -63,132 +60,204 @@ Java_cn_devcxl_photosync_wrapper_RawWrapper_decodeThumbnail(JNIEnv* env, jobject
     return out;
 }
 
-// Full decode to 8-bit RGB. Returns a byte[] with layout:
+// 完整解码为8位RGB格式。返回字节数组布局：
 // [0..3] width (little-endian int32)
 // [4..7] height (little-endian int32)
-// [8..] interleaved RGB bytes length = width*height*3
-// Returns null on failure.
+// [8..] 交错RGB字节，长度 = width*height*3
+// 失败时返回null
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_cn_devcxl_photosync_wrapper_RawWrapper_decodeToRGB(JNIEnv* env, jobject /*thiz*/, jstring jpath) {
-    if(!jpath) return nullptr;
+    // 输入验证
+    if(!jpath) {
+        ALOGE("Input path is null");
+        return nullptr;
+    }
+
     const char* cpath = env->GetStringUTFChars(jpath, nullptr);
-    if(!cpath) return nullptr;
+    if(!cpath) {
+        ALOGE("Failed to get UTF chars from path");
+        return nullptr;
+    }
+
+    // RAII包装器用于路径清理
+    struct PathGuard {
+        JNIEnv* env;
+        jstring jpath;
+        const char* cpath;
+        ~PathGuard() { if(cpath) env->ReleaseStringUTFChars(jpath, cpath); }
+    } pathGuard{env, jpath, cpath};
 
     LibRaw proc;
+
+    // 增强的错误处理与描述性消息
+    auto handleError = [&](int ret, const char* operation) -> jbyteArray {
+        ALOGE("%s failed (%d): %s for file %s", operation, ret, libraw_strerror(ret), cpath);
+        proc.recycle();
+        return nullptr;
+    };
+
+    // 打开文件，更好的错误报告
     int ret = proc.open_file(cpath);
     if(ret != LIBRAW_SUCCESS) {
-        ALOGE("open_file failed (%d) %s", ret, cpath);
-        env->ReleaseStringUTFChars(jpath, cpath);
-        return nullptr;
+        return handleError(ret, "open_file");
     }
+
+    // 解包，带错误处理
     ret = proc.unpack();
     if(ret != LIBRAW_SUCCESS) {
-        ALOGE("unpack failed (%d) %s", ret, cpath);
-        proc.recycle();
-        env->ReleaseStringUTFChars(jpath, cpath);
-        return nullptr;
+        return handleError(ret, "unpack");
     }
 
-    // 设置去马赛克算法
-    // 0 线性插值（最快，质量最低）
-    // 1 VNG 插值（良好的平衡）
-    // 3 AHD插值（高质量）
-    // 4 DCB 插值（质量最高，速度最慢）
-    proc.imgdata.params.user_qual = 4;
+    // 将RAW数据转换为图像格式，执行黑电平减法等预处理
+    ret = proc.raw2image();
+    if(ret != LIBRAW_SUCCESS) {
+        return handleError(ret, "raw2image");
+    }
 
-    // output_bps 是用于设置输出图像的位深度的参数
-    // 这个参数控制处理后图像的每个样本(每个颜色通道)使用多少位来表示:
-    // 8 位(默认值):标准的 8 位输出
-    // 16 位:高精度 16 位输出
-    proc.imgdata.params.output_bps = 8;
+    // 基于LibRaw最佳实践的优化参数设置
+    libraw_output_params_t& params = proc.imgdata.params;
 
-    // 设置输出色彩空间
-    // 要将输出色彩空间设置为 Adobe RGB,您需要设置 imgdata.params.output_color 参数为 1。 API-datastruct.html:653-656
-    // 可用的色彩空间选项包括:
-    // 0: raw (相机原始色彩空间)
-    // 1: sRGB
-    // 2: Adobe RGB
-    // 3: Wide Gamut RGB
-    // 4: ProPhoto RGB
-    // 5: XYZ
-    // 6: ACES
-    // 7: DCI-P3
-    // 8: Rec. 2020
-    proc.imgdata.params.output_color = 1;
+    // 高质量去马赛克算法（AHD插值 - 质量与速度的更好平衡）
+    params.user_qual = 3; // AHD interpolation - better balance of quality vs speed than DCB
 
-    // 降噪
-    proc.imgdata.params.med_passes = 1;
+    // 输出格式设置
+    params.output_bps = 8;      // 8位输出
+    params.output_color = 1;    // sRGB色彩空间
+    params.gamm[0] = 1.0/2.4;   // 标准sRGB伽马
+    params.gamm[1] = 12.92;     // sRGB toe slope
 
-    proc.imgdata.params.aber[0] = 1.0;      // Chromatic aberration correction R
-    proc.imgdata.params.aber[1] = 1.0;      // Chromatic aberration correction G
-    proc.imgdata.params.aber[2] = 1.0;      // Chromatic aberration correction B
-    proc.imgdata.params.gamm[0] = 1.0/2.4;  // Gamma correction
-    proc.imgdata.params.gamm[1] = 12.92;    // Gamma toe slope
+    // 质量改进
+    params.med_passes = 1;      // 中值滤波器用于降噪
+    params.use_auto_wb = 0;     // 禁用自动白平衡以保持一致性
+    params.use_camera_wb = 1;   // 使用相机白平衡
 
+    // 色差校正
+    params.aber[0] = 1.0;       // 红色
+    params.aber[1] = 1.0;       // 绿色
+    params.aber[2] = 1.0;       // 蓝色
+
+    // 降噪设置
+    params.threshold = 0.0;     // 无噪声阈值
+    params.fbdd_noiserd = 0;    // 禁用FBDD降噪以提高速度
+
+    // 处理优化
+    params.no_auto_bright = 1;  // 禁用自动亮度以获得一致结果
+    params.output_tiff = 0;     // 确保PPM输出用于内存操作
+
+    ALOGI("Processing RAW image: %dx%d, ISO: %d, Camera: %s %s",
+          proc.imgdata.sizes.width, proc.imgdata.sizes.height,
+          (int)proc.imgdata.other.iso_speed,
+          proc.imgdata.idata.make, proc.imgdata.idata.model);
+
+    // 处理RAW数据
     ret = proc.dcraw_process();
     if(ret != LIBRAW_SUCCESS) {
-        ALOGE("dcraw_process failed (%d) %s", ret, cpath);
-        proc.recycle();
-        env->ReleaseStringUTFChars(jpath, cpath);
-        return nullptr;
+        return handleError(ret, "dcraw_process");
     }
+
+    // 创建内存图像，带错误处理
     libraw_processed_image_t* img = proc.dcraw_make_mem_image(&ret);
     if(!img || ret != LIBRAW_SUCCESS) {
-        ALOGE("dcraw_make_mem_image failed (%d) %s", ret, cpath);
+        ALOGE("dcraw_make_mem_image failed (%d): %s for file %s",
+              ret, libraw_strerror(ret), cpath);
         if(img) libraw_dcraw_clear_mem(img);
         proc.recycle();
-        env->ReleaseStringUTFChars(jpath, cpath);
         return nullptr;
     }
+
+    // RAII包装器用于图像清理
+    struct ImageGuard {
+        libraw_processed_image_t* img;
+        ~ImageGuard() { if(img) libraw_dcraw_clear_mem(img); }
+    } imageGuard{img};
+
+    // 验证图像格式
     if(img->bits != 8 || img->colors != 3) {
-        ALOGE("Unexpected image format bits=%d colors=%d %s", img->bits, img->colors, cpath);
-        libraw_dcraw_clear_mem(img);
+        ALOGE("Unexpected image format: bits=%d colors=%d (expected 8-bit RGB) for file %s",
+              img->bits, img->colors, cpath);
         proc.recycle();
-        env->ReleaseStringUTFChars(jpath, cpath);
         return nullptr;
     }
-    uint32_t width = img->width;
-    uint32_t height = img->height;
-    size_t pixelBytes = static_cast<size_t>(width) * static_cast<size_t>(height) * 3u;
-    size_t total = 8 + pixelBytes;
-    if(pixelBytes == 0 || !img->data) {
-        ALOGE("Invalid image data %s", cpath);
-        libraw_dcraw_clear_mem(img);
+
+    // 验证图像尺寸并防止溢出
+    const uint32_t width = img->width;
+    const uint32_t height = img->height;
+
+    if(width == 0 || height == 0 || width > 65535 || height > 65535) {
+        ALOGE("Invalid image dimensions: %dx%d for file %s", width, height, cpath);
         proc.recycle();
-        env->ReleaseStringUTFChars(jpath, cpath);
         return nullptr;
     }
-    jbyteArray out = env->NewByteArray(static_cast<jsize>(total));
+
+    // 计算大小，带溢出保护
+    const size_t pixelBytes = static_cast<size_t>(width) * static_cast<size_t>(height) * 3u;
+    const size_t totalBytes = 8 + pixelBytes;
+
+    // 检查溢出和合理的大小限制（例如，最大500MP）
+    if(pixelBytes / 3 != static_cast<size_t>(width) * static_cast<size_t>(height) ||
+       totalBytes < pixelBytes ||
+       pixelBytes > 500 * 1024 * 1024 * 3) {
+        ALOGE("Image too large or overflow detected: %zu bytes for file %s", totalBytes, cpath);
+        proc.recycle();
+        return nullptr;
+    }
+
+    if(!img->data) {
+        ALOGE("Image data is null for file %s", cpath);
+        proc.recycle();
+        return nullptr;
+    }
+
+    // 分配输出数组
+    jbyteArray out = env->NewByteArray(static_cast<jsize>(totalBytes));
     if(!out) {
-        ALOGE("Failed to allocate output array size=%zu", total);
-        libraw_dcraw_clear_mem(img);
+        ALOGE("Failed to allocate output array of size %zu bytes", totalBytes);
         proc.recycle();
-        env->ReleaseStringUTFChars(jpath, cpath);
         return nullptr;
     }
-    // Prepare buffer
-    std::unique_ptr<unsigned char[]> buffer(new unsigned char[total]);
-    // width little-endian
-    buffer[0] = (unsigned char)(width & 0xFF);
-    buffer[1] = (unsigned char)((width >> 8) & 0xFF);
-    buffer[2] = (unsigned char)((width >> 16) & 0xFF);
-    buffer[3] = (unsigned char)((width >> 24) & 0xFF);
-    buffer[4] = (unsigned char)(height & 0xFF);
-    buffer[5] = (unsigned char)((height >> 8) & 0xFF);
-    buffer[6] = (unsigned char)((height >> 16) & 0xFF);
-    buffer[7] = (unsigned char)((height >> 24) & 0xFF);
-    // Copy RGB payload
+
+    // 准备缓冲区，优化分配
+    std::unique_ptr<unsigned char[]> buffer;
+    try {
+        buffer = std::make_unique<unsigned char[]>(totalBytes);
+    } catch(const std::bad_alloc&) {
+        ALOGE("Failed to allocate buffer of size %zu bytes", totalBytes);
+        proc.recycle();
+        return nullptr;
+    }
+
+    // 以小端格式打包尺寸
+    const unsigned char* widthBytes = reinterpret_cast<const unsigned char*>(&width);
+    const unsigned char* heightBytes = reinterpret_cast<const unsigned char*>(&height);
+
+    buffer[0] = widthBytes[0];
+    buffer[1] = widthBytes[1];
+    buffer[2] = widthBytes[2];
+    buffer[3] = widthBytes[3];
+    buffer[4] = heightBytes[0];
+    buffer[5] = heightBytes[1];
+    buffer[6] = heightBytes[2];
+    buffer[7] = heightBytes[3];
+
+    // 高效复制RGB数据
     std::memcpy(buffer.get() + 8, img->data, pixelBytes);
 
-    // LibRAW decoding complete - no denoising applied here
-    // Denoising will be handled by OpenCV in the Java/Kotlin layer
+    // 设置数组区域，带错误检查
+    env->SetByteArrayRegion(out, 0, static_cast<jsize>(totalBytes),
+                           reinterpret_cast<const jbyte*>(buffer.get()));
 
-    env->SetByteArrayRegion(out, 0, static_cast<jsize>(total), reinterpret_cast<jbyte*>(buffer.get()));
+    // 检查JNI异常
+    if(env->ExceptionCheck()) {
+        ALOGE("JNI exception occurred while setting byte array region");
+        proc.recycle();
+        return nullptr;
+    }
 
-    libraw_dcraw_clear_mem(img);
+    // 清理由RAII守卫处理
     proc.recycle();
-    env->ReleaseStringUTFChars(jpath, cpath);
+
+    ALOGI("Successfully decoded RAW image %dx%d (%zu bytes) from %s",
+          width, height, totalBytes, cpath);
+
     return out;
 }
-
-

@@ -39,6 +39,18 @@
             android:src="@android:drawable/ic_menu_save"
             android:visibility="visible" />
 
+        <ImageButton
+                android:id="@+id/denoise"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="top|end"
+                android:layout_marginTop="64dp"
+                android:layout_marginEnd="16dp"
+                android:background="@null"
+                android:contentDescription="降噪"
+                android:src="@android:drawable/ic_btn_speak_now"
+                android:visibility="visible" />
+
     </FrameLayout>
 
 </LinearLayout>
