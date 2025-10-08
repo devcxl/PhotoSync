@@ -35,7 +35,6 @@ import cn.devcxl.photosync.adapter.PhotoPagerAdapter
 import cn.devcxl.photosync.databinding.ActivityTakingPhotoBinding
 import cn.devcxl.photosync.utils.ImageDenoiseUtils
 import cn.devcxl.photosync.wrapper.RawWrapper
-import cn.devcxl.photosync.utils.OpenCVDenoiser
 
 class TakingPhotoActivity : ComponentActivity() {
 
