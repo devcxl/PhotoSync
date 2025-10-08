@@ -48,9 +48,8 @@
                 android:layout_marginEnd="16dp"
                 android:background="@null"
                 android:contentDescription="降噪"
-                android:src="@android:drawable/ic_btn_speak_now"
-                android:visibility="visible" />
-
+                android:src="@android:drawable/ic_menu_rotate"
+                android:visibility="visible"/>
     </FrameLayout>
 
 </LinearLayout>
