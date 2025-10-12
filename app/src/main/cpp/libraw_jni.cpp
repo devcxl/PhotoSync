@@ -108,12 +108,6 @@ Java_cn_devcxl_photosync_wrapper_RawWrapper_decodeToRGB(JNIEnv* env, jobject /*t
         return handleError(ret, "unpack");
     }
 
-    // 将RAW数据转换为图像格式，执行黑电平减法等预处理
-    ret = proc.raw2image();
-    if(ret != LIBRAW_SUCCESS) {
-        return handleError(ret, "raw2image");
-    }
-
     // 基于LibRaw最佳实践的优化参数设置
     libraw_output_params_t& params = proc.imgdata.params;
 
@@ -149,7 +143,7 @@ Java_cn_devcxl_photosync_wrapper_RawWrapper_decodeToRGB(JNIEnv* env, jobject /*t
           (int)proc.imgdata.other.iso_speed,
           proc.imgdata.idata.make, proc.imgdata.idata.model);
 
-    // 处理RAW数据
+    // 处理RAW数据（内部会执行 raw2image_ex 和预处理步骤）
     ret = proc.dcraw_process();
     if(ret != LIBRAW_SUCCESS) {
         return handleError(ret, "dcraw_process");
@@ -226,18 +220,15 @@ Java_cn_devcxl_photosync_wrapper_RawWrapper_decodeToRGB(JNIEnv* env, jobject /*t
         return nullptr;
     }
 
-    // 以小端格式打包尺寸
-    const unsigned char* widthBytes = reinterpret_cast<const unsigned char*>(&width);
-    const unsigned char* heightBytes = reinterpret_cast<const unsigned char*>(&height);
-
-    buffer[0] = widthBytes[0];
-    buffer[1] = widthBytes[1];
-    buffer[2] = widthBytes[2];
-    buffer[3] = widthBytes[3];
-    buffer[4] = heightBytes[0];
-    buffer[5] = heightBytes[1];
-    buffer[6] = heightBytes[2];
-    buffer[7] = heightBytes[3];
+    // 以小端格式打包尺寸（显式写入LE以避免主机端序差异）
+    buffer[0] = static_cast<unsigned char>((width >> 0) & 0xFF);
+    buffer[1] = static_cast<unsigned char>((width >> 8) & 0xFF);
+    buffer[2] = static_cast<unsigned char>((width >> 16) & 0xFF);
+    buffer[3] = static_cast<unsigned char>((width >> 24) & 0xFF);
+    buffer[4] = static_cast<unsigned char>((height >> 0) & 0xFF);
+    buffer[5] = static_cast<unsigned char>((height >> 8) & 0xFF);
+    buffer[6] = static_cast<unsigned char>((height >> 16) & 0xFF);
+    buffer[7] = static_cast<unsigned char>((height >> 24) & 0xFF);
 
     // 高效复制RGB数据
     std::memcpy(buffer.get() + 8, img->data, pixelBytes);
