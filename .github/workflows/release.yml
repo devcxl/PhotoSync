@@ -33,13 +33,13 @@ jobs:
             -   name: Install Android SDK components (API 36, NDK, CMake) and accept licenses
                 shell: bash
                 run: |
+                    yes | sdkmanager --licenses || true
                     sdkmanager --install \
-                      "platform-tools" \
-                      "platforms;android-36" \
-                      "build-tools;36.0.0" \
-                      "ndk;29.0.14033849" \
-                      "cmake;3.22.1"
-                    yes | sdkmanager --licenses
+                        "platform-tools" \
+                        "platforms;android-36" \
+                        "build-tools;36.0.0" \
+                        "ndk;29.0.14849" \
+                        "cmake;3.22.1"
 
             -   name: Point local.properties to CI Android SDK
                 run: |
