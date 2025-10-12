@@ -75,7 +75,7 @@ dependencies {
     implementation libs.androidx.room.ktx
     annotationProcessor libs.androidx.room.compiler
 
-    implementation libs.opencv
+     implementation libs.opencv
 
     testImplementation libs.junit
     androidTestImplementation libs.androidx.junit

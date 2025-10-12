@@ -1,4 +1,4 @@
-package cn.devcxl.photosync.ptp.db;
+package cn.devcxl.photosync.data;
 
 import androidx.room.Dao;
 import androidx.room.Delete;
@@ -6,6 +6,7 @@ import androidx.room.Insert;
 import androidx.room.OnConflictStrategy;
 import androidx.room.Query;
 import androidx.room.Update;
+import cn.devcxl.photosync.data.entity.SyncDevice;
 
 import java.util.List;
 

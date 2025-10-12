@@ -11,7 +11,7 @@ public interface SyncParams {
     int SYNC_MODE_SYNC_ALL          = 0;
     int SYNC_MODE_SYNC_NEW_ADDED    = 1;
 
-    int SYNC_RECORD_MODE_REMEMBER   = 0; // will save
+    int SYNC_RECORD_MODE_REMEMBER   = 0;
     int SYNC_RECORD_MODE_FORGET     = 1;
 
 

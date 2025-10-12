@@ -10,9 +10,10 @@ import cn.devcxl.photosync.ptp.usbcamera.nikon.NikonInitiator;
 import cn.devcxl.photosync.ptp.usbcamera.sony.SonyInitiator;
 
 /**
- * Created by rainx on 2017/5/27.
+ *
+ * @author rainx
+ * @date 2017/5/27
  */
-
 public class InitiatorFactory {
     public static final String TAG = InitiatorFactory.class.getName();
 
@@ -32,7 +33,6 @@ public class InitiatorFactory {
             Log.d(TAG, "Unkown device, open BaselineInitiator");
             bi = new BaselineInitiator (device, usbManager.openDevice(device));
         }
-
         return bi;
     }
 }

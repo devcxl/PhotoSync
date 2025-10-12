@@ -1,11 +1,10 @@
-package cn.devcxl.photosync.ptp.db;
+package cn.devcxl.photosync.data.entity;
 
 import androidx.annotation.NonNull;
 import androidx.room.ColumnInfo;
 import androidx.room.Entity;
 import androidx.room.PrimaryKey;
 import androidx.room.Ignore;
-import org.jetbrains.annotations.NotNull;
 
 /**
  *

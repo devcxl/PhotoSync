@@ -33,13 +33,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
-import cn.devcxl.photosync.ptp.db.SyncDevice;
-import cn.devcxl.photosync.ptp.db.SyncDeviceManager;
+import cn.devcxl.photosync.data.entity.SyncDevice;
+import cn.devcxl.photosync.ptp.manager.SyncDeviceManager;
 import cn.devcxl.photosync.ptp.interfaces.FileAddedListener;
 import cn.devcxl.photosync.ptp.interfaces.FileDownloadedListener;
 import cn.devcxl.photosync.ptp.interfaces.FileTransferListener;
 import cn.devcxl.photosync.ptp.params.SyncParams;
-import cn.devcxl.photosync.ptp.usbcamera.sony.SonyInitiator;
 
 /**
  * This initiates interactions with USB devices, supporting only

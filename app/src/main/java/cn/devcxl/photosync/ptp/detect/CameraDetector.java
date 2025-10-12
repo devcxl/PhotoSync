@@ -7,9 +7,10 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * Created by rainx on 2017/5/23.
+ *
+ * @author rainx
+ * @date 2017/5/23
  */
-
 public class CameraDetector {
 
     // Select appropriate deviceInitiator, VIDs see http://www.linux-usb.org/usb.ids

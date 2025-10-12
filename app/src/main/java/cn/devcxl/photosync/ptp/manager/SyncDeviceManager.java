@@ -1,4 +1,4 @@
-package cn.devcxl.photosync.ptp.db;
+package cn.devcxl.photosync.ptp.manager;
 
 import android.hardware.usb.UsbDevice;
 import android.util.Log;
@@ -8,6 +8,9 @@ import java.util.Date;
 import java.util.List;
 
 import cn.devcxl.photosync.App;
+import cn.devcxl.photosync.data.AppDatabase;
+import cn.devcxl.photosync.data.SyncDeviceDao;
+import cn.devcxl.photosync.data.entity.SyncDevice;
 import cn.devcxl.photosync.ptp.detect.CameraDetector;
 
 /**
@@ -17,7 +20,6 @@ import cn.devcxl.photosync.ptp.detect.CameraDetector;
  * @author rainx
  * @date 2017/5/27
  */
-
 public class SyncDeviceManager {
     public static final String TAG = "SyncDeviceManager";
 
