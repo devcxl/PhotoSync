@@ -56,7 +56,7 @@ jobs:
             -   name: Decode keystore file
                 run: | 
                     echo "$KEYSTORE_BASE64" | base64 --decode > "${GITHUB_WORKSPACE}/release.keystore"
-                    cho "Keystore written to ${GITHUB_WORKSPACE}/release.keystore"
+                    echo "Keystore written to ${GITHUB_WORKSPACE}/release.keystore"
                 env:
                     KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
 
