@@ -43,10 +43,20 @@ android {
 
     signingConfigs {
         release {
-            storeFile file(System.getenv("KEYSTORE_PATH"))
-            storePassword System.getenv("KEYSTORE_PASSWORD")
-            keyAlias System.getenv("KEY_ALIAS")
-            keyPassword System.getenv("KEY_PASSWORD")
+            // 优先使用环境变量，备选使用 project property（可放在 `local.properties`）
+            def keystorePath = System.getenv("KEYSTORE_PATH") ?: project.findProperty("KEYSTORE_PATH")
+            def storePwd = System.getenv("KEYSTORE_PASSWORD") ?: project.findProperty("KEYSTORE_PASSWORD")
+            def alias = System.getenv("KEY_ALIAS") ?: project.findProperty("KEY_ALIAS")
+            def keyPwd = System.getenv("KEY_PASSWORD") ?: project.findProperty("KEY_PASSWORD")
+
+            if (keystorePath) {
+                storeFile file(keystorePath)
+                if (storePwd) storePassword storePwd
+                if (alias) keyAlias alias
+                if (keyPwd) keyPassword keyPwd
+            } else {
+                throw new GradleException("Keystore path not set. Set KEYSTORE_PATH env or add KEYSTORE_PATH/KEYSTORE_PASSWORD/KEY_ALIAS/KEY_PASSWORD to `local.properties`.")
+            }
         }
     }
 
@@ -54,6 +64,7 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.release
         }
     }
     compileOptions {
