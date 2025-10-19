@@ -54,14 +54,14 @@ jobs:
                 run: chmod +x gradlew
 
             -   name: Decode keystore file
-                run: echo "$KEYSTORE_BASE64" | base64 --decode > release.keystore
+                run: echo "$KEYSTORE_BASE64" | base64 --decode > app/release.keystore
                 env:
                     KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
 
             -   name: Build release APK (signed)
                 run: ./gradlew --no-daemon clean :app:assembleRelease
                 env:
-                    KEYSTORE_PATH: release.keystore
+                    KEYSTORE_PATH:  app/release.keystore
                     KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
                     KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
                     KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
