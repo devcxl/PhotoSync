@@ -8,13 +8,13 @@ plugins {
 apply plugin: 'kotlin-kapt'
 
 android {
-    namespace 'cn.devcxl.photosync'
-    compileSdk 36
+    namespace = "cn.devcxl.photosync"
+    compileSdk = 36
 
     defaultConfig {
         applicationId "cn.devcxl.photosync"
-        minSdk 24
-        targetSdk 36
+        minSdk = 24
+        targetSdk = 36
         versionCode 1
         versionName "1.0"
 
@@ -41,30 +41,38 @@ android {
         }
     }
 
+    // 设置默认不开启签名 (避免 debug 模式下签名报错)
     signingConfigs {
         release {
-            // 优先使用环境变量，备选使用 project property（可放在 `local.properties`）
+            // Resolve values from environment variables first, then project properties.
             def keystorePath = System.getenv("KEYSTORE_PATH") ?: project.findProperty("KEYSTORE_PATH")
-            def storePwd = System.getenv("KEYSTORE_PASSWORD") ?: project.findProperty("KEYSTORE_PASSWORD")
-            def alias = System.getenv("KEY_ALIAS") ?: project.findProperty("KEY_ALIAS")
-            def keyPwd = System.getenv("KEY_PASSWORD") ?: project.findProperty("KEY_PASSWORD")
-
             if (keystorePath) {
                 storeFile file(keystorePath)
-                if (storePwd) storePassword storePwd
-                if (alias) keyAlias alias
-                if (keyPwd) keyPassword keyPwd
-            } else {
-                throw new GradleException("Keystore path not set. Set KEYSTORE_PATH env or add KEYSTORE_PATH/KEYSTORE_PASSWORD/KEY_ALIAS/KEY_PASSWORD to `local.properties`.")
+            }
+
+            def keystorePassword = System.getenv("KEYSTORE_PASSWORD") ?: project.findProperty("KEYSTORE_PASSWORD")
+            if (keystorePassword) {
+                storePassword keystorePassword
+            }
+
+            def keyAliasValue = System.getenv("KEY_ALIAS") ?: project.findProperty("KEY_ALIAS")
+            if (keyAliasValue) {
+                keyAlias keyAliasValue
+            }
+
+            def keyPasswordValue = System.getenv("KEY_PASSWORD") ?: project.findProperty("KEY_PASSWORD")
+            if (keyPasswordValue) {
+                keyPassword keyPasswordValue
             }
         }
     }
 
     buildTypes {
         release {
-            minifyEnabled false
+            signingConfig = signingConfigs.release
+            minifyEnabled = true
+            shrinkResources = true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            signingConfig signingConfigs.release
         }
     }
     compileOptions {
