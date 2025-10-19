@@ -53,25 +53,31 @@ jobs:
             -   name: Make gradlew executable
                 run: chmod +x gradlew
 
-            -   name: Build release APK
-                run: ./gradlew --no-daemon clean :app:assembleRelease
-
-            -   name: Sign release APK(s)
-                uses: r0adkll/sign-android-release@v1
-                with:
-                    releaseDirectory: app/build/outputs/apk/release
-                    signingKeyBase64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-                    alias: ${{ secrets.ANDROID_KEY_ALIAS }}
-                    keyStorePassword: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-                    keyPassword: ${{ secrets.ANDROID_KEY_PASSWORD }}
+            -   name: Decode keystore file
+                run: echo "$KEYSTORE_BASE64" | base64 --decode > release.keystore
                 env:
-                    BUILD_TOOLS_VERSION: "36.0.0"
-            -   name: Upload APK artifact (signed)
+                    KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+
+            -   name: Build release APK (signed)
+                run: ./gradlew --no-daemon clean :app:assembleRelease
+                env:
+                    KEYSTORE_PATH: release.keystore
+                    KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+                    KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+                    KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+
+            -   name: Upload signed APK artifact
                 uses: actions/upload-artifact@v4
                 with:
                     name: app-release-apk
-                    path: app/build/outputs/apk/release/*-signed.apk
+                    path: app/build/outputs/apk/release/app-release.apk
                     if-no-files-found: error
+
+            -   name: Clean up keystore
+                if: always()
+                run: |
+                    rm -f release.keystore
+                    echo "Keystore file removed."
 
     release:
         name: Create Draft Release
@@ -88,11 +94,9 @@ jobs:
             -   name: Create GitHub Release (draft) and upload APKs
                 uses: softprops/action-gh-release@v2
                 with:
-                    files: |
-                        artifacts/*.apk
+                    files: artifacts/*.apk
                     draft: true
                     tag_name: ${{ github.ref_name }}
                     generate_release_notes: true
-
                 env:
                     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
