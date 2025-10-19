@@ -4,4 +4,19 @@
     <string name="title_home">TakingPhoto1</string>
     <string name="title_dashboard">TakingPhoto2</string>
     <string name="title_notifications">TakingPhoto3</string>
+
+    <!-- Added user-facing strings -->
+    <string name="toast_no_usb_device">没有检测到USB设备</string>
+    <string name="toast_device_connected">设备连接成功，可以开始同步照片</string>
+    <string name="toast_no_exportable_photos">没有可导出的照片</string>
+    <string name="toast_exporting">正在导出 %1$s</string>
+    <string name="toast_export_failed_invalid_path">导出失败：路径无效</string>
+    <string name="toast_saved_to_gallery">已保存到相册: %1$s</string>
+    <string name="toast_save_failed">保存失败</string>
+    <string name="toast_storage_permission_denied">未授予存储权限，无法导出</string>
+    <string name="usb_inserted">USB设备已插入</string>
+    <string name="usb_removed">USB设备已拔出</string>
+    <string name="usb_permission_granted">已授权访问USB设备</string>
+    <string name="usb_permission_denied">未授权访问USB设备</string>
+    <string name="photo_default_name">照片</string>
 </resources>

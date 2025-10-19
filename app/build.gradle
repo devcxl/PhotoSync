@@ -2,7 +2,10 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    // kapt plugin is applied below using the legacy apply plugin to avoid plugin classpath/version conflicts
 }
+
+apply plugin: 'kotlin-kapt'
 
 android {
     namespace 'cn.devcxl.photosync'
@@ -62,7 +65,7 @@ dependencies {
     implementation libs.androidx.constraintlayout
 
     // Required by PhotoView
-    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation libs.androidx.appcompat
 
     implementation libs.androidx.activity.compose
     implementation platform(libs.androidx.compose.bom)
@@ -73,7 +76,8 @@ dependencies {
     // Room
     implementation libs.androidx.room.runtime
     implementation libs.androidx.room.ktx
-    annotationProcessor libs.androidx.room.compiler
+    kapt libs.androidx.room.compiler
+    implementation libs.timber
 
      implementation libs.opencv
 
@@ -86,6 +90,7 @@ dependencies {
     debugImplementation libs.androidx.ui.test.manifest
 
     // Added for gallery: swipe and pinch-to-zoom
-    implementation 'androidx.viewpager2:viewpager2:1.1.0'
-    implementation 'com.github.chrisbanes:PhotoView:2.3.0'
+    implementation libs.androidx.viewpager2
+    implementation libs.photoview
+
 }

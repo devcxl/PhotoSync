@@ -4,10 +4,6 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 
 object RawWrapper {
-    init {
-        System.loadLibrary("raw_wrapper")
-    }
-
     external fun version(): String
     external fun decodeThumbnail(path: String): ByteArray?
     external fun decodeToRGB(path: String): ByteArray?

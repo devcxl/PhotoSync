@@ -11,6 +11,12 @@ composeBom = "2024.09.00"
 room = "2.6.1"
 constraintlayout = "2.2.1"
 opencv = "4.12.0"
+timber = "5.0.1"
+
+# Additional libs
+appcompat = "1.7.1"
+viewpager2 = "1.1.0"
+photoview = "2.3.0"
 
 
 [libraries]
@@ -33,6 +39,10 @@ androidx-room-runtime = { group = "androidx.room", name = "room-runtime", versio
 androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
 androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 opencv = { group = "org.opencv", name = "opencv", version.ref = "opencv" }
+timber = { group = "com.jakewharton.timber", name = "timber", version.ref = "timber" }
+androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
+androidx-viewpager2 = { group = "androidx.viewpager2", name = "viewpager2", version.ref = "viewpager2" }
+photoview = { group = "com.github.chrisbanes", name = "PhotoView", version.ref = "photoview" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

@@ -1,22 +1,25 @@
-package cn.devcxl.photosync.data;
+package cn.devcxl.photosync.data
 
-import androidx.room.Dao;
-import androidx.room.Insert;
-import androidx.room.OnConflictStrategy;
-import androidx.room.Query;
-import cn.devcxl.photosync.data.entity.PhotoEntity;
-import kotlinx.coroutines.flow.Flow;
+import androidx.room.Dao
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
+import cn.devcxl.photosync.data.entity.PhotoEntity
+import kotlinx.coroutines.flow.Flow
 
 import java.util.List;
 
+/**
+ * DAO for photo entities.
+ */
 @Dao
-public interface PhotoDao {
+interface PhotoDao {
     @Query("SELECT * FROM photos ORDER BY createdAt ASC")
-    Flow<List<PhotoEntity>> getAllFlow();
+    fun getAllFlow(): Flow<List<PhotoEntity>>
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
-    Long insert(PhotoEntity entity);
+    suspend fun insert(entity: PhotoEntity): Long
 
     @Query("DELETE FROM photos")
-    void clear();
+    suspend fun clear()
 }

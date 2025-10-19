@@ -4,7 +4,6 @@ import android.Manifest
 import android.app.PendingIntent
 import android.content.ContentValues
 import android.content.Intent
-import android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.hardware.usb.UsbDevice
@@ -14,7 +13,6 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
-import android.util.Log
 import android.util.LruCache
 import android.view.View
 import android.widget.Toast
@@ -25,6 +23,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import cn.devcxl.photosync.R
 import cn.devcxl.photosync.ptp.params.SyncParams
 import cn.devcxl.photosync.ptp.usbcamera.BaselineInitiator
 import cn.devcxl.photosync.ptp.usbcamera.InitiatorFactory
@@ -41,20 +40,20 @@ import cn.devcxl.photosync.data.PhotoDao
 import cn.devcxl.photosync.data.entity.PhotoEntity
 import cn.devcxl.photosync.databinding.ActivityMainBinding
 import cn.devcxl.photosync.utils.ExtensionUtils
-import cn.devcxl.photosync.utils.ImageDenoiseUtils
 import cn.devcxl.photosync.wrapper.RawWrapper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import timber.log.Timber
 
 class MainActivity : ComponentActivity() {
 
-    private val TAG = "MainActivity"
     private var isOpenConnected: Boolean = false
     private var bi: BaselineInitiator? = null
 
     companion object {
         private const val REQ_WRITE_STORAGE = 2001
-        private const val ACTION_USB_PERMISSION = "cn.devcxl.photosync.USB_PERMISSION"
+        // use App.ACTION_USB_PERMISSION instead of duplicating the constant
     }
 
     private lateinit var adapter: PhotoPagerAdapter
@@ -97,7 +96,7 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 dao.getAllFlow().collect { list ->
-                    adapter.updateItems(list)
+                    adapter.updateItems(list.toList())
                     // Scroll to newly inserted item if pending
                     pendingRevealPath?.let { target ->
                         val idx = list.indexOfFirst { it.path == target }
@@ -145,7 +144,7 @@ class MainActivity : ComponentActivity() {
         val set = map.keys
 
         if (set.isEmpty()) {
-            Toast.makeText(this, "没有检测到USB设备", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, getString(R.string.toast_no_usb_device), Toast.LENGTH_LONG).show()
             return
         }
 
@@ -165,10 +164,10 @@ class MainActivity : ComponentActivity() {
         val usbManager: UsbManager = getSystemService(USB_SERVICE) as UsbManager
         val piFlags = PendingIntent.FLAG_IMMUTABLE
         val permissionIntent = PendingIntent.getBroadcast(
-            this, 0, Intent(ACTION_USB_PERMISSION), piFlags
+            this, 0, Intent(cn.devcxl.photosync.App.ACTION_USB_PERMISSION), piFlags
         )
         usbManager.requestPermission(device, permissionIntent)
-        Log.d(TAG, "请求设备权限 ${device.deviceName}")
+        Timber.d("请求设备权限 %s", device.deviceName)
     }
 
     fun performConnect(device: UsbDevice?) {
@@ -177,7 +176,7 @@ class MainActivity : ComponentActivity() {
         if (!isOpenConnected) {
             try {
                 bi = InitiatorFactory.produceInitiator(device, usbManager)
-                bi!!.getClearStatus() // ?????
+                bi!!.getClearStatus() // ????
                 bi!!.setSyncTriggerMode(SyncParams.SYNC_TRIGGER_MODE_POLL_LIST)
                 if (bi is SonyInitiator) {
                     // 索尼只能支持event 模式
@@ -188,11 +187,12 @@ class MainActivity : ComponentActivity() {
                 isOpenConnected = true
 
                 bi!!.setFileDownloadPath(externalCacheDir!!.absolutePath)
-                bi!!.setFileTransferListener { _, fileHandle, totalByteLength, transterByteLength ->
+                bi!!.setFileTransferListener { _, _, totalByteLength, transterByteLength ->
                     val progressPercent = if (totalByteLength > 0) {
                         ((transterByteLength * 100L) / totalByteLength).toInt().coerceIn(0, 100)
                     } else 0
-                    runOnUiThread {
+                    // update UI on Main via lifecycleScope
+                    lifecycleScope.launch(Dispatchers.Main) {
                         if (binding.progressBar.visibility != View.VISIBLE) {
                             binding.progressBar.visibility = View.VISIBLE
                         }
@@ -201,11 +201,8 @@ class MainActivity : ComponentActivity() {
                 }
 
                 bi!!.setFileDownloadedListener { _, fileHandle, localFile, timeduring ->
-                    Log.v(
-                        TAG,
-                        "file (" + fileHandle + ") downloaded at " + localFile.absolutePath + ",time: " + timeduring + "ms"
-                    )
-                    runOnUiThread { binding.progressBar.visibility = View.GONE }
+                    Timber.v("file (%s) downloaded at %s, time: %sms", fileHandle, localFile.absolutePath, timeduring)
+                    lifecycleScope.launch(Dispatchers.Main) { binding.progressBar.visibility = View.GONE }
 
                     // 根据扩展名判断是否为RAW或JPEG，满足则添加到数据库
                     val ext = localFile.extension.lowercase(Locale.ROOT)
@@ -214,14 +211,13 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                Toast.makeText(this, "设备连接成功，可以开始同步照片", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, getString(R.string.toast_device_connected), Toast.LENGTH_LONG).show()
             } catch (e: PTPException) {
                 // TODO Auto-generated catch block
-                e.printStackTrace()
-                Log.e(TAG, e.toString())
+                Timber.e(e, "performConnect failed")
             }
         } else {
-            Log.i(TAG, "设备已经连接，无需重复连接")
+            Timber.i("设备已经连接，无需重复连接")
         }
     }
 
@@ -236,7 +232,7 @@ class MainActivity : ComponentActivity() {
             try {
                 dao.insert(entity)
             } catch (t: Throwable) {
-                Log.e(TAG, "DB insert failed", t)
+                Timber.e(t, "DB insert failed")
             }
         }
     }
@@ -249,10 +245,11 @@ class MainActivity : ComponentActivity() {
             val bmp: Bitmap? = try {
                 RawWrapper.decodeToBitmap(path)
             } catch (t: Throwable) {
+                Timber.w(t, "decodeToBitmap failed for path=%s", path)
                 null
             }
             if (bmp != null) {
-                runOnUiThread {
+                withContext(Dispatchers.Main) {
                     bitmapCache.put(path, bmp)
                     adapter.notifyPathChanged(path)
                 }
@@ -262,7 +259,7 @@ class MainActivity : ComponentActivity() {
 
     private fun exportCurrent() {
         if (adapter.itemCount == 0) {
-            Toast.makeText(this, "没有可导出的照片", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.toast_no_exportable_photos), Toast.LENGTH_SHORT).show()
             return
         }
         val index = binding.viewPager.currentItem.coerceIn(0, adapter.itemCount - 1)
@@ -287,14 +284,16 @@ class MainActivity : ComponentActivity() {
 
     private fun exportIndex(index: Int) {
         val entity = adapter.getItem(index) ?: return
-        Toast.makeText(this, "正在导出 ${entity.name ?: "照片"}", Toast.LENGTH_SHORT).show()
-        Thread {
+        val displayEntityName = entity.name ?: getString(R.string.photo_default_name)
+        Toast.makeText(this, getString(R.string.toast_exporting, displayEntityName), Toast.LENGTH_SHORT).show()
+
+        lifecycleScope.launch(Dispatchers.IO) {
             val path = entity.path
             if (path.isEmpty()) {
-                runOnUiThread {
-                    Toast.makeText(this, "导出失败：路径无效", Toast.LENGTH_LONG).show()
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(this@MainActivity, getString(R.string.toast_export_failed_invalid_path), Toast.LENGTH_LONG).show()
                 }
-                return@Thread
+                return@launch
             }
             val ext = path.substringAfterLast('.', "").lowercase(Locale.ROOT)
 
@@ -302,7 +301,7 @@ class MainActivity : ComponentActivity() {
             val saved: Uri? = try {
                 if (ExtensionUtils.isJpegExtension(ext)) {
                     // JPEG：直接复制原文件到相册，避免解码与重压缩
-                    saveFileToGalleryByCopying(File(path), displayName, "image/jpeg")
+                    saveFileToGalleryByCopying(File(path), displayName)
                 } else if (ExtensionUtils.isRawExtension(ext)) {
                     // RAW：优先使用缓存Bitmap，否则解码
                     val bmp = bitmapCache.get(path) ?: try {
@@ -315,20 +314,21 @@ class MainActivity : ComponentActivity() {
                     null
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "exportIndex: save failed", e)
+                Timber.e(e, "exportIndex: save failed")
                 null
             }
 
-            runOnUiThread {
+            withContext(Dispatchers.Main) {
                 if (saved != null) {
-                    Toast.makeText(this, "已保存到相册: ${displayName}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this@MainActivity, getString(R.string.toast_saved_to_gallery, displayName), Toast.LENGTH_LONG).show()
                 } else {
-                    Toast.makeText(this, "保存失败", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this@MainActivity, getString(R.string.toast_save_failed), Toast.LENGTH_LONG).show()
                 }
             }
-        }.start()
+        }
     }
 
+    @Suppress("DEPRECATION")
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQ_WRITE_STORAGE) {
@@ -338,7 +338,7 @@ class MainActivity : ComponentActivity() {
             if (granted && idx != null) {
                 exportIndex(idx)
             } else if (!granted) {
-                Toast.makeText(this, "未授予存储权限，无法导出", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, getString(R.string.toast_storage_permission_denied), Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -394,13 +394,13 @@ class MainActivity : ComponentActivity() {
                 contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "saveBitmapToGallery failed", e)
+            Timber.e(e, "saveBitmapToGallery failed")
             null
         }
     }
 
     // 直接复制文件至相册（用于JPEG等已经是目标格式的文件）
-    private fun saveFileToGalleryByCopying(srcFile: File, displayName: String, mime: String): Uri? {
+    private fun saveFileToGalleryByCopying(srcFile: File, displayName: String, mime: String = "image/jpeg"): Uri? {
         return try {
             if (Build.VERSION.SDK_INT >= 29) {
                 val values = ContentValues().apply {
@@ -441,10 +441,9 @@ class MainActivity : ComponentActivity() {
                 contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "saveFileToGalleryByCopying failed", e)
+            Timber.e(e, "saveFileToGalleryByCopying failed")
             null
         }
     }
 
 }
-
