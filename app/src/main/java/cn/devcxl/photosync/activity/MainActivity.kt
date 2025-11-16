@@ -45,6 +45,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
+import android.app.AlertDialog
 
 class MainActivity : ComponentActivity() {
 
@@ -112,6 +113,8 @@ class MainActivity : ComponentActivity() {
         // Setup export button click listener
         binding.exportButton.setOnClickListener { exportCurrent() }
 
+        // Setup delete button click listener
+        binding.deleteButton.setOnClickListener { showDeleteConfirmDialog() }
 
         enableEdgeToEdge()
 
@@ -443,6 +446,80 @@ class MainActivity : ComponentActivity() {
         } catch (e: Exception) {
             Timber.e(e, "saveFileToGalleryByCopying failed")
             null
+        }
+    }
+
+    /**
+     * Shows confirmation dialog before deleting current photo.
+     */
+    private fun showDeleteConfirmDialog() {
+        if (adapter.itemCount == 0) {
+            Toast.makeText(this, getString(R.string.toast_no_deletable_photos), Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val index = binding.viewPager.currentItem.coerceIn(0, adapter.itemCount - 1)
+        val entity = adapter.getItem(index) ?: return
+        val displayName = entity.name ?: getString(R.string.photo_default_name)
+
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.dialog_delete_title))
+            .setMessage(getString(R.string.dialog_delete_message))
+            .setPositiveButton(getString(R.string.dialog_delete_confirm)) { _, _ ->
+                deleteCurrent(index)
+            }
+            .setNegativeButton(getString(R.string.dialog_cancel), null)
+            .show()
+    }
+
+    /**
+     * Deletes photo at given index from database, cache, and filesystem.
+     *
+     * @param index The index of photo to delete.
+     */
+    private fun deleteCurrent(index: Int) {
+        val entity = adapter.getItem(index) ?: return
+        val displayName = entity.name ?: getString(R.string.photo_default_name)
+
+        Toast.makeText(this, getString(R.string.toast_deleting, displayName), Toast.LENGTH_SHORT).show()
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                // Remove from cache
+                bitmapCache.remove(entity.path)
+
+                // Delete physical file
+                val file = File(entity.path)
+                val fileDeleted = if (file.exists()) file.delete() else true
+
+                // Remove from database
+                dao.delete(entity)
+
+                withContext(Dispatchers.Main) {
+                    if (fileDeleted) {
+                        Toast.makeText(
+                            this@MainActivity,
+                            getString(R.string.toast_deleted, displayName),
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    } else {
+                        Toast.makeText(
+                            this@MainActivity,
+                            getString(R.string.toast_delete_failed),
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "deleteCurrent failed")
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        getString(R.string.toast_delete_failed),
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
         }
     }
 

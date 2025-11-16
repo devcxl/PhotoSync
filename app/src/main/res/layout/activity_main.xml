@@ -48,6 +48,18 @@
                 android:src="@android:drawable/ic_menu_save"
                 android:visibility="visible"/>
 
+        <ImageButton
+                android:id="@+id/deleteButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom|end"
+                android:layout_marginStart="16dp"
+                android:layout_marginBottom="16dp"
+                android:background="@null"
+                android:contentDescription="@string/delete_photo"
+                android:src="@android:drawable/ic_menu_delete"
+                android:visibility="visible"/>
+
     </FrameLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

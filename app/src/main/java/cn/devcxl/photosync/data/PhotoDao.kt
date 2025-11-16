@@ -1,6 +1,7 @@
 package cn.devcxl.photosync.data
 
 import androidx.room.Dao
+import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
@@ -19,6 +20,14 @@ interface PhotoDao {
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(entity: PhotoEntity): Long
+
+    /**
+     * Deletes a photo entity from database.
+     *
+     * @param entity The photo entity to delete.
+     */
+    @Delete
+    suspend fun delete(entity: PhotoEntity)
 
     @Query("DELETE FROM photos")
     suspend fun clear()
