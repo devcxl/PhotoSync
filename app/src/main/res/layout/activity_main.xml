@@ -24,8 +24,7 @@
                 android:id="@+id/viewPager"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:saveEnabled="true" />
-
+                android:saveEnabled="true"/>
         <ProgressBar
                 android:id="@+id/progressBar"
                 style="?android:attr/progressBarStyleHorizontal"
@@ -53,8 +52,8 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_gravity="bottom|end"
-                android:layout_marginStart="16dp"
-                android:layout_marginBottom="16dp"
+                android:layout_marginEnd="16dp"
+                android:layout_marginBottom="32dp"
                 android:background="@null"
                 android:contentDescription="@string/delete_photo"
                 android:src="@android:drawable/ic_menu_delete"

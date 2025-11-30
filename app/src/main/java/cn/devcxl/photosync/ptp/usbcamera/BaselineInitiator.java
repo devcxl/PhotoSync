@@ -1070,12 +1070,22 @@ public class BaselineInitiator extends NameFactory implements Runnable {
             throws PTPException, IOException {
 
         File outputFile = new File(destPath);
+
+        // Ensure parent directory exists
+        File parentDir = outputFile.getParentFile();
+        if (parentDir != null && !parentDir.exists()) {
+            boolean created = parentDir.mkdirs();
+            if (!created) {
+                throw new PTPException("Failed to create parent directory: " + parentDir.getAbsolutePath());
+            }
+        }
+
         FileOutputStream fos;
         try {
             fos = new FileOutputStream(outputFile);
         } catch (FileNotFoundException e) {
             e.printStackTrace();
-            throw new PTPException("can not import file since the destPath is hit FileNotFoundException");
+            throw new PTPException("can not import file since the destPath is hit FileNotFoundException: " + destPath);
         }
 
         // Use a buffered stream to reduce syscall overhead during writes
@@ -1652,20 +1662,36 @@ public class BaselineInitiator extends NameFactory implements Runnable {
                     downloadFileName = getRandomFileName();
                 }
 
-                File outputFile = new File(new File(fileDownloadPath), downloadFileName);
+                // Ensure download directory exists
+                File downloadDir = new File(fileDownloadPath);
+                if (!downloadDir.exists()) {
+                    boolean created = downloadDir.mkdirs();
+                    if (!created) {
+                        Log.e(TAG, "Failed to create download directory: " + fileDownloadPath);
+                        return false;
+                    }
+                }
+
+                File outputFile = new File(downloadDir, downloadFileName);
                 if (outputFile.exists()) {
                     outputFile.delete();
                 }
                 String outputFilePath = outputFile.getPath();
                 boolean ok = importFile(fileHandle, outputFilePath);
+                if (!ok) {
+                    Log.w(TAG, "importFile returned false for handle " + fileHandle + ", path: " + outputFilePath);
+                }
                 return ok;
             } catch (PTPException e) {
+                Log.e(TAG, "PTPException in processFileAddEvent for handle " + fileHandle + ": " + e.getMessage(), e);
                 e.printStackTrace();
                 return false;
             } catch (IOException e) {
+                Log.e(TAG, "IOException in processFileAddEvent for handle " + fileHandle + ": " + e.getMessage(), e);
                 e.printStackTrace();
                 return false;
             } catch (Exception e) {
+                Log.e(TAG, "Exception in processFileAddEvent for handle " + fileHandle + ": " + e.getMessage(), e);
                 e.printStackTrace();
                 return false;
             }
