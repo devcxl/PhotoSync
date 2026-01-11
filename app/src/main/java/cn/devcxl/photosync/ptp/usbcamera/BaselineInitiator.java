@@ -1495,6 +1495,13 @@ public class BaselineInitiator extends NameFactory implements Runnable {
 
         int[] sids; // 存储设备id列表
         sids = getStorageIds();
+        // 过滤无效存储卡槽，避免空卡槽导致异常中断
+        sids = filterValidStorageIds(sids);
+        if (sids.length == 0) {
+            Log.w(TAG, "未发现可用存储卡槽，停止轮询");
+            pollListTearDown();
+            return;
+        }
         pollListAfterGetStorages(sids);
         if (syncRecordMode == SyncParams.SYNC_RECORD_MODE_REMEMBER) {
             syncDeviceManager = new SyncDeviceManager(device);
@@ -1585,6 +1592,30 @@ public class BaselineInitiator extends NameFactory implements Runnable {
         Log.v(PTP_POLL_LIST, "结束轮询");
     }
 
+    /**
+     * 过滤无效存储ID，避免空卡槽触发异常
+     */
+    private int[] filterValidStorageIds(int[] sids) {
+        if (sids == null || sids.length == 0) {
+            return new int[0];
+        }
+        List<Integer> validSids = new ArrayList<>();
+        for (int sid : sids) {
+            try {
+                StorageInfo info = getStorageInfo(sid);
+                if (info != null) {
+                    validSids.add(sid);
+                }
+            } catch (PTPException e) {
+                Log.w(TAG, "存储卡槽不可用，跳过 sid=" + sid + "，原因=" + e.getMessage());
+            }
+        }
+        int[] result = new int[validSids.size()];
+        for (int i = 0; i < validSids.size(); i++) {
+            result[i] = validSids.get(i);
+        }
+        return result;
+    }
 
     private List<Integer> getAllNewAddedObjectHandles(List<Integer> oldHandles, List<Integer> newHandles) {
         List<Integer> newAdded = new ArrayList<>();
@@ -1600,9 +1631,14 @@ public class BaselineInitiator extends NameFactory implements Runnable {
         List<Integer> objectHandles;
         objectHandles = new ArrayList<Integer>();
         for (int sid : sids) {
-            int[] oneStorageObjectHandles = getObjectHandles(sid, getObjectHandleFilterParam, 0);
-            for (int h : oneStorageObjectHandles) {
-                objectHandles.add(h);
+            try {
+                int[] oneStorageObjectHandles = getObjectHandles(sid, getObjectHandleFilterParam, 0);
+                for (int h : oneStorageObjectHandles) {
+                    objectHandles.add(h);
+                }
+            } catch (PTPException e) {
+                // 单个卡槽不可用时继续轮询其他卡槽
+                Log.w(TAG, "读取存储卡槽失败，跳过 sid=" + sid + "，原因=" + e.getMessage());
             }
         }
         return objectHandles;
