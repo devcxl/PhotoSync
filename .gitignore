@@ -14,3 +14,19 @@
 .cxx
 local.properties
 .secrets
+
+# Local IDE/device/database state
+/.idea/dataSources.xml
+/.idea/dataSources.local.xml
+/.idea/dataSources/
+/.idea/db-forest-config.xml
+/.idea/deploymentTargetSelector.xml
+/.idea/deviceManager.xml
+/.idea/gradle.xml
+/.idea/AndroidProjectSystem.xml
+/.idea/compiler.xml
+/.idea/misc.xml
+/.idea/runConfigurations.xml
+/.idea/inspectionProfiles/
+/.idea/vcs.xml
+/.idea/copilot.data.migration.*.xml

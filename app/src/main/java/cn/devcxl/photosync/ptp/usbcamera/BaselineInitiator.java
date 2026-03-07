@@ -1084,8 +1084,7 @@ public class BaselineInitiator extends NameFactory implements Runnable {
         try {
             fos = new FileOutputStream(outputFile);
         } catch (FileNotFoundException e) {
-            e.printStackTrace();
-            throw new PTPException("can not import file since the destPath is hit FileNotFoundException: " + destPath);
+            throw new PTPException("can not import file since the destPath is hit FileNotFoundException: " + destPath, e);
         }
 
         // Use a buffered stream to reduce syscall overhead during writes
@@ -1454,17 +1453,14 @@ public class BaselineInitiator extends NameFactory implements Runnable {
                 if (singal != null) {
 
 
-                    File outputFile = new File(new File(fileDownloadPath), getSafeFileName(singal.filename));
-                    if (outputFile.exists()) {
-                        outputFile.delete();
-                    }
+                    File outputFile = getAvailableOutputFile(new File(fileDownloadPath), getSafeFileName(singal.filename));
                     String outputFilePath = outputFile.getPath();
                     try {
                         importFile(singal.handle, outputFilePath);
                     } catch (PTPException e) {
-                        e.printStackTrace();
+                        Log.e(TAG, "Failed to import file for handle " + singal.handle + " to " + outputFilePath, e);
                     } catch (IOException e) {
-                        e.printStackTrace();
+                        Log.e(TAG, "I/O error while importing file for handle " + singal.handle + " to " + outputFilePath, e);
                     }
                 }
 
@@ -1708,10 +1704,7 @@ public class BaselineInitiator extends NameFactory implements Runnable {
                     }
                 }
 
-                File outputFile = new File(downloadDir, downloadFileName);
-                if (outputFile.exists()) {
-                    outputFile.delete();
-                }
+                File outputFile = getAvailableOutputFile(downloadDir, downloadFileName);
                 String outputFilePath = outputFile.getPath();
                 boolean ok = importFile(fileHandle, outputFilePath);
                 if (!ok) {
@@ -1720,15 +1713,12 @@ public class BaselineInitiator extends NameFactory implements Runnable {
                 return ok;
             } catch (PTPException e) {
                 Log.e(TAG, "PTPException in processFileAddEvent for handle " + fileHandle + ": " + e.getMessage(), e);
-                e.printStackTrace();
                 return false;
             } catch (IOException e) {
                 Log.e(TAG, "IOException in processFileAddEvent for handle " + fileHandle + ": " + e.getMessage(), e);
-                e.printStackTrace();
                 return false;
             } catch (Exception e) {
                 Log.e(TAG, "Exception in processFileAddEvent for handle " + fileHandle + ": " + e.getMessage(), e);
-                e.printStackTrace();
                 return false;
             }
         }
@@ -1741,6 +1731,28 @@ public class BaselineInitiator extends NameFactory implements Runnable {
         long randIdLong = randId & 0xffffffffl; // to unsigned
         downloadFileName = "tmp_" + randIdLong + ".jpg";
         return downloadFileName;
+    }
+
+    private File getAvailableOutputFile(File directory, String fileName) {
+        File candidate = new File(directory, fileName);
+        if (!candidate.exists()) {
+            return candidate;
+        }
+
+        String baseName = fileName;
+        String extension = "";
+        int dotIndex = fileName.lastIndexOf('.');
+        if (dotIndex > 0) {
+            baseName = fileName.substring(0, dotIndex);
+            extension = fileName.substring(dotIndex);
+        }
+
+        int suffix = 1;
+        while (candidate.exists()) {
+            candidate = new File(directory, baseName + "_" + suffix + extension);
+            suffix++;
+        }
+        return candidate;
     }
 
     private String getSafeFileName(String name) {
