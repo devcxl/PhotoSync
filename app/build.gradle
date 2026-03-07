@@ -120,5 +120,6 @@ dependencies {
     // Added for gallery: swipe and pinch-to-zoom
     implementation libs.androidx.viewpager2
     implementation libs.photoview
+    implementation 'com.davemorrissey.labs:subsampling-scale-image-view-androidx:3.10.0'
 
 }

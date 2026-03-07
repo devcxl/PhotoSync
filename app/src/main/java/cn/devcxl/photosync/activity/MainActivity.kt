@@ -6,6 +6,7 @@ import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.net.Uri
@@ -18,12 +19,18 @@ import android.view.View
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.enableEdgeToEdge
+import androidx.annotation.VisibleForTesting
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.recyclerview.widget.RecyclerView
+import androidx.recyclerview.widget.SimpleItemAnimator
+import androidx.viewpager2.widget.ViewPager2
 import cn.devcxl.photosync.R
+import cn.devcxl.photosync.adapter.JpegSourceInfo
+import cn.devcxl.photosync.adapter.PhotoRenderState
 import cn.devcxl.photosync.ptp.params.SyncParams
 import cn.devcxl.photosync.ptp.usbcamera.BaselineInitiator
 import cn.devcxl.photosync.ptp.usbcamera.InitiatorFactory
@@ -46,6 +53,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import android.app.AlertDialog
+import java.util.Collections
+import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
 
@@ -54,6 +63,9 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val REQ_WRITE_STORAGE = 2001
+        private const val THUMBNAIL_MAX_EDGE_PX = 512
+        private const val FULL_PREVIEW_SCALE_FACTOR = 2
+        private const val FULL_PREVIEW_MAX_EDGE_PX = 4096
         // use App.ACTION_USB_PERMISSION instead of duplicating the constant
     }
 
@@ -65,12 +77,14 @@ class MainActivity : ComponentActivity() {
     private lateinit var dao: PhotoDao
     private var pendingRevealPath: String? = null
 
-    private val bitmapCache: LruCache<String, Bitmap> by lazy {
-        val maxMemKb = (Runtime.getRuntime().maxMemory() / 1024).toInt()
-        val cacheSize = maxMemKb / 8 // Use 1/8 of available memory
-        object : LruCache<String, Bitmap>(cacheSize) {
-            override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount / 1024
-        }
+    private val thumbnailCache: LruCache<String, Bitmap> by lazy { createBitmapCache(16) }
+    private val fullBitmapCache: LruCache<String, Bitmap> by lazy { createBitmapCache(8) }
+    private val inFlightThumbnailPaths = Collections.synchronizedSet(mutableSetOf<String>())
+    private val inFlightFullPaths = Collections.synchronizedSet(mutableSetOf<String>())
+    private val jpegSourceInfoCache = Collections.synchronizedMap(mutableMapOf<String, JpegSourceInfo>())
+    private val previewLongEdgePx: Int by lazy {
+        maxOf(resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
+            .coerceAtLeast(1)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -81,17 +95,35 @@ class MainActivity : ComponentActivity() {
         // init DB/DAO
         dao = AppDatabase.getInstance(this).photoDao()
 
-        // Initialize adapter backed by DB + bitmap cache
+        // Initialize adapter backed by two-level cache.
         adapter = PhotoPagerAdapter(
-            bitmapProvider = { path -> bitmapCache.get(path) },
-            onBindRequest = { path ->
-                // load bitmap thumbnail/full for the page on background (RAW only)
-                decodeBestEffortBitmap(path)
-            }
+            renderStateProvider = { path ->
+                PhotoRenderState(
+                    thumbnail = thumbnailCache.get(path),
+                    full = fullBitmapCache.get(path)
+                )
+            },
+            onBindRequest = { path, position ->
+                ensurePhotoForPosition(path, position)
+            },
+            jpegSourceInfoProvider = { path -> getJpegSourceInfo(path) },
+            isCurrentPageProvider = { position -> position == binding.viewPager.currentItem },
+            isJpegProvider = { path -> isJpegPath(path) },
+            onPhotoScaleChanged = { _, _, _, _ -> }
         )
 
         // Setup ViewPager2
         binding.viewPager.adapter = adapter
+        (binding.viewPager.getChildAt(0) as? RecyclerView)?.let { recyclerView ->
+            (recyclerView.itemAnimator as? SimpleItemAnimator)?.supportsChangeAnimations = false
+            recyclerView.itemAnimator = null
+        }
+        binding.viewPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
+            override fun onPageSelected(position: Int) {
+                adapter.updatePrimaryPosition(position)
+                prefetchAround(position)
+            }
+        })
 
         // Observe DB
         lifecycleScope.launch {
@@ -105,6 +137,11 @@ class MainActivity : ComponentActivity() {
                             binding.viewPager.setCurrentItem(idx, true)
                             pendingRevealPath = null
                         }
+                    }
+                    if (list.isNotEmpty()) {
+                        val currentIndex = binding.viewPager.currentItem.coerceIn(0, list.size - 1)
+                        adapter.updatePrimaryPosition(currentIndex)
+                        prefetchAround(currentIndex)
                     }
                 }
             }
@@ -240,23 +277,134 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun decodeBestEffortBitmap(path: String) {
-        val ext = path.substringAfterLast('.', "").lowercase(Locale.ROOT)
-        // 仅对RAW进行解码，JPEG不在此处解码
-        if (!ExtensionUtils.isRawExtension(ext)) return
+    private fun createBitmapCache(divisor: Int): LruCache<String, Bitmap> {
+        val maxMemKb = (Runtime.getRuntime().maxMemory() / 1024).toInt()
+        val cacheSize = (maxMemKb / divisor).coerceAtLeast(1024)
+        return object : LruCache<String, Bitmap>(cacheSize) {
+            override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount / 1024
+        }
+    }
+
+    private fun ensurePhotoForPosition(path: String, position: Int) {
+        ensureThumbnail(path)
+        if (shouldLoadPreview(isCurrentPage = position == binding.viewPager.currentItem)) {
+            ensureFullPreview(path)
+        }
+    }
+
+    private fun prefetchAround(position: Int) {
+        val current = adapter.getItem(position) ?: return
+        ensureThumbnail(current.path)
+
+        val previous = adapter.getItem(position - 1)
+        val next = adapter.getItem(position + 1)
+        previous?.let { ensureThumbnail(it.path) }
+        next?.let { ensureThumbnail(it.path) }
+    }
+
+    private fun getCurrentEntity(): PhotoEntity? {
+        if (adapter.itemCount == 0) return null
+        val currentIndex = binding.viewPager.currentItem.coerceIn(0, adapter.itemCount - 1)
+        return adapter.getItem(currentIndex)
+    }
+
+    private fun getJpegSourceInfo(path: String): JpegSourceInfo? {
+        if (!isJpegPath(path)) return null
+        jpegSourceInfoCache[path]?.let { return it }
+        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(path, options)
+        if (options.outWidth <= 0 || options.outHeight <= 0) return null
+        return JpegSourceInfo(options.outWidth, options.outHeight).also {
+            jpegSourceInfoCache[path] = it
+        }
+    }
+
+    private fun isJpegPath(path: String): Boolean {
+        return ExtensionUtils.isJpegExtension(path.substringAfterLast('.', "").lowercase(Locale.ROOT))
+    }
+
+    private fun ensureThumbnail(path: String) {
+        if (thumbnailCache.get(path) != null || fullBitmapCache.get(path) != null) return
+        if (!inFlightThumbnailPaths.add(path)) return
         lifecycleScope.launch(Dispatchers.IO) {
-            val bmp: Bitmap? = try {
-                RawWrapper.decodeToBitmap(path)
-            } catch (t: Throwable) {
-                Timber.w(t, "decodeToBitmap failed for path=%s", path)
-                null
-            }
-            if (bmp != null) {
+            try {
+                val bitmap = decodeThumbnailBitmap(path) ?: return@launch
                 withContext(Dispatchers.Main) {
-                    bitmapCache.put(path, bmp)
+                    thumbnailCache.put(path, bitmap)
                     adapter.notifyPathChanged(path)
                 }
+            } finally {
+                inFlightThumbnailPaths.remove(path)
             }
+        }
+    }
+
+    private fun ensureFullPreview(path: String) {
+        if (fullBitmapCache.get(path) != null) return
+        if (!inFlightFullPaths.add(path)) return
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val bitmap = decodeFullPreviewBitmap(path) ?: return@launch
+                withContext(Dispatchers.Main) {
+                    fullBitmapCache.put(path, bitmap)
+                    adapter.notifyPathChanged(path)
+                }
+            } finally {
+                inFlightFullPaths.remove(path)
+            }
+        }
+    }
+
+    private fun decodeThumbnailBitmap(path: String): Bitmap? {
+        val ext = path.substringAfterLast('.', "").lowercase(Locale.ROOT)
+        return try {
+            when {
+                ExtensionUtils.isRawExtension(ext) -> RawWrapper.decodeThumbnailBitmap(path)
+                ExtensionUtils.isJpegExtension(ext) -> decodeSampledBitmap(path, THUMBNAIL_MAX_EDGE_PX)
+                else -> null
+            }
+        } catch (t: Throwable) {
+            Timber.w(t, "decodeThumbnailBitmap failed for path=%s", path)
+            null
+        }
+    }
+
+    private fun decodeFullPreviewBitmap(path: String): Bitmap? {
+        val ext = path.substringAfterLast('.', "").lowercase(Locale.ROOT)
+        return try {
+            when {
+                ExtensionUtils.isRawExtension(ext) -> RawWrapper.decodeToBitmap(path)
+                ExtensionUtils.isJpegExtension(ext) -> {
+                    val targetEdge = (previewLongEdgePx * FULL_PREVIEW_SCALE_FACTOR)
+                        .coerceAtMost(FULL_PREVIEW_MAX_EDGE_PX)
+                    decodeSampledBitmap(path, targetEdge)
+                }
+                else -> null
+            }
+        } catch (t: Throwable) {
+            Timber.w(t, "decodeFullPreviewBitmap failed for path=%s", path)
+            null
+        }
+    }
+
+    private fun decodeSampledBitmap(path: String, targetLongEdge: Int): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(path, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+
+        val srcLongEdge = maxOf(bounds.outWidth, bounds.outHeight)
+        val scale = targetLongEdge.coerceAtLeast(1).toFloat() / srcLongEdge.toFloat()
+        val reqWidth = (bounds.outWidth * scale).roundToInt().coerceAtLeast(1)
+        val reqHeight = (bounds.outHeight * scale).roundToInt().coerceAtLeast(1)
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = calculateInSampleSize(bounds.outWidth, bounds.outHeight, reqWidth, reqHeight)
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+        }
+        return try {
+            BitmapFactory.decodeFile(path, options)
+        } catch (oom: OutOfMemoryError) {
+            Timber.w(oom, "decodeSampledBitmap OOM for path=%s", path)
+            null
         }
     }
 
@@ -307,7 +455,7 @@ class MainActivity : ComponentActivity() {
                     saveFileToGalleryByCopying(File(path), displayName)
                 } else if (ExtensionUtils.isRawExtension(ext)) {
                     // RAW：优先使用缓存Bitmap，否则解码
-                    val bmp = bitmapCache.get(path) ?: try {
+                    val bmp = fullBitmapCache.get(path) ?: try {
                         RawWrapper.decodeToBitmap(path)
                     } catch (_: Throwable) {
                         null
@@ -486,7 +634,10 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 // Remove from cache
-                bitmapCache.remove(entity.path)
+                thumbnailCache.remove(entity.path)
+                fullBitmapCache.remove(entity.path)
+                inFlightThumbnailPaths.remove(entity.path)
+                inFlightFullPaths.remove(entity.path)
 
                 // Delete physical file
                 val file = File(entity.path)
@@ -523,4 +674,33 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+}
+
+@VisibleForTesting
+internal fun shouldLoadPreview(isCurrentPage: Boolean): Boolean {
+    return isCurrentPage
+}
+
+@VisibleForTesting
+internal fun calculateInSampleSize(
+    srcWidth: Int,
+    srcHeight: Int,
+    reqWidth: Int,
+    reqHeight: Int
+): Int {
+    if (srcWidth <= 0 || srcHeight <= 0) return 1
+    if (reqWidth <= 0 || reqHeight <= 0) return 1
+
+    var inSampleSize = 1
+    if (srcHeight > reqHeight || srcWidth > reqWidth) {
+        val halfHeight = srcHeight / 2
+        val halfWidth = srcWidth / 2
+
+        while (halfHeight / inSampleSize >= reqHeight &&
+            halfWidth / inSampleSize >= reqWidth
+        ) {
+            inSampleSize *= 2
+        }
+    }
+    return inSampleSize.coerceAtLeast(1)
 }
