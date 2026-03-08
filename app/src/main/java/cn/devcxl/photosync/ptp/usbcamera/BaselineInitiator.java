@@ -362,6 +362,7 @@ public class BaselineInitiator extends NameFactory implements Runnable {
      * @throws PTPException
      */
     public void close() throws PTPException {
+        pollThreadRunning = false;
         // stop and close polling thead;
         if (pollingThread != null) {
             pollingThread.interrupt();

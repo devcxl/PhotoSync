@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.IntentFilter
 import android.content.pm.ApplicationInfo
 import android.hardware.usb.UsbManager
+import cn.devcxl.photosync.ptp.manager.UsbPtpConnectionController
 import cn.devcxl.photosync.receiver.UsbPermissionReceiver
 import cn.devcxl.photosync.receiver.UsbReceiver
 import cn.devcxl.photosync.wrapper.RawWrapper
@@ -42,19 +43,21 @@ class App : Application() {
         }
     }
 
+    lateinit var usbPtpConnectionController: UsbPtpConnectionController
+        private set
+
     companion object {
         private var instance: App? = null
         const val ACTION_USB_PERMISSION = "cn.devcxl.photosync.USB_PERMISSION"
         fun get(): App? {
             return instance
         }
-
-
     }
 
     override fun onCreate() {
         super.onCreate()
         instance = this
+        usbPtpConnectionController = UsbPtpConnectionController(this)
         // initialize Timber for logging — use debuggable flag instead of generated BuildConfig
         val isDebug = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
         if (isDebug) Timber.plant(Timber.DebugTree())

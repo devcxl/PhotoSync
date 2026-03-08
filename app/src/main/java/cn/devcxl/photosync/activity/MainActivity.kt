@@ -1,14 +1,10 @@
 package cn.devcxl.photosync.activity
 
 import android.Manifest
-import android.app.PendingIntent
 import android.content.ContentValues
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.hardware.usb.UsbDevice
-import android.hardware.usb.UsbManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -28,14 +24,11 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.RecyclerView
 import androidx.recyclerview.widget.SimpleItemAnimator
 import androidx.viewpager2.widget.ViewPager2
+import cn.devcxl.photosync.App
 import cn.devcxl.photosync.R
 import cn.devcxl.photosync.adapter.JpegSourceInfo
 import cn.devcxl.photosync.adapter.PhotoRenderState
-import cn.devcxl.photosync.ptp.params.SyncParams
-import cn.devcxl.photosync.ptp.usbcamera.BaselineInitiator
-import cn.devcxl.photosync.ptp.usbcamera.InitiatorFactory
-import cn.devcxl.photosync.ptp.usbcamera.PTPException
-import cn.devcxl.photosync.ptp.usbcamera.sony.SonyInitiator
+import cn.devcxl.photosync.ptp.manager.UsbPtpConnectionState
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -58,8 +51,9 @@ import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
 
-    private var isOpenConnected: Boolean = false
-    private var bi: BaselineInitiator? = null
+    private val connectionController by lazy {
+        (application as App).usbPtpConnectionController
+    }
 
     companion object {
         private const val REQ_WRITE_STORAGE = 2001
@@ -147,6 +141,16 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                var lastState: UsbPtpConnectionState? = null
+                connectionController.connectionState.collect { state ->
+                    renderUsbConnectionState(state, lastState)
+                    lastState = state
+                }
+            }
+        }
+
         // Setup export button click listener
         binding.exportButton.setOnClickListener { exportCurrent() }
 
@@ -154,7 +158,7 @@ class MainActivity : ComponentActivity() {
         binding.deleteButton.setOnClickListener { showDeleteConfirmDialog() }
 
         enableEdgeToEdge()
-
+        configureConnectionController()
         connectMTPDevice()
     }
 
@@ -164,100 +168,70 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         super.onPause()
-        if (isOpenConnected) {
-            bi!!.closeSession()
-            isOpenConnected = false
-        }
     }
 
     override fun onDestroy() {
+        connectionController.setFileTransferListener(null)
+        connectionController.setFileDownloadedListener(null)
+        connectionController.disconnect("activity_destroyed")
         super.onDestroy()
-        if (isOpenConnected) {
-            bi!!.closeSession()
-            isOpenConnected = false
-        }
     }
 
     fun connectMTPDevice() {
-        val usbManager = getSystemService(USB_SERVICE) as UsbManager
-        val map: MutableMap<String?, UsbDevice?> = usbManager.getDeviceList()
-        val set = map.keys
+        connectionController.scanAndConnectIfPossible()
+    }
 
-        if (set.isEmpty()) {
-            Toast.makeText(this, getString(R.string.toast_no_usb_device), Toast.LENGTH_LONG).show()
-            return
+    private fun configureConnectionController() {
+        connectionController.setFileDownloadPath(externalCacheDir?.absolutePath)
+        connectionController.setFileTransferListener { _, _, totalByteLength, transterByteLength ->
+            val progressPercent = if (totalByteLength > 0) {
+                ((transterByteLength * 100L) / totalByteLength).toInt().coerceIn(0, 100)
+            } else 0
+            lifecycleScope.launch(Dispatchers.Main) {
+                if (binding.progressBar.visibility != View.VISIBLE) {
+                    binding.progressBar.visibility = View.VISIBLE
+                }
+                binding.progressBar.progress = progressPercent
+            }
         }
+        connectionController.setFileDownloadedListener { _, _, localFile, timeduring ->
+            Timber.v("file downloaded at %s, time: %sms", localFile.absolutePath, timeduring)
+            lifecycleScope.launch(Dispatchers.Main) { binding.progressBar.visibility = View.GONE }
 
-        for (s in set) {
-            val device = map[s]
-            if (device == null) continue
-            if (!usbManager.hasPermission(device)) {
-                requestUsbPermission(device)
-                continue
-            } else {
-                performConnect(device)
+            val ext = localFile.extension.lowercase(Locale.ROOT)
+            if (ExtensionUtils.isRawExtension(ext) || ExtensionUtils.isJpegExtension(ext)) {
+                insertItemAndReveal(localFile)
             }
         }
     }
 
-    private fun requestUsbPermission(device: UsbDevice) {
-        val usbManager: UsbManager = getSystemService(USB_SERVICE) as UsbManager
-        val piFlags = PendingIntent.FLAG_IMMUTABLE
-        val permissionIntent = PendingIntent.getBroadcast(
-            this, 0, Intent(cn.devcxl.photosync.App.ACTION_USB_PERMISSION), piFlags
-        )
-        usbManager.requestPermission(device, permissionIntent)
-        Timber.d("请求设备权限 %s", device.deviceName)
-    }
-
-    fun performConnect(device: UsbDevice?) {
-        val usbManager = getSystemService(USB_SERVICE) as UsbManager?
-
-        if (!isOpenConnected) {
-            try {
-                bi = InitiatorFactory.produceInitiator(device, usbManager)
-                bi!!.getClearStatus() // ????
-                bi!!.setSyncTriggerMode(SyncParams.SYNC_TRIGGER_MODE_POLL_LIST)
-                if (bi is SonyInitiator) {
-                    // 索尼只能支持event 模式
-                    bi!!.setSyncTriggerMode(SyncParams.SYNC_TRIGGER_MODE_EVENT)
+    private fun renderUsbConnectionState(
+        state: UsbPtpConnectionState,
+        previousState: UsbPtpConnectionState?
+    ) {
+        when (state) {
+            is UsbPtpConnectionState.Connected -> {
+                if (previousState !is UsbPtpConnectionState.Connected) {
+                    Toast.makeText(this, getString(R.string.toast_device_connected), Toast.LENGTH_LONG).show()
                 }
-                bi!!.openSession()
-
-                isOpenConnected = true
-
-                bi!!.setFileDownloadPath(externalCacheDir!!.absolutePath)
-                bi!!.setFileTransferListener { _, _, totalByteLength, transterByteLength ->
-                    val progressPercent = if (totalByteLength > 0) {
-                        ((transterByteLength * 100L) / totalByteLength).toInt().coerceIn(0, 100)
-                    } else 0
-                    // update UI on Main via lifecycleScope
-                    lifecycleScope.launch(Dispatchers.Main) {
-                        if (binding.progressBar.visibility != View.VISIBLE) {
-                            binding.progressBar.visibility = View.VISIBLE
-                        }
-                        binding.progressBar.progress = progressPercent
-                    }
-                }
-
-                bi!!.setFileDownloadedListener { _, fileHandle, localFile, timeduring ->
-                    Timber.v("file (%s) downloaded at %s, time: %sms", fileHandle, localFile.absolutePath, timeduring)
-                    lifecycleScope.launch(Dispatchers.Main) { binding.progressBar.visibility = View.GONE }
-
-                    // 根据扩展名判断是否为RAW或JPEG，满足则添加到数据库
-                    val ext = localFile.extension.lowercase(Locale.ROOT)
-                    if (ExtensionUtils.isRawExtension(ext) || ExtensionUtils.isJpegExtension(ext)) {
-                        insertItemAndReveal(localFile)
-                    }
-                }
-
-                Toast.makeText(this, getString(R.string.toast_device_connected), Toast.LENGTH_LONG).show()
-            } catch (e: PTPException) {
-                // TODO Auto-generated catch block
-                Timber.e(e, "performConnect failed")
             }
-        } else {
-            Timber.i("设备已经连接，无需重复连接")
+            is UsbPtpConnectionState.Disconnected -> {
+                binding.progressBar.visibility = View.GONE
+                if (state.reason == "no_device" && previousState !is UsbPtpConnectionState.Disconnected) {
+                    Toast.makeText(this, getString(R.string.toast_no_usb_device), Toast.LENGTH_LONG).show()
+                }
+            }
+            is UsbPtpConnectionState.Error -> {
+                binding.progressBar.visibility = View.GONE
+                if (state.reason == "permission_denied") {
+                    return
+                }
+                Timber.w("USB connection error: reason=%s detail=%s", state.reason, state.detail)
+            }
+            is UsbPtpConnectionState.PermissionRequested,
+            is UsbPtpConnectionState.Connecting,
+            is UsbPtpConnectionState.Disconnecting,
+            UsbPtpConnectionState.Idle -> Unit
         }
     }
 
