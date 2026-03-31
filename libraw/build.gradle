@@ -17,8 +17,8 @@ android {
         externalNativeBuild {
             cmake {
                 cppFlags "-std=c++17"
-                // 显式指定 STL 类型，与原 app 配置保持一致
-                arguments "-DANDROID_STL=c++_shared"
+                // 使用静态 STL，避免与 OpenCV 的 libc++_shared.so 冲突
+                arguments "-DANDROID_STL=c++_static"
             }
         }
     }
