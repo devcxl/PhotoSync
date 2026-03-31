@@ -1,0 +1,6 @@
+[submodule "libraw/src/main/cpp/third_party/LibRaw"]
+	path = libraw/src/main/cpp/third_party/LibRaw
+	url = https://github.com/LibRaw/LibRaw.git
+[submodule "libraw/src/main/cpp/third_party/Little-CMS"]
+	path = libraw/src/main/cpp/third_party/Little-CMS
+	url = https://github.com/mm2/Little-CMS.git
