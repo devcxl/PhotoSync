@@ -1,5 +1,12 @@
 # PhotoSync
 
+![Android](https://img.shields.io/badge/Android-7.0%20%28API%2024%29-brightgreen?style=flat-square&logo=android)
+![Kotlin](https://img.shields.io/badge/Kotlin-2.0.21-purple?style=flat-square&logo=kotlin&logoColor=purple)
+![Gradle](https://img.shields.io/badge/Gradle-8.12-yellow?style=flat-square&logo=gradle)
+![NDK](https://img.shields.io/badge/NDK-27.0.12014523-red?style=flat-square&logo=android-ndk)
+![CI](https://img.shields.io/github/actions/workflow/status/devcxl/PhotoSync/release.yml?style=flat-square&logo=github-actions)
+![Stars](https://img.shields.io/github/stars/devcxl/PhotoSync?style=flat-square&logo=github)
+
 Android USB PTP 相机照片同步与预览应用。通过 USB Host 直连相机，在本机缓存 RAW/JPEG，支持滑动阅片、缩放查看、RAW 解码与导出。
 
 ## 功能亮点
