@@ -17,7 +17,7 @@
 
 ---
 
-Android USB PTP camera photo sync and preview app. Connects to cameras directly via USB Host, caches RAW/JPEG locally, supports swipe browsing, pinch-to-zoom, RAW decoding and export.
+PhotoSync is an Android camera companion app designed for photographers and imaging enthusiasts. Connect your camera directly via USB — no Wi-Fi, no desktop software client needed — to browse, zoom, and preview RAW/JPEG photos on your phone, then export them to your system gallery.
 
 ## Features
 
