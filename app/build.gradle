@@ -1,3 +1,12 @@
+buildscript {
+    ext.kotlin_version = '2.0.21'
+    repositories {
+        mavenCentral()
+    }
+    dependencies {
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+    }
+}
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -102,5 +111,9 @@ dependencies {
     implementation libs.androidx.viewpager2
     implementation libs.photoview
     implementation 'com.davemorrissey.labs:subsampling-scale-image-view-androidx:3.10.0'
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:$kotlin_version"
 
+}
+kotlin {
+    jvmToolchain(21)
 }
