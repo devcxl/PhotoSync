@@ -1,6 +1,6 @@
-<p align="center">
-  <img width="128" height="128" src="data:image/svg+xml,%3Csvg%20width%3D%22512%22%20height%3D%22512%22%20viewBox%3D%220%200%20512%20512%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%3Crect%20width%3D%22512%22%20height%3D%22512%22%20rx%3D%2264%22%20fill%3D%22%23F7F4EE%22%2F%3E%3Cpath%20d%3D%22M%20353.5%20412.0%20A%20184%20184%200%201%201%20408.5%20358.9%22%20fill%3D%22none%22%20stroke%3D%22%23D4D4D4%22%20stroke-width%3D%2222%22%20stroke-linecap%3D%22round%22%2F%3E%3Cpath%20d%3D%22M%20408%20333.0%20L%20408.5%20358.9%20L%20431.5%20346%22%20fill%3D%22none%22%20stroke%3D%22%23D4D4D4%22%20stroke-width%3D%2222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%2F%3E%3Ccircle%20cx%3D%22256%22%20cy%3D%22256%22%20r%3D%22144%22%20fill%3D%22%233F7FDC%22%2F%3E%3Ccircle%20cx%3D%22428%22%20cy%3D%2275%22%20r%3D%2221%22%20fill%3D%22%23EA4335%22%2F%3E%3C%2Fsvg%3E">
-</p>
+<div align="center">
+  <img width="128" height="128" src="./docs/logo.svg">
+</div>
 
 <h1 align="center">PhotoSync</h1>
 
