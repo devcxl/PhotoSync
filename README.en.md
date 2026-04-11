@@ -21,11 +21,24 @@ Android USB PTP camera photo sync and preview app. Connects to cameras directly 
 
 ## Features
 
-- **USB PTP Direct Connection** — Supports MTP/PTP protocol for camera connection with automatic device detection
-- **RAW Decoding** — Based on LibRaw + lcms2 color management, supports 20+ RAW formats (ARW, CR3, NEF, DNG, RAF, etc.)
-- **Smooth Browsing** — Thumbnail-first loading with dual-layer bitmap cache and large image tile rendering
-- **Pinch-to-Zoom** — Two-finger zoom and pan for high-resolution photo viewing
-- **Photo Export** — JPEG direct copy (lossless), RAW decoded and exported to system gallery
+- **USB Direct Connection** — Supports MTP/PTP protocol; camera connects to device via USB, no network required
+- **RAW Decoding** — Based on LibRaw + lcms2 color management, supports 20+ formats including ARW, CR3, NEF, DNG, RAF
+- **Smooth Browsing** — Thumbnail-first loading, large image tile rendering, two-finger zoom and pan
+- **Lossless Export** — JPEG direct copy, RAW decoded and saved to system gallery
+
+## Use Cases
+
+- On-location review without draining camera battery
+- Quickly import RAW/JPEG to tablet or large-screen device for review
+- Batch export photos to local storage, no compression, no cloud upload
+
+## Quick Start
+
+1. Connect camera to phone/tablet via USB cable
+2. Set camera to "PC Connection" or "MTP" mode
+3. Open PhotoSync, device is recognized automatically, start browsing and exporting
+
+---
 
 ## Tech Stack
 
@@ -38,6 +51,10 @@ Android USB PTP camera photo sync and preview app. Connects to cameras directly 
 | Image Processing | LibRaw 0.21.4 + lcms2 2.18 + OpenCV 4.12.0 |
 | Architecture | MVVM + Clean Architecture |
 | Min Version | Android 7.0 (API 24) |
+
+## Supported RAW Formats
+
+Sony (ARW/SR2) · Canon (CR2/CR3) · Nikon (NEF/NRW) · Fujifilm (RAF) · Panasonic (RW2) · Adobe (DNG) · Olympus (ORF) · Samsung (SRW) · Pentax (PEF) · Leica (RWL) · Hasselblad (3FR) · and more
 
 ## Project Structure
 
@@ -77,12 +94,3 @@ git submodule update --init --recursive
 ```
 
 APK is generated at `app/build/outputs/apk/debug/app-debug.apk`.
-
-## Supported RAW Formats
-
-Sony (ARW/SR2) · Canon (CR2/CR3) · Nikon (NEF/NRW) · Fujifilm (RAF) · Panasonic (RW2) · Adobe (DNG) · Olympus (ORF) · Samsung (SRW) · Pentax (PEF) · Leica (RWL) · Hasselblad (3FR) · and more
-
-## License
-
-- **LibRaw** — LGPL 2.1 / CDDL 1.0 dual license
-- **Little-CMS** — MIT
