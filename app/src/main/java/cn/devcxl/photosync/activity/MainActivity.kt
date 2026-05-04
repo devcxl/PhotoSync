@@ -79,7 +79,6 @@ class MainActivity : ComponentActivity() {
     private val fullBitmapCache: LruCache<String, Bitmap> by lazy { createBitmapCache(8) }
     private val inFlightThumbnailPaths = Collections.synchronizedSet(mutableSetOf<String>())
     private val inFlightFullPaths = Collections.synchronizedSet(mutableSetOf<String>())
-    private val rawThumbDispatcher = Dispatchers.IO.limitedParallelism(1)
     private val jpegSourceInfoCache = Collections.synchronizedMap(mutableMapOf<String, JpegSourceInfo>())
     private val previewLongEdgePx: Int by lazy {
         maxOf(resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
@@ -305,14 +304,8 @@ class MainActivity : ComponentActivity() {
 
     private fun ensureThumbnail(path: String) {
         if (thumbnailCache.get(path) != null || fullBitmapCache.get(path) != null) return
-        if (!inFlightThumbnailPaths.add(path)) {
-            Timber.d("ensureThumbnail: already in flight for %s", path)
-            return
-        }
-        Timber.d("ensureThumbnail: starting decode for %s", path)
-        val isRaw = ExtensionUtils.isRawExtension(path.substringAfterLast('.', "").lowercase(Locale.ROOT))
-        val dispatcher = if (isRaw) rawThumbDispatcher else Dispatchers.IO
-        lifecycleScope.launch(dispatcher) {
+        if (!inFlightThumbnailPaths.add(path)) return
+        lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val bitmap = decodeThumbnailBitmap(path) ?: return@launch
                 withContext(Dispatchers.Main) {
@@ -345,22 +338,7 @@ class MainActivity : ComponentActivity() {
         val ext = path.substringAfterLast('.', "").lowercase(Locale.ROOT)
         return try {
             when {
-                ExtensionUtils.isRawExtension(ext) -> {
-                    Timber.d("decodeThumbnailBitmap: RAW fast decode for %s", path)
-                    val fast = RawWrapper.decodeToBitmapFast(path, 3) // 1/8 size
-                    if (fast == null) {
-                        Timber.e("decodeThumbnailBitmap: RAW fast decode returned null for %s", path)
-                        return null
-                    }
-                    Timber.d("decodeThumbnailBitmap: RAW fast decoded %dx%d for %s",
-                        fast.width, fast.height, path)
-                    val scale = THUMBNAIL_MAX_EDGE_PX.toFloat() / maxOf(fast.width, fast.height)
-                    if (scale < 1f) {
-                        Bitmap.createScaledBitmap(fast,
-                            (fast.width * scale).roundToInt().coerceAtLeast(1),
-                            (fast.height * scale).roundToInt().coerceAtLeast(1), true)
-                    } else fast
-                }
+                ExtensionUtils.isRawExtension(ext) -> RawWrapper.decodeThumbnailBitmap(path)
                 ExtensionUtils.isJpegExtension(ext) -> decodeSampledBitmap(path, THUMBNAIL_MAX_EDGE_PX)
                 else -> null
             }

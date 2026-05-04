@@ -52,7 +52,7 @@ static const char* safe_strerror(int ret) {
     return s ? s : "unknown error";
 }
 
-// 解码缩略图，返回 JPEG
+// 解码缩略图。JPEG 格式直接返回原始字节，BITMAP 格式返回 [w:4][h:4][R,G,B...]
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_cn_devcxl_photosync_wrapper_RawWrapper_decodeThumbnail(JNIEnv* env, jobject /*thiz*/, jstring jpath) {
     if(!jpath) return nullptr;
@@ -76,12 +76,6 @@ Java_cn_devcxl_photosync_wrapper_RawWrapper_decodeThumbnail(JNIEnv* env, jobject
         return nullptr;
     }
 
-    if(proc.imgdata.thumbnail.tformat != LIBRAW_THUMBNAIL_JPEG) {
-        ALOGE("Thumbnail not JPEG (format=%d) for %s",
-              static_cast<int>(proc.imgdata.thumbnail.tformat), cpath);
-        return nullptr;
-    }
-
     unsigned char* data = reinterpret_cast<unsigned char*>(proc.imgdata.thumbnail.thumb);
     unsigned int len = proc.imgdata.thumbnail.tlength;
     if(!data || len == 0) {
@@ -89,12 +83,56 @@ Java_cn_devcxl_photosync_wrapper_RawWrapper_decodeThumbnail(JNIEnv* env, jobject
         return nullptr;
     }
 
-    jbyteArray out = env->NewByteArray(static_cast<jsize>(len));
-    if(out) {
-        env->SetByteArrayRegion(out, 0, static_cast<jsize>(len),
-                                 reinterpret_cast<jbyte*>(data));
+    if(proc.imgdata.thumbnail.tformat == LIBRAW_THUMBNAIL_JPEG) {
+        jbyteArray out = env->NewByteArray(static_cast<jsize>(len));
+        if(out) {
+            env->SetByteArrayRegion(out, 0, static_cast<jsize>(len),
+                                     reinterpret_cast<jbyte*>(data));
+        }
+        ALOGI("JPEG thumbnail %ux%u from %s",
+              proc.imgdata.thumbnail.twidth, proc.imgdata.thumbnail.theight, cpath);
+        return out;
     }
-    // proc.recycle() called by LibRawGuard destructor after successful path
+
+    // BITMAP format: convert raw pixel data to [w:4][h:4][R,G,B...]
+    const uint32_t tw = proc.imgdata.thumbnail.twidth;
+    const uint32_t th = proc.imgdata.thumbnail.theight;
+    if(tw == 0 || th == 0 || tw > 8000 || th > 8000) {
+        ALOGE("Invalid thumbnail dimensions %ux%u for %s", tw, th, cpath);
+        return nullptr;
+    }
+
+    const size_t pixelCount = static_cast<size_t>(tw) * static_cast<size_t>(th);
+    const size_t rgbBytes = pixelCount * 3UL;
+    const size_t totalBytes = 8 + rgbBytes;
+
+    jbyteArray out = env->NewByteArray(static_cast<jsize>(totalBytes));
+    if(!out) return nullptr;
+
+    std::unique_ptr<unsigned char[]> buffer;
+    try { buffer = std::make_unique<unsigned char[]>(totalBytes); }
+    catch(const std::bad_alloc&) { return nullptr; }
+
+    buffer[0] = static_cast<unsigned char>((tw >>  0) & 0xFF);
+    buffer[1] = static_cast<unsigned char>((tw >>  8) & 0xFF);
+    buffer[2] = static_cast<unsigned char>((tw >> 16) & 0xFF);
+    buffer[3] = static_cast<unsigned char>((tw >> 24) & 0xFF);
+    buffer[4] = static_cast<unsigned char>((th >>  0) & 0xFF);
+    buffer[5] = static_cast<unsigned char>((th >>  8) & 0xFF);
+    buffer[6] = static_cast<unsigned char>((th >> 16) & 0xFF);
+    buffer[7] = static_cast<unsigned char>((th >> 24) & 0xFF);
+
+    unsigned char* dst = buffer.get() + 8;
+    for(size_t i = 0; i < pixelCount; i++) {
+        *dst++ = data[i * 3 + 0]; // R
+        *dst++ = data[i * 3 + 1]; // G
+        *dst++ = data[i * 3 + 2]; // B
+    }
+
+    env->SetByteArrayRegion(out, 0, static_cast<jsize>(totalBytes),
+                             reinterpret_cast<const jbyte*>(buffer.get()));
+    ALOGI("BITMAP thumbnail %ux%u (fmt=%d) from %s",
+          tw, th, static_cast<int>(proc.imgdata.thumbnail.tformat), cpath);
     return out;
 }
 
@@ -315,103 +353,5 @@ Java_cn_devcxl_photosync_wrapper_RawWrapper_decodeToRGB(JNIEnv* env, jobject /*t
     ALOGI("Successfully decoded RAW %ux%u (%" PRIu64 " bytes) from %s",
           width, height, static_cast<uint64_t>(totalBytes), cpath);
 
-    return out;
-}
-
-// 快速缩略图解码：使用 half_size=3 (1/8) + 线性插值，速度提升 10-20 倍
-extern "C" JNIEXPORT jbyteArray JNICALL
-Java_cn_devcxl_photosync_wrapper_RawWrapper_decodeToRGBFast(JNIEnv* env, jobject /*thiz*/, jstring jpath, jint halfSize) {
-    if(!jpath) return nullptr;
-
-    const char* cpath = env->GetStringUTFChars(jpath, nullptr);
-    if(!cpath) return nullptr;
-    PathGuard pathGuard{env, jpath, cpath};
-
-    LibRaw proc;
-    LibRawGuard procGuard(&proc);
-
-    libraw_output_params_t& params = proc.imgdata.params;
-
-    params.half_size    = halfSize; // 0=full, 1=1/2, 2=1/4, 3=1/8
-    params.user_qual    = 0;        // 线性插值（最快）
-    params.output_bps   = 8;
-    params.output_color = 1;
-    params.output_tiff  = 0;
-    params.use_camera_wb = 1;
-    params.highlight    = 0;        // 裁剪高光（最快）
-    params.no_auto_bright = 1;
-
-    int ret = proc.open_file(cpath);
-    if(ret != LIBRAW_SUCCESS) {
-        ALOGE("open_file failed (%d): %s for %s", ret, safe_strerror(ret), cpath);
-        return nullptr;
-    }
-
-    ret = proc.unpack();
-    if(ret != LIBRAW_SUCCESS) {
-        ALOGE("unpack failed (%d): %s for %s", ret, safe_strerror(ret), cpath);
-        return nullptr;
-    }
-
-    ret = proc.dcraw_process();
-    if(ret != LIBRAW_SUCCESS) {
-        ALOGE("dcraw_process failed (%d): %s for %s", ret, safe_strerror(ret), cpath);
-        return nullptr;
-    }
-
-    int imgRet = LIBRAW_SUCCESS;
-    libraw_processed_image_t* img = proc.dcraw_make_mem_image(&imgRet);
-    if(!img || imgRet != LIBRAW_SUCCESS) {
-        ALOGE("dcraw_make_mem_image failed for %s", cpath);
-        if(img) LibRaw::dcraw_clear_mem(img);
-        return nullptr;
-    }
-    ImageGuard imgGuard(img);
-
-    const uint32_t width  = img->width;
-    const uint32_t height = img->height;
-
-    if(width == 0 || height == 0 || width > 65535 || height > 65535) {
-        ALOGE("Invalid dimensions %ux%u for %s", width, height, cpath);
-        return nullptr;
-    }
-
-    const size_t pixelBytes = static_cast<size_t>(width) * static_cast<size_t>(height) * 3UL;
-    const size_t totalBytes = 8 + pixelBytes;
-    const size_t expectedDataSize = static_cast<size_t>(width) * static_cast<size_t>(height) *
-                                    (img->bits / 8) * static_cast<size_t>(img->colors);
-
-    if(pixelBytes > MAX_PIXEL_BYTES || img->data_size < expectedDataSize) {
-        ALOGE("Data size mismatch or too large for %s", cpath);
-        return nullptr;
-    }
-
-    jbyteArray out = env->NewByteArray(static_cast<jsize>(totalBytes));
-    if(!out) return nullptr;
-
-    std::unique_ptr<unsigned char[]> buffer;
-    try {
-        buffer = std::make_unique<unsigned char[]>(totalBytes);
-    } catch(const std::bad_alloc&) { return nullptr; }
-
-    buffer[0] = static_cast<unsigned char>((width >>  0) & 0xFF);
-    buffer[1] = static_cast<unsigned char>((width >>  8) & 0xFF);
-    buffer[2] = static_cast<unsigned char>((width >> 16) & 0xFF);
-    buffer[3] = static_cast<unsigned char>((width >> 24) & 0xFF);
-    buffer[4] = static_cast<unsigned char>((height >>  0) & 0xFF);
-    buffer[5] = static_cast<unsigned char>((height >>  8) & 0xFF);
-    buffer[6] = static_cast<unsigned char>((height >> 16) & 0xFF);
-    buffer[7] = static_cast<unsigned char>((height >> 24) & 0xFF);
-
-    std::memcpy(buffer.get() + 8, img->data, pixelBytes);
-    env->SetByteArrayRegion(out, 0, static_cast<jsize>(totalBytes),
-                             reinterpret_cast<const jbyte*>(buffer.get()));
-
-    if(env->ExceptionCheck()) return nullptr;
-
-    imgGuard.release();
-    procGuard.invalidate();
-
-    ALOGI("Fast decoded RAW %ux%u (half=%d) from %s", width, height, halfSize, cpath);
     return out;
 }

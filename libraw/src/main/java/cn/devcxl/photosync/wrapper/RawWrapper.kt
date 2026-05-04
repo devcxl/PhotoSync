@@ -11,42 +11,28 @@ object RawWrapper {
     external fun version(): String
     external fun decodeThumbnail(path: String): ByteArray?
     external fun decodeToRGB(path: String): ByteArray?
-    external fun decodeToRGBFast(path: String, halfSize: Int): ByteArray?
 
     /**
-     * 解码嵌入 JPEG 缩略图并转成 Bitmap；失败返回 null。
+     * 解码缩略图为 Bitmap。先尝试嵌入式 JPEG，失败则尝试 BITMAP 格式。
      */
     fun decodeThumbnailBitmap(path: String): Bitmap? {
-        val jpg = decodeThumbnail(path) ?: return null
-        return BitmapFactory.decodeByteArray(jpg, 0, jpg.size)
+        val data = decodeThumbnail(path) ?: return null
+        if (data.size < 8) return null
+        // 判断：JPEG 以 0xFF 0xD8 开头，BITMAP 格式以 [w:4][h:4] 开头
+        if (data[0].toInt() and 0xFF == 0xFF && data[1].toInt() and 0xFF == 0xD8) {
+            return BitmapFactory.decodeByteArray(data, 0, data.size)
+        }
+        return rgbResultToBitmap(data, null)
     }
 
-
     /**
-     * 完整解码 RAW -> 8bit RGB，返回 Bitmap (ARGB_8888，Alpha 固定 0xFF)。失败返回 null。
+     * 完整解码 RAW -> 8bit RGB Bitmap。失败返回 null。
      */
     fun decodeToBitmap(path: String, reuse: Bitmap? = null): Bitmap? {
         val data = decodeToRGB(path) ?: return null
         return rgbResultToBitmap(data, reuse)
     }
 
-    /**
-     * 快速缩略图解码：half_size 缩小 + 线性插值，速度提升 10-20 倍。
-     * halfSize: 0=原尺寸, 1=1/2, 2=1/4, 3=1/8
-     */
-    fun decodeToBitmapFast(path: String, halfSize: Int): Bitmap? {
-        val data = decodeToRGBFast(path, halfSize) ?: return null
-        return rgbResultToBitmap(data, null)
-    }
-
-
-
-    /**
-     * 将 decodeToRGB 返回的字节数组转换为 ARGB_8888 Bitmap。
-     *
-     * RGB 数据布局: [w:4][h:4][R,G,B,R,G,B,...]
-     * 每像素 3 字节紧凑存储（无 padding），直接循环展开转换。
-     */
     fun rgbResultToBitmap(data: ByteArray, reuse: Bitmap? = null): Bitmap? {
         if (data.size < 8) return null
         val width = leInt(data, 0)
@@ -63,14 +49,10 @@ object RawWrapper {
         }
 
         val pixels = IntArray(width * height)
-        var i = 8  // data offset after width+height header
+        var i = 8
         var p = 0
-        val len = pixels.size
-        // Unrolled-friendly loop with local refs for JIT optimization
         val d = data
-        while (p < len) {
-            // R, G, B as 0..255 → pack into ARGB (A=0xFF)
-            // Little-endian read: data[i]=R, data[i+1]=G, data[i+2]=B
+        while (p < pixels.size) {
             val r = d[i++].toInt() and 0xFF
             val g = d[i++].toInt() and 0xFF
             val b = d[i++].toInt() and 0xFF
