@@ -325,6 +325,12 @@ class MainActivity : ComponentActivity() {
     private fun ensureFullPreview(path: String) {
         if (fullBitmapCache.get(path) != null) return
         if (!inFlightFullPaths.add(path)) return
+        val isRaw = ExtensionUtils.isRawExtension(
+            path.substringAfterLast('.', "").lowercase(Locale.ROOT))
+        if (isRaw) {
+            inFlightFullPaths.remove(path)
+            return
+        }
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val bitmap = decodeFullPreviewBitmap(path) ?: return@launch
@@ -363,7 +369,7 @@ class MainActivity : ComponentActivity() {
         val ext = path.substringAfterLast('.', "").lowercase(Locale.ROOT)
         return try {
             when {
-                ExtensionUtils.isRawExtension(ext) -> RawWrapper.decodeToBitmap(path)
+                ExtensionUtils.isRawExtension(ext) -> RawWrapper.decodeThumbnailBitmap(path)
                 ExtensionUtils.isJpegExtension(ext) -> {
                     val targetEdge = (previewLongEdgePx * FULL_PREVIEW_SCALE_FACTOR)
                         .coerceAtMost(FULL_PREVIEW_MAX_EDGE_PX)
