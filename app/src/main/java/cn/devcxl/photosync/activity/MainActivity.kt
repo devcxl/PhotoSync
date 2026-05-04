@@ -305,29 +305,11 @@ class MainActivity : ComponentActivity() {
     private fun ensureThumbnail(path: String) {
         if (thumbnailCache.get(path) != null || fullBitmapCache.get(path) != null) return
         if (!inFlightThumbnailPaths.add(path)) return
-        val isRaw = ExtensionUtils.isRawExtension(path.substringAfterLast('.', "").lowercase(Locale.ROOT))
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val bitmap = decodeThumbnailBitmap(path)
-                if (bitmap != null) {
-                    withContext(Dispatchers.Main) {
-                        thumbnailCache.put(path, bitmap)
-                        adapter.notifyPathChanged(path)
-                    }
-                    return@launch
-                }
-                if (!isRaw) return@launch
-
-                val full = decodeFullPreviewBitmap(path) ?: return@launch
-                fullBitmapCache.put(path, full)
-                val scale = THUMBNAIL_MAX_EDGE_PX.toFloat() / maxOf(full.width, full.height)
-                val thumb = if (scale < 1f) {
-                    Bitmap.createScaledBitmap(full,
-                        (full.width * scale).roundToInt().coerceAtLeast(1),
-                        (full.height * scale).roundToInt().coerceAtLeast(1), true)
-                } else full
+                val bitmap = decodeThumbnailBitmap(path) ?: return@launch
                 withContext(Dispatchers.Main) {
-                    thumbnailCache.put(path, thumb)
+                    thumbnailCache.put(path, bitmap)
                     adapter.notifyPathChanged(path)
                 }
             } finally {
@@ -356,7 +338,16 @@ class MainActivity : ComponentActivity() {
         val ext = path.substringAfterLast('.', "").lowercase(Locale.ROOT)
         return try {
             when {
-                ExtensionUtils.isRawExtension(ext) -> RawWrapper.decodeThumbnailBitmap(path)
+                ExtensionUtils.isRawExtension(ext) -> {
+                    val full = RawWrapper.decodeToBitmap(path) ?: return null
+                    fullBitmapCache.put(path, full)
+                    val scale = THUMBNAIL_MAX_EDGE_PX.toFloat() / maxOf(full.width, full.height)
+                    if (scale < 1f) {
+                        Bitmap.createScaledBitmap(full,
+                            (full.width * scale).roundToInt().coerceAtLeast(1),
+                            (full.height * scale).roundToInt().coerceAtLeast(1), true)
+                    } else full
+                }
                 ExtensionUtils.isJpegExtension(ext) -> decodeSampledBitmap(path, THUMBNAIL_MAX_EDGE_PX)
                 else -> null
             }
