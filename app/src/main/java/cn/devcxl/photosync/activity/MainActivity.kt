@@ -304,7 +304,11 @@ class MainActivity : ComponentActivity() {
 
     private fun ensureThumbnail(path: String) {
         if (thumbnailCache.get(path) != null || fullBitmapCache.get(path) != null) return
-        if (!inFlightThumbnailPaths.add(path)) return
+        if (!inFlightThumbnailPaths.add(path)) {
+            Timber.d("ensureThumbnail: already in flight for %s", path)
+            return
+        }
+        Timber.d("ensureThumbnail: starting decode for %s", path)
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val bitmap = decodeThumbnailBitmap(path) ?: return@launch
@@ -339,7 +343,13 @@ class MainActivity : ComponentActivity() {
         return try {
             when {
                 ExtensionUtils.isRawExtension(ext) -> {
-                    val full = RawWrapper.decodeToBitmap(path) ?: return null
+                    Timber.d("decodeThumbnailBitmap: RAW full decode for %s", path)
+                    val full = RawWrapper.decodeToBitmap(path)
+                    if (full == null) {
+                        Timber.e("decodeThumbnailBitmap: RAW full decode returned null for %s", path)
+                        return null
+                    }
+                    Timber.d("decodeThumbnailBitmap: RAW decoded %dx%d for %s", full.width, full.height, path)
                     fullBitmapCache.put(path, full)
                     val scale = THUMBNAIL_MAX_EDGE_PX.toFloat() / maxOf(full.width, full.height)
                     if (scale < 1f) {
