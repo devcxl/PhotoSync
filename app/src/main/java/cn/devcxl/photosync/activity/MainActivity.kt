@@ -204,7 +204,11 @@ class MainActivity : ComponentActivity() {
             lifecycleScope.launch(Dispatchers.Main) { binding.progressBar.visibility = View.GONE }
 
             val ext = localFile.extension.lowercase(Locale.ROOT)
-            if (ExtensionUtils.isRawExtension(ext) || ExtensionUtils.isJpegExtension(ext)) {
+            val isRaw = ExtensionUtils.isRawExtension(ext)
+            val isJpeg = ExtensionUtils.isJpegExtension(ext)
+            Timber.d("file downloaded: %s ext=%s raw=%b jpeg=%b",
+                localFile.name, ext, isRaw, isJpeg)
+            if (isRaw || isJpeg) {
                 insertItemAndReveal(localFile)
             }
         }
@@ -338,9 +342,16 @@ class MainActivity : ComponentActivity() {
         val ext = path.substringAfterLast('.', "").lowercase(Locale.ROOT)
         return try {
             when {
-                ExtensionUtils.isRawExtension(ext) -> RawWrapper.decodeThumbnailBitmap(path)
+                ExtensionUtils.isRawExtension(ext) -> {
+                    val bmp = RawWrapper.decodeThumbnailBitmap(path)
+                    if (bmp == null) Timber.w("RAW thumbnail decode returned null: %s", path)
+                    bmp
+                }
                 ExtensionUtils.isJpegExtension(ext) -> decodeSampledBitmap(path, THUMBNAIL_MAX_EDGE_PX)
-                else -> null
+                else -> {
+                    Timber.w("unknown extension for thumbnail: ext=%s path=%s", ext, path)
+                    null
+                }
             }
         } catch (e: Exception) {
             Timber.w(e, "decodeThumbnailBitmap failed for path=%s", path)

@@ -2,8 +2,10 @@ package cn.devcxl.photosync.wrapper
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.util.Log
 
 object RawWrapper {
+    private const val TAG = "RawWrapper"
     init {
         System.loadLibrary("raw_wrapper")
     }
@@ -16,11 +18,21 @@ object RawWrapper {
      * 解码缩略图为 Bitmap。先尝试嵌入式 JPEG，失败则尝试 BITMAP 格式。
      */
     fun decodeThumbnailBitmap(path: String): Bitmap? {
-        val data = decodeThumbnail(path) ?: return null
-        if (data.size < 8) return null
-        // 判断：JPEG 以 0xFF 0xD8 开头，BITMAP 格式以 [w:4][h:4] 开头
-        if (data[0].toInt() and 0xFF == 0xFF && data[1].toInt() and 0xFF == 0xD8) {
-            return BitmapFactory.decodeByteArray(data, 0, data.size)
+        val data = decodeThumbnail(path)
+        if (data == null) {
+            Log.w(TAG, "decodeThumbnail returned null for $path")
+            return null
+        }
+        if (data.size < 8) {
+            Log.w(TAG, "decodeThumbnail returned too-small data (${data.size} bytes) for $path")
+            return null
+        }
+        val isJpeg = data[0].toInt() and 0xFF == 0xFF && data[1].toInt() and 0xFF == 0xD8
+        Log.d(TAG, "decodeThumbnail returned ${data.size}B, isJpeg=$isJpeg, path=$path")
+        if (isJpeg) {
+            val bmp = BitmapFactory.decodeByteArray(data, 0, data.size)
+            if (bmp == null) Log.w(TAG, "BitmapFactory failed to decode JPEG thumbnail for $path")
+            return bmp
         }
         return rgbResultToBitmap(data, null)
     }
