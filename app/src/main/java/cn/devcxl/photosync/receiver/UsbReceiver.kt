@@ -10,6 +10,9 @@ import cn.devcxl.photosync.App
 import cn.devcxl.photosync.R
 import timber.log.Timber
 
+/**
+ * Broadcast receiver that listens for USB device attach/detach events.
+ */
 class UsbReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val device = intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)

@@ -10,6 +10,9 @@ import cn.devcxl.photosync.App
 import cn.devcxl.photosync.R
 import timber.log.Timber
 
+/**
+ * Broadcast receiver that handles USB permission grant/deny results.
+ */
 class UsbPermissionReceiver : BroadcastReceiver() {
 
     companion object {

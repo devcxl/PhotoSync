@@ -25,6 +25,10 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
 
+/**
+ * Manages the lifecycle of a USB PTP connection: scanning, connecting, disconnecting,
+ * and routing file-transfer events. Exposes a [StateFlow] of [UsbPtpConnectionState].
+ */
 class UsbPtpConnectionController(
     context: Context,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
@@ -196,7 +200,7 @@ class UsbPtpConnectionController(
             downloadedListener?.let(produced::setFileDownloadedListener)
             produced.openSession()
             produced
-        } catch (e: Throwable) {
+        } catch (e: Exception) {
             pendingPermissionDeviceId = null
             _connectionState.value = UsbPtpConnectionState.Error(deviceId, "connect_failed", e.message)
             Timber.e(e, "connectInternal failed")
@@ -244,7 +248,7 @@ class UsbPtpConnectionController(
             initiatorToClose?.close()
         } catch (e: PTPException) {
             Timber.w(e, "disconnectInternal close failed")
-        } catch (e: Throwable) {
+        } catch (e: Exception) {
             Timber.w(e, "disconnectInternal unexpected close failure")
         }
 

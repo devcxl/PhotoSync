@@ -2,6 +2,9 @@ package cn.devcxl.photosync.ptp.manager
 
 import android.hardware.usb.UsbDevice
 
+/**
+ * Sealed class representing the current state of a USB PTP connection.
+ */
 sealed class UsbPtpConnectionState {
     data object Idle : UsbPtpConnectionState()
 
