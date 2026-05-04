@@ -1,6 +1,16 @@
 package cn.devcxl.photosync.activity
 
+import kotlin.math.roundToInt
+
+import java.io.File
+import java.io.FileOutputStream
+import java.text.SimpleDateFormat
+import java.util.Collections
+import java.util.Date
+import java.util.Locale
+
 import android.Manifest
+import android.app.AlertDialog
 import android.content.ContentValues
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -24,30 +34,24 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.RecyclerView
 import androidx.recyclerview.widget.SimpleItemAnimator
 import androidx.viewpager2.widget.ViewPager2
-import cn.devcxl.photosync.App
-import cn.devcxl.photosync.R
-import cn.devcxl.photosync.adapter.JpegSourceInfo
-import cn.devcxl.photosync.adapter.PhotoRenderState
-import cn.devcxl.photosync.ptp.manager.UsbPtpConnectionState
-import java.io.File
-import java.io.FileOutputStream
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-import cn.devcxl.photosync.adapter.PhotoPagerAdapter
-import cn.devcxl.photosync.data.AppDatabase
-import cn.devcxl.photosync.data.PhotoDao
-import cn.devcxl.photosync.data.entity.PhotoEntity
-import cn.devcxl.photosync.databinding.ActivityMainBinding
-import cn.devcxl.photosync.utils.ExtensionUtils
-import cn.devcxl.photosync.wrapper.RawWrapper
+
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
-import android.app.AlertDialog
-import java.util.Collections
-import kotlin.math.roundToInt
+
+import cn.devcxl.photosync.App
+import cn.devcxl.photosync.R
+import cn.devcxl.photosync.adapter.JpegSourceInfo
+import cn.devcxl.photosync.adapter.PhotoPagerAdapter
+import cn.devcxl.photosync.adapter.PhotoRenderState
+import cn.devcxl.photosync.data.AppDatabase
+import cn.devcxl.photosync.data.PhotoDao
+import cn.devcxl.photosync.data.entity.PhotoEntity
+import cn.devcxl.photosync.databinding.ActivityMainBinding
+import cn.devcxl.photosync.ptp.manager.UsbPtpConnectionState
+import cn.devcxl.photosync.utils.ExtensionUtils
+import cn.devcxl.photosync.wrapper.RawWrapper
 
 class MainActivity : ComponentActivity() {
 
@@ -85,11 +89,22 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        setupDao()
+        setupAdapter()
+        setupViewPager()
+        observeDatabase()
+        observeConnectionState()
+        setupButtons()
+        enableEdgeToEdge()
+        configureConnectionController()
+        connectMTPDevice()
+    }
 
-        // init DB/DAO
+    private fun setupDao() {
         dao = AppDatabase.getInstance(this).photoDao()
+    }
 
-        // Initialize adapter backed by two-level cache.
+    private fun setupAdapter() {
         adapter = PhotoPagerAdapter(
             renderStateProvider = { path ->
                 PhotoRenderState(
@@ -105,8 +120,9 @@ class MainActivity : ComponentActivity() {
             isJpegProvider = { path -> isJpegPath(path) },
             onPhotoScaleChanged = { _, _, _, _ -> }
         )
+    }
 
-        // Setup ViewPager2
+    private fun setupViewPager() {
         binding.viewPager.adapter = adapter
         (binding.viewPager.getChildAt(0) as? RecyclerView)?.let { recyclerView ->
             (recyclerView.itemAnimator as? SimpleItemAnimator)?.supportsChangeAnimations = false
@@ -118,13 +134,13 @@ class MainActivity : ComponentActivity() {
                 prefetchAround(position)
             }
         })
+    }
 
-        // Observe DB
+    private fun observeDatabase() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 dao.getAllFlow().collect { list ->
                     adapter.updateItems(list.toList())
-                    // Scroll to newly inserted item if pending
                     pendingRevealPath?.let { target ->
                         val idx = list.indexOfFirst { it.path == target }
                         if (idx >= 0) {
@@ -140,7 +156,9 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
 
+    private fun observeConnectionState() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 var lastState: UsbPtpConnectionState? = null
@@ -150,24 +168,11 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
 
-        // Setup export button click listener
+    private fun setupButtons() {
         binding.exportButton.setOnClickListener { exportCurrent() }
-
-        // Setup delete button click listener
         binding.deleteButton.setOnClickListener { showDeleteConfirmDialog() }
-
-        enableEdgeToEdge()
-        configureConnectionController()
-        connectMTPDevice()
-    }
-
-    override fun onResume() {
-        super.onResume()
-    }
-
-    override fun onPause() {
-        super.onPause()
     }
 
     override fun onDestroy() {
@@ -245,8 +250,8 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 dao.insert(entity)
-            } catch (t: Throwable) {
-                Timber.e(t, "DB insert failed")
+            } catch (e: Exception) {
+                Timber.e(e, "DB insert failed")
             }
         }
     }
@@ -337,8 +342,8 @@ class MainActivity : ComponentActivity() {
                 ExtensionUtils.isJpegExtension(ext) -> decodeSampledBitmap(path, THUMBNAIL_MAX_EDGE_PX)
                 else -> null
             }
-        } catch (t: Throwable) {
-            Timber.w(t, "decodeThumbnailBitmap failed for path=%s", path)
+        } catch (e: Exception) {
+            Timber.w(e, "decodeThumbnailBitmap failed for path=%s", path)
             null
         }
     }
@@ -355,8 +360,8 @@ class MainActivity : ComponentActivity() {
                 }
                 else -> null
             }
-        } catch (t: Throwable) {
-            Timber.w(t, "decodeFullPreviewBitmap failed for path=%s", path)
+        } catch (e: Exception) {
+            Timber.w(e, "decodeFullPreviewBitmap failed for path=%s", path)
             null
         }
     }
@@ -406,7 +411,6 @@ class MainActivity : ComponentActivity() {
         exportIndex(index)
     }
 
-
     private fun exportIndex(index: Int) {
         val entity = adapter.getItem(index) ?: return
         val displayEntityName = entity.name ?: getString(R.string.photo_default_name)
@@ -431,7 +435,8 @@ class MainActivity : ComponentActivity() {
                     // RAW：优先使用缓存Bitmap，否则解码
                     val bmp = fullBitmapCache.get(path) ?: try {
                         RawWrapper.decodeToBitmap(path)
-                    } catch (_: Throwable) {
+                    } catch (e: Exception) {
+                        Timber.w(e, "RAW decode failed for path=%s, falling back to null", path)
                         null
                     }
                     if (bmp != null) saveBitmapToGallery(bmp, displayName) else null

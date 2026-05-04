@@ -5,10 +5,12 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.RecyclerView
-import cn.devcxl.photosync.data.entity.PhotoEntity
+
 import com.davemorrissey.labs.subscaleview.ImageSource
 import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
 import com.github.chrisbanes.photoview.PhotoView
+
+import cn.devcxl.photosync.data.entity.PhotoEntity
 
 data class PhotoRenderState(
     val thumbnail: Bitmap?,
@@ -285,7 +287,14 @@ class PhotoPagerAdapter(
                 bindJpegTiled(path, renderState, isCurrentPage, jpegSourceInfo)
                 return
             }
+            bindPhotoView(path, renderState, onPhotoScaleChanged)
+        }
 
+        private fun bindPhotoView(
+            path: String,
+            renderState: PhotoRenderState,
+            onPhotoScaleChanged: (String, Int, Float, Float) -> Unit
+        ) {
             if (currentViewerMode == PhotoViewerMode.JPEG_TILED) {
                 jpegDetailView.recycle()
                 currentJpegPreviewStage = PhotoRenderStage.EMPTY
