@@ -348,20 +348,20 @@ class MainActivity : ComponentActivity() {
         return try {
             when {
                 ExtensionUtils.isRawExtension(ext) -> {
-                    Timber.d("decodeThumbnailBitmap: RAW full decode for %s", path)
-                    val full = RawWrapper.decodeToBitmap(path)
-                    if (full == null) {
-                        Timber.e("decodeThumbnailBitmap: RAW full decode returned null for %s", path)
+                    Timber.d("decodeThumbnailBitmap: RAW fast decode for %s", path)
+                    val fast = RawWrapper.decodeToBitmapFast(path, 3) // 1/8 size
+                    if (fast == null) {
+                        Timber.e("decodeThumbnailBitmap: RAW fast decode returned null for %s", path)
                         return null
                     }
-                    Timber.d("decodeThumbnailBitmap: RAW decoded %dx%d for %s", full.width, full.height, path)
-                    fullBitmapCache.put(path, full)
-                    val scale = THUMBNAIL_MAX_EDGE_PX.toFloat() / maxOf(full.width, full.height)
+                    Timber.d("decodeThumbnailBitmap: RAW fast decoded %dx%d for %s",
+                        fast.width, fast.height, path)
+                    val scale = THUMBNAIL_MAX_EDGE_PX.toFloat() / maxOf(fast.width, fast.height)
                     if (scale < 1f) {
-                        Bitmap.createScaledBitmap(full,
-                            (full.width * scale).roundToInt().coerceAtLeast(1),
-                            (full.height * scale).roundToInt().coerceAtLeast(1), true)
-                    } else full
+                        Bitmap.createScaledBitmap(fast,
+                            (fast.width * scale).roundToInt().coerceAtLeast(1),
+                            (fast.height * scale).roundToInt().coerceAtLeast(1), true)
+                    } else fast
                 }
                 ExtensionUtils.isJpegExtension(ext) -> decodeSampledBitmap(path, THUMBNAIL_MAX_EDGE_PX)
                 else -> null
