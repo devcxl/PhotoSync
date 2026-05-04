@@ -25,7 +25,7 @@ import timber.log.Timber
 @Suppress("DEPRECATION")
 class App : Application() {
 
-    private var usbReceiver: UsbReceiver = UsbReceiver()
+    private val usbReceiver: UsbReceiver = UsbReceiver()
     private val usbPermissionReceiver: UsbPermissionReceiver = UsbPermissionReceiver()
     private val deviceFilter = IntentFilter().apply {
         addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
@@ -65,8 +65,8 @@ class App : Application() {
         try {
             val ver = RawWrapper.version()
             Timber.i("Loaded LibRaw version: %s", ver)
-        } catch (t: Throwable) {
-            Timber.e(t, "Failed to load LibRaw")
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to load LibRaw")
         }
         // Provide explicit export policy for dynamically registered receivers per Android 12+ requirements
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
