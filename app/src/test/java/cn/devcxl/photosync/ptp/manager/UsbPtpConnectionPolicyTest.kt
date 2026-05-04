@@ -21,7 +21,7 @@ class UsbPtpConnectionPolicyTest {
     )
 
     @Test
-    fun resolveDetachedDisconnectTarget_returnsCurrentDeviceWhenDetachedMatchesCurrent() {
+    fun shouldReturnCurrentDevice_whenDetachedMatchesCurrent() {
         val detached = currentDevice.copy()
 
         val result = resolveDetachedDisconnectTarget(currentDevice, pendingDevice, detached)
@@ -30,7 +30,7 @@ class UsbPtpConnectionPolicyTest {
     }
 
     @Test
-    fun resolveDetachedDisconnectTarget_returnsPendingDeviceWhenDetachedMatchesPending() {
+    fun shouldReturnPendingDevice_whenDetachedMatchesPending() {
         val detached = pendingDevice.copy()
 
         val result = resolveDetachedDisconnectTarget(currentDevice, pendingDevice, detached)
@@ -39,7 +39,7 @@ class UsbPtpConnectionPolicyTest {
     }
 
     @Test
-    fun resolveDetachedDisconnectTarget_returnsNullForUnrelatedDevice() {
+    fun shouldReturnNull_whenDetachedIsUnrelated() {
         val detached = UsbPtpDeviceId(
             deviceId = 99,
             deviceName = "/dev/bus/usb/001/099",
@@ -53,7 +53,7 @@ class UsbPtpConnectionPolicyTest {
     }
 
     @Test
-    fun shouldSkipConnect_returnsTrueForSameDeviceWhileConnected() {
+    fun shouldSkip_whenSameDeviceAndConnected() {
         val result = shouldSkipConnect(
             currentState = UsbPtpConnectionState.Connected(currentDevice),
             trackedDevice = currentDevice,
@@ -64,7 +64,7 @@ class UsbPtpConnectionPolicyTest {
     }
 
     @Test
-    fun shouldSkipConnect_returnsTrueForSameDeviceWhilePermissionPending() {
+    fun shouldSkip_whenSameDeviceAndPermissionPending() {
         val result = shouldSkipConnect(
             currentState = UsbPtpConnectionState.PermissionRequested(currentDevice),
             trackedDevice = currentDevice,
@@ -75,7 +75,7 @@ class UsbPtpConnectionPolicyTest {
     }
 
     @Test
-    fun shouldSkipConnect_returnsFalseForSameDeviceAfterError() {
+    fun shouldNotSkip_whenSameDeviceAfterError() {
         val result = shouldSkipConnect(
             currentState = UsbPtpConnectionState.Error(currentDevice, "connect_failed", "boom"),
             trackedDevice = currentDevice,

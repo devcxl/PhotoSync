@@ -15,7 +15,7 @@ import org.junit.Assert.assertTrue
 
 class ExampleUnitTest {
     @Test
-    fun resolvePhotoViewerMode_usesTiledViewerForAllJpegItems() {
+    fun shouldUseTiledViewer_whenIsJpegAndUsePhotoViewOtherwise() {
         assertEquals(
             PhotoViewerMode.JPEG_TILED,
             resolvePhotoViewerMode(isCurrentPage = true, isJpeg = true)
@@ -31,7 +31,7 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun resolveJpegTiledSourceMode_usesBitmapOnlyForNonCurrentPage() {
+    fun shouldUseBitmapOnly_whenNotCurrentPage() {
         val mode = resolveJpegTiledSourceMode(
             isCurrentPage = false,
             hasPreviewBitmap = true
@@ -41,7 +41,7 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun resolveJpegTiledSourceMode_usesTiledSourceForCurrentPage() {
+    fun shouldUseTiledWithPreview_whenCurrentPageAndHasPreview() {
         val mode = resolveJpegTiledSourceMode(
             isCurrentPage = true,
             hasPreviewBitmap = true
@@ -61,7 +61,7 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun calculateInSampleSize_returnsPowerOfTwoForLargeImage() {
+    fun shouldReturnPowerOfTwo_whenImageIsLarge() {
         val result = calculateInSampleSize(
             srcWidth = 6000,
             srcHeight = 4000,
@@ -73,7 +73,7 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun calculateInSampleSize_returnsOneWhenSourceIsAlreadySmall() {
+    fun shouldReturnOne_whenSourceIsAlreadySmall() {
         val result = calculateInSampleSize(
             srcWidth = 800,
             srcHeight = 600,
@@ -85,7 +85,7 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun resolvePhotoRenderDecision_blocksDowngradeFromFullToThumbnail() {
+    fun shouldBlockDowngrade_whenCurrentIsFullAndNextIsThumbnail() {
         val decision = resolvePhotoRenderDecision(
             currentPath = "/tmp/a.jpg",
             currentStage = PhotoRenderStage.FULL,
@@ -100,7 +100,7 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun resolvePhotoRenderDecision_defersFullUpgradeWhileZoomed() {
+    fun shouldDeferUpgrade_whenZoomed() {
         val decision = resolvePhotoRenderDecision(
             currentPath = "/tmp/a.jpg",
             currentStage = PhotoRenderStage.THUMBNAIL,
@@ -115,7 +115,7 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun resolvePhotoRenderDecision_ignoresSameStageRepeatBinding() {
+    fun shouldIgnoreRebind_whenSameStage() {
         val decision = resolvePhotoRenderDecision(
             currentPath = "/tmp/a.jpg",
             currentStage = PhotoRenderStage.THUMBNAIL,
@@ -130,7 +130,7 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun resolveJpegTiledBindDecision_rebindsUpgradeBeforeViewerReady() {
+    fun shouldRebind_whenUpgradeBeforeViewerReady() {
         val decision = resolveJpegTiledBindDecision(
             currentPath = "/tmp/a.jpg",
             currentStage = PhotoRenderStage.THUMBNAIL,
@@ -146,7 +146,7 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun resolveJpegTiledBindDecision_skipsResetAfterViewerReady() {
+    fun shouldSkipReset_whenViewerReady() {
         val decision = resolveJpegTiledBindDecision(
             currentPath = "/tmp/a.jpg",
             currentStage = PhotoRenderStage.THUMBNAIL,
@@ -162,7 +162,7 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun resolveJpegTiledBindDecision_rebindsWhenCurrentPageModeChanges() {
+    fun shouldRebind_whenSourceModeChanges() {
         val decision = resolveJpegTiledBindDecision(
             currentPath = "/tmp/a.jpg",
             currentStage = PhotoRenderStage.THUMBNAIL,
@@ -178,7 +178,7 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun testIsZoomed_returnsTrueOnlyAboveTolerance() {
+    fun shouldReturnTrue_whenScaleAboveTolerance() {
         assertFalse(PhotoPagerAdapter.VH.testIsZoomed(scale = 1.005f, minScale = 1.0f))
         assertTrue(PhotoPagerAdapter.VH.testIsZoomed(scale = 1.05f, minScale = 1.0f))
     }
