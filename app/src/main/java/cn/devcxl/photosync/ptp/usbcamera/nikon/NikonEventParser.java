@@ -100,8 +100,9 @@ public class NikonEventParser implements NikonEventConstants {
             Log.d("EventParser", "   Event len: " +len +", Code: 0x" + String.format("%04x", code) +" " +NikonEvent.getEventName(code));
             parseParameters(event, len-8);
 //            Log.d("EventParser", "   Event: params " +event.getParamCount());
-            for (int i = 1; i<= event.getParamCount(); i++)
-            Log.d("EventParser", "          params " +i +": " + String.format("0x%04x  %d",event.getParam(i), event.getParam(i)));
+            for (int i = 1; i <= event.getParamCount(); i++) {
+                Log.d("EventParser", "          params " + i + ": " + String.format("0x%04x  %d", event.getParam(i), event.getParam(i)));
+            }
         } catch (IOException e) {
         	Log.d ("EventParser", "   Error reading event stream");
             throw new PTPException("Error reading event stream", e);

@@ -125,8 +125,9 @@ public class DevicePropDesc extends Data
 			Vector v = (Vector) constraints;
 			tv.append (" { ");
 			for (int i = 0; i < v.size (); i++) {
-				if (i != 0)
-				tv.append (", ");
+				if (i != 0) {
+				    tv.append (", ");
+				}
 				tv.append (""+v.elementAt (i));
 			}
 			tv.append (" }");
