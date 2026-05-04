@@ -79,6 +79,7 @@ class MainActivity : ComponentActivity() {
     private val fullBitmapCache: LruCache<String, Bitmap> by lazy { createBitmapCache(8) }
     private val inFlightThumbnailPaths = Collections.synchronizedSet(mutableSetOf<String>())
     private val inFlightFullPaths = Collections.synchronizedSet(mutableSetOf<String>())
+    private val rawDecodeDispatcher = Dispatchers.IO.limitedParallelism(1)
     private val jpegSourceInfoCache = Collections.synchronizedMap(mutableMapOf<String, JpegSourceInfo>())
     private val previewLongEdgePx: Int by lazy {
         maxOf(resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
@@ -309,7 +310,9 @@ class MainActivity : ComponentActivity() {
             return
         }
         Timber.d("ensureThumbnail: starting decode for %s", path)
-        lifecycleScope.launch(Dispatchers.IO) {
+        val isRaw = ExtensionUtils.isRawExtension(path.substringAfterLast('.', "").lowercase(Locale.ROOT))
+        val dispatcher = if (isRaw) rawDecodeDispatcher else Dispatchers.IO
+        lifecycleScope.launch(dispatcher) {
             try {
                 val bitmap = decodeThumbnailBitmap(path) ?: return@launch
                 withContext(Dispatchers.Main) {
@@ -325,7 +328,9 @@ class MainActivity : ComponentActivity() {
     private fun ensureFullPreview(path: String) {
         if (fullBitmapCache.get(path) != null) return
         if (!inFlightFullPaths.add(path)) return
-        lifecycleScope.launch(Dispatchers.IO) {
+        val isRaw = ExtensionUtils.isRawExtension(path.substringAfterLast('.', "").lowercase(Locale.ROOT))
+        val dispatcher = if (isRaw) rawDecodeDispatcher else Dispatchers.IO
+        lifecycleScope.launch(dispatcher) {
             try {
                 val bitmap = decodeFullPreviewBitmap(path) ?: return@launch
                 withContext(Dispatchers.Main) {
