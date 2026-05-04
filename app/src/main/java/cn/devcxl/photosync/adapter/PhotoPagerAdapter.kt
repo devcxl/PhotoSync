@@ -1,6 +1,8 @@
 package cn.devcxl.photosync.adapter
 
 import android.graphics.Bitmap
+import android.os.Handler
+import android.os.Looper
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.recyclerview.widget.DiffUtil
@@ -156,6 +158,7 @@ class PhotoPagerAdapter(
 
     private val items = mutableListOf<PhotoEntity>()
     private var currentPrimaryPosition: Int = RecyclerView.NO_POSITION
+    private val handler = Handler(Looper.getMainLooper())
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
         val container = FrameLayout(parent.context).apply {
@@ -246,8 +249,8 @@ class PhotoPagerAdapter(
     fun indexOfPath(path: String): Int = items.indexOfFirst { it.path == path }
 
     fun notifyPathChanged(path: String) {
-        val idx = indexOfPath(path)
-        if (idx >= 0) notifyItemChanged(idx, PAYLOAD_IMAGE_STATE)
+        val idx = items.indexOfFirst { it.path == path }
+        if (idx >= 0) handler.post { notifyItemChanged(idx, PAYLOAD_IMAGE_STATE) }
     }
 
     fun updatePrimaryPosition(position: Int) {
@@ -255,10 +258,10 @@ class PhotoPagerAdapter(
         val previousPosition = currentPrimaryPosition
         currentPrimaryPosition = position
         if (previousPosition != RecyclerView.NO_POSITION) {
-            notifyItemChanged(previousPosition, PAYLOAD_VIEWER_MODE)
+            handler.post { notifyItemChanged(previousPosition, PAYLOAD_VIEWER_MODE) }
         }
         if (position != RecyclerView.NO_POSITION) {
-            notifyItemChanged(position, PAYLOAD_VIEWER_MODE)
+            handler.post { notifyItemChanged(position, PAYLOAD_VIEWER_MODE) }
         }
     }
 
