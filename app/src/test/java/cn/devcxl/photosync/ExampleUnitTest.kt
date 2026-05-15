@@ -61,6 +61,21 @@ class ExampleUnitTest {
     }
 
     @Test
+    fun shouldLoadThumbnail_whenCurrentRawPage() {
+        assertTrue(shouldLoadThumbnail(isCurrentPage = true, isRaw = true))
+    }
+
+    @Test
+    fun shouldSkipThumbnail_whenOffscreenRawPage() {
+        assertFalse(shouldLoadThumbnail(isCurrentPage = false, isRaw = true))
+    }
+
+    @Test
+    fun shouldLoadThumbnail_whenOffscreenJpegPage() {
+        assertTrue(shouldLoadThumbnail(isCurrentPage = false, isRaw = false))
+    }
+
+    @Test
     fun shouldReturnPowerOfTwo_whenImageIsLarge() {
         val result = calculateInSampleSize(
             srcWidth = 6000,

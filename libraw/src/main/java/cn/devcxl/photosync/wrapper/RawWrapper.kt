@@ -16,8 +16,10 @@ object RawWrapper {
 
     /**
      * 解码缩略图为 Bitmap。先尝试嵌入式 JPEG，失败则尝试 BITMAP 格式。
+     * @param targetLongEdge 目标长边像素，≤0 则不缩放。
      */
-    fun decodeThumbnailBitmap(path: String): Bitmap? {
+    @JvmOverloads
+    fun decodeThumbnailBitmap(path: String, targetLongEdge: Int = 0): Bitmap? {
         val data = decodeThumbnail(path)
         if (data == null) {
             Log.w(TAG, "decodeThumbnail returned null for $path")
@@ -30,7 +32,16 @@ object RawWrapper {
         val isJpeg = data[0].toInt() and 0xFF == 0xFF && data[1].toInt() and 0xFF == 0xD8
         Log.d(TAG, "decodeThumbnail returned ${data.size}B, isJpeg=$isJpeg, path=$path")
         if (isJpeg) {
-            val bmp = BitmapFactory.decodeByteArray(data, 0, data.size)
+            val options = BitmapFactory.Options()
+            if (targetLongEdge > 0) {
+                options.inJustDecodeBounds = true
+                BitmapFactory.decodeByteArray(data, 0, data.size, options)
+                options.inSampleSize = calculateInSampleSizeForLongEdge(
+                    options.outWidth, options.outHeight, targetLongEdge
+                )
+                options.inJustDecodeBounds = false
+            }
+            val bmp = BitmapFactory.decodeByteArray(data, 0, data.size, options)
             if (bmp == null) Log.w(TAG, "BitmapFactory failed to decode JPEG thumbnail for $path")
             return bmp
         }
@@ -79,5 +90,19 @@ object RawWrapper {
                 ((arr[off + 1].toInt() and 0xFF) shl 8) or
                 ((arr[off + 2].toInt() and 0xFF) shl 16) or
                 ((arr[off + 3].toInt() and 0xFF) shl 24)
+    }
+
+    internal fun calculateInSampleSizeForLongEdge(
+        rawWidth: Int, rawHeight: Int, targetLongEdge: Int
+    ): Int {
+        var sampleSize = 1
+        val maxDim = maxOf(rawWidth, rawHeight)
+        if (maxDim > targetLongEdge) {
+            val ratio = maxDim / targetLongEdge
+            while (sampleSize * 2 <= ratio) {
+                sampleSize *= 2
+            }
+        }
+        return sampleSize
     }
 }
