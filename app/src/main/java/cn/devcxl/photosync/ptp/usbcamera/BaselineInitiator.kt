@@ -153,6 +153,7 @@ open class BaselineInitiator : NameFactory, Runnable {
             throw PTPException("dev = null")
         }
         session = Session()
+        session!!.setFactory(this as NameFactory)
         this.device = dev
         intf = findUsbInterface(dev)
 
@@ -189,7 +190,6 @@ open class BaselineInitiator : NameFactory, Runnable {
         if (info!!.vendorExtensionId != 0) {
             info!!.factory = updateFactory(info!!.vendorExtensionId)
         }
-        session!!.setFactory(this as NameFactory)
     }
 
     protected fun findUsbInterface(device: UsbDevice): UsbInterface? {
