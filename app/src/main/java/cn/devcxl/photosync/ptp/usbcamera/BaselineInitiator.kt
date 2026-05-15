@@ -1,19 +1,3 @@
-// Copyright 2000 by David Brownell <dbrownell@users.sourceforge.net>
-//
-// This program is free software; you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation; either version 2 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed epIn the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program; if not, write to the Free Software
-// Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
-//
 package cn.devcxl.photosync.ptp.usbcamera
 
 import android.hardware.usb.UsbConstants
@@ -23,7 +7,6 @@ import android.hardware.usb.UsbEndpoint
 import android.hardware.usb.UsbInterface
 import android.util.Log
 import android.widget.ImageView
-import cn.devcxl.photosync.data.entity.SyncDevice
 import cn.devcxl.photosync.ptp.manager.SyncDeviceManager
 import cn.devcxl.photosync.ptp.interfaces.FileAddedListener
 import cn.devcxl.photosync.ptp.interfaces.FileDownloadedListener
@@ -38,37 +21,7 @@ import java.io.IOException
 import java.util.Random
 
 /**
- * This initiates interactions with USB devices, supporting only
- * mandatory PTP-over-USB operations; both
- * "push" and "pull" modes are supported.  Note that there are some
- * operations that are mandatory for "push" responders and not "pull"
- * ones, and vice versa.  A subclass adds additional standardized
- * operations, which some PTP devices won't support.  All low
- * level interactions with the device are done by this class,
- * including especially error recovery.
- *
- * <p> The basic sequence of operations for any PTP or ISO 15470
- * initiator (client) is:  acquire the device; wrap it with this
- * driver class (or a subclass); issue operations;
- * close device.  PTP has the notion
- * of a (single) session with the device, and until you have an open
- * session you may only invoke [.getDeviceInfo][#getDeviceInfo] and
- * [.openSession][#openSession] operations.  Moreover, devices may be used
- * both for reading images (as from a camera) and writing them
- * (as to a digital picture frame), depending on mode support.
- *
- * <p> Note that many of the IOExceptions thrown here are actually
- * going to be <code>usb.core.PTPException</code> values.  That may
- * help your application level recovery processing.  You should
- * assume that when any IOException is thrown, your current session
- * has been terminated.
- *
- * @author David Brownell
- * <p>
- * This class has been reworked by ste epIn order to make it compatible with
- * usbjava2. Also, this is more a derivative work than just an adaptation of the
- * original version. It has to serve the purposes of usbjava2 and cameracontrol.
- * @version $Id: BaselineInitiator.java,v 1.17 2001/05/30 19:33:43 dbrownell Exp $
+ * @author devcxl
  */
 open class BaselineInitiator : NameFactory, Runnable {
 
@@ -113,6 +66,7 @@ open class BaselineInitiator : NameFactory, Runnable {
 
     @JvmField var autoDownloadFile: Boolean = true
 
+    @Volatile
     @JvmField var autoPollEvent: Boolean = true
 
     @JvmField var fileDownloadPath: String? = null
@@ -759,7 +713,7 @@ open class BaselineInitiator : NameFactory, Runnable {
         var retries = 10
         var tmp = -1
         var i = 0
-        while (i < retries) {
+        while (i < retries && isSessionActive() && pollThreadRunning) {
             tmp = mConnection!!.bulkTransfer(epIn!!, data, inMaxPS, timeout)
             if (tmp < 0)
                 Log.e(TAG, "Reading failed, retry")

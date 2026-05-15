@@ -40,7 +40,6 @@ import java.io.ByteArrayInputStream
  * or may be emulated on the client side.
  * At this time, not all standardized operations are supported.
  *
- * @author David Brownell
  * @author devcxl
  */
 open class EosInitiator @Throws(PTPException::class) constructor(
@@ -221,6 +220,22 @@ open class EosInitiator @Throws(PTPException::class) constructor(
         return getDevicePropValueEx(Command.EOS_DPC_ShutterSpeed)
     }
 
+    fun getISO(): Response {
+        return getDevicePropValueEx(Command.EOS_DPC_Iso)
+    }
+
+    fun getAperture(): Response {
+        return getDevicePropValueEx(Command.EOS_DPC_Aperture)
+    }
+
+    fun getExposure(): Response {
+        return getDevicePropValueEx(Command.EOS_DPC_ExposureCompensation)
+    }
+
+    fun getWhiteBalance(): Response {
+        return getDevicePropValueEx(Command.EOS_DPC_WhiteBalance)
+    }
+
     @Throws(PTPException::class)
     override fun setShutterSpeed(speed: Int): Response {
         return setDevicePropValueEx(Command.EOS_DPC_ShutterSpeed, speed)
@@ -309,56 +324,6 @@ open class EosInitiator @Throws(PTPException::class) constructor(
     override fun setImageQuality(value: Int): Response {
 
         return setDevicePropValueEx(Command.EOS_DPC_ExpMeterringMode, value)
-    }
-
-    @Throws(PTPException::class)
-    override fun setupLiveview() {
-
-        val command = Command(Command.EOS_OC_SetPCConnectMode, session, 1)
-        write(command.data!!, command.length, DEFAULT_TIMEOUT)
-        val buf = read(DEFAULT_TIMEOUT)
-
-        val response = Response(buf, inMaxPS, this)
-
-        setDevicePropValueEx(Command.EOS_DPC_LiveView, 2)
-        setDevicePropValueEx(Command.EOS_DPC_LiveView, 1)
-    }
-
-    override fun getLiveView(imageView: ImageView) {
-        val command = Command(Command.EOS_OC_GetLiveViewPicture, session, 0x00100000)
-        write(command.data!!, command.length, DEFAULT_TIMEOUT)
-        var buf = read(DEFAULT_TIMEOUT)
-        val item = Data(true, buf, this)
-
-        val totalLength = item.getLength()
-        val left = totalLength - buf.size
-
-        var needToRead = (left / inMaxPS)
-
-        if ((left % inMaxPS) != 0)
-            needToRead++
-
-        val imageBuf = ByteArray(inMaxPS * (needToRead + 1))
-
-        System.arraycopy(buf, 0, imageBuf, 0, 512)
-
-        for (i in 0 until needToRead) {
-
-            buf = read(DEFAULT_TIMEOUT)
-            System.arraycopy(buf, 0, imageBuf, 512 * (i + 1), 512)
-        }
-        val completedData = Data(true, imageBuf, this)
-
-        val bMap = BitmapFactory.decodeByteArray(completedData.data, 20, completedData.getLength() - 20)
-        val scaled = Bitmap.createScaledBitmap(bMap, bMap.width / 10, bMap.height / 10, false)
-
-        imageView.post(Runnable {
-            imageView.setImageBitmap(bMap)
-            imageView.invalidate()
-        })
-        val buf1 = read(DEFAULT_TIMEOUT)
-
-        val response = Response(buf1, inMaxPS, this)
     }
 
     override fun setFocusPos(x: Int, y: Int) {

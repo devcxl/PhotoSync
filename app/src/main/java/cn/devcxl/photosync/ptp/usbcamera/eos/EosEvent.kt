@@ -43,7 +43,6 @@ import cn.devcxl.photosync.ptp.usbcamera.eos.EosEventConstants.EosEventWillSoonS
 
 /**
  *
- * @author ste
  * @author devcxl
  */
 class EosEvent {

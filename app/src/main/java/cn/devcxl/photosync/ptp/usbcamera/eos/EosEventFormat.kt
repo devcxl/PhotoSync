@@ -26,7 +26,6 @@ import java.lang.reflect.Field
 /**
  * This class formats an EosEvent to a string
  *
- * @author stefano fornari
  * @author devcxl
  */
 object EosEventFormat {

@@ -20,7 +20,6 @@ package cn.devcxl.photosync.ptp.usbcamera.eos
 /**
  * EOS event codes
  *
- * @author stefano fornari
  * @author devcxl
  */
 object EosEventConstants {

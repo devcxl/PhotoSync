@@ -42,7 +42,6 @@ import java.io.InputStream
  * which always goes in the third field. The empty record consists of the size
  * field and four byte empty field, which is always zero.
  *
- * @author stefano fornari
  * @author devcxl
  */
 class EosEventParser(private val inputStream: InputStream) {
