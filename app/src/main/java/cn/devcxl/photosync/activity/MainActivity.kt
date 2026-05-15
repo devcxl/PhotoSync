@@ -36,6 +36,7 @@ import androidx.recyclerview.widget.SimpleItemAnimator
 import androidx.viewpager2.widget.ViewPager2
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -62,6 +63,7 @@ class MainActivity : ComponentActivity() {
     companion object {
         private const val REQ_WRITE_STORAGE = 2001
         private const val THUMBNAIL_MAX_EDGE_PX = 512
+        private const val RAW_PREVIEW_MAX_EDGE_PX = 1200
         private const val FULL_PREVIEW_SCALE_FACTOR = 2
         private const val FULL_PREVIEW_MAX_EDGE_PX = 4096
         // use App.ACTION_USB_PERMISSION instead of duplicating the constant
@@ -80,6 +82,8 @@ class MainActivity : ComponentActivity() {
     private val inFlightThumbnailPaths = Collections.synchronizedSet(mutableSetOf<String>())
     private val inFlightFullPaths = Collections.synchronizedSet(mutableSetOf<String>())
     private val jpegSourceInfoCache = Collections.synchronizedMap(mutableMapOf<String, JpegSourceInfo>())
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val rawThumbnailDispatcher = Dispatchers.Default.limitedParallelism(1)
     private val previewLongEdgePx: Int by lazy {
         maxOf(resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
             .coerceAtLeast(1)
@@ -144,7 +148,7 @@ class MainActivity : ComponentActivity() {
                     pendingRevealPath?.let { target ->
                         val idx = list.indexOfFirst { it.path == target }
                         if (idx >= 0) {
-                            binding.viewPager.setCurrentItem(idx, true)
+                            binding.viewPager.setCurrentItem(idx, false)
                             pendingRevealPath = null
                         }
                     }
@@ -269,7 +273,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun ensurePhotoForPosition(path: String, position: Int) {
-        ensureThumbnail(path)
+        if (shouldLoadThumbnail(position == binding.viewPager.currentItem, isRawPath(path))) {
+            ensureThumbnail(path)
+        }
         if (shouldLoadPreview(isCurrentPage = position == binding.viewPager.currentItem)) {
             ensureFullPreview(path)
         }
@@ -281,8 +287,8 @@ class MainActivity : ComponentActivity() {
 
         val previous = adapter.getItem(position - 1)
         val next = adapter.getItem(position + 1)
-        previous?.let { ensureThumbnail(it.path) }
-        next?.let { ensureThumbnail(it.path) }
+        previous?.takeUnless { isRawPath(it.path) }?.let { ensureThumbnail(it.path) }
+        next?.takeUnless { isRawPath(it.path) }?.let { ensureThumbnail(it.path) }
     }
 
     private fun getCurrentEntity(): PhotoEntity? {
@@ -306,12 +312,24 @@ class MainActivity : ComponentActivity() {
         return ExtensionUtils.isJpegExtension(path.substringAfterLast('.', "").lowercase(Locale.ROOT))
     }
 
+    private fun isRawPath(path: String): Boolean {
+        return ExtensionUtils.isRawExtension(path.substringAfterLast('.', "").lowercase(Locale.ROOT))
+    }
+
     private fun ensureThumbnail(path: String) {
         if (thumbnailCache.get(path) != null || fullBitmapCache.get(path) != null) return
         if (!inFlightThumbnailPaths.add(path)) return
-        lifecycleScope.launch(Dispatchers.IO) {
+        val isRaw = isRawPath(path)
+        val dispatcher = if (isRaw) rawThumbnailDispatcher else Dispatchers.IO
+        lifecycleScope.launch(dispatcher) {
             try {
+                if (isRaw) {
+                    Timber.d("start RAW thumbnail decode: %s", path)
+                }
                 val bitmap = decodeThumbnailBitmap(path) ?: return@launch
+                if (isRaw) {
+                    Timber.d("decoded RAW thumbnail bitmap %dx%d: %s", bitmap.width, bitmap.height, path)
+                }
                 withContext(Dispatchers.Main) {
                     thumbnailCache.put(path, bitmap)
                     adapter.notifyPathChanged(path)
@@ -349,7 +367,7 @@ class MainActivity : ComponentActivity() {
         return try {
             when {
                 ExtensionUtils.isRawExtension(ext) -> {
-                    val bmp = RawWrapper.decodeThumbnailBitmap(path)
+                    val bmp = RawWrapper.decodeThumbnailBitmap(path, RAW_PREVIEW_MAX_EDGE_PX)
                     if (bmp == null) Timber.w("RAW thumbnail decode returned null: %s", path)
                     bmp
                 }
@@ -675,6 +693,11 @@ class MainActivity : ComponentActivity() {
 @VisibleForTesting
 internal fun shouldLoadPreview(isCurrentPage: Boolean): Boolean {
     return isCurrentPage
+}
+
+@VisibleForTesting
+internal fun shouldLoadThumbnail(isCurrentPage: Boolean, isRaw: Boolean): Boolean {
+    return isCurrentPage || !isRaw
 }
 
 @VisibleForTesting
