@@ -175,9 +175,9 @@ class UsbPtpConnectionController(
         }
         val permissionIntent = PendingIntent.getBroadcast(
             appContext,
-            0,
+            device.deviceId,
             Intent(App.ACTION_USB_PERMISSION),
-            PendingIntent.FLAG_IMMUTABLE
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         usbManager.requestPermission(device, permissionIntent)
         Timber.d("请求设备权限 %s", device.deviceName)
@@ -186,6 +186,10 @@ class UsbPtpConnectionController(
     private suspend fun connectInternal(device: UsbDevice): Boolean {
         val deviceId = device.toUsbPtpDeviceId()
         disconnectInternal("reconnect_before_connect", deviceId, resetStateAfterDisconnect = false)
+        stateMutex.withLock {
+            currentDeviceId = deviceId
+            pendingPermissionDeviceId = null
+        }
         _connectionState.value = UsbPtpConnectionState.Connecting(deviceId)
 
         val initiator = try {
@@ -201,7 +205,9 @@ class UsbPtpConnectionController(
             produced.openSession()
             produced
         } catch (e: Exception) {
-            pendingPermissionDeviceId = null
+            stateMutex.withLock {
+                currentDeviceId = null
+            }
             _connectionState.value = UsbPtpConnectionState.Error(deviceId, "connect_failed", e.message)
             Timber.e(e, "connectInternal failed")
             return false
@@ -210,8 +216,6 @@ class UsbPtpConnectionController(
         stateMutex.withLock {
             currentInitiator = initiator
             currentDevice = device
-            currentDeviceId = deviceId
-            pendingPermissionDeviceId = null
         }
         _connectionState.value = UsbPtpConnectionState.Connected(deviceId)
         return true

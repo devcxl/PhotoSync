@@ -69,7 +69,7 @@ class App : Application() {
         // Provide explicit export policy for dynamically registered receivers per Android 12+ requirements
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(usbReceiver, deviceFilter, Context.RECEIVER_NOT_EXPORTED)
-            registerReceiver(usbPermissionReceiver, permissionFilter, Context.RECEIVER_NOT_EXPORTED)
+            registerReceiver(usbPermissionReceiver, permissionFilter, Context.RECEIVER_EXPORTED)
         } else {
             registerReceiver(usbReceiver, deviceFilter)
             registerReceiver(usbPermissionReceiver, permissionFilter)
