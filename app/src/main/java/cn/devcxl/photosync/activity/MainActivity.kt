@@ -66,7 +66,9 @@ class MainActivity : ComponentActivity() {
         private const val RAW_PREVIEW_MAX_EDGE_PX = 1200
         private const val FULL_PREVIEW_SCALE_FACTOR = 2
         private const val FULL_PREVIEW_MAX_EDGE_PX = 4096
-        // use App.ACTION_USB_PERMISSION instead of duplicating the constant
+        private val exportDateFormat = ThreadLocal.withInitial {
+            SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
+        }
     }
 
     private lateinit var adapter: PhotoPagerAdapter
@@ -512,7 +514,7 @@ class MainActivity : ComponentActivity() {
         return if (!name.isNullOrBlank()) {
             name.substringBeforeLast('.') + "_export.jpg"
         } else {
-            val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+            val ts = exportDateFormat.get()!!.format(Date())
             "IMG_${ts}.jpg"
         }
     }

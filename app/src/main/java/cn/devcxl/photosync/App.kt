@@ -43,24 +43,22 @@ class App : Application() {
         }
     }
 
-    lateinit var usbPtpConnectionController: UsbPtpConnectionController
-        private set
+    val usbPtpConnectionController: UsbPtpConnectionController by lazy {
+        UsbPtpConnectionController(this)
+    }
 
     companion object {
         private var instance: App? = null
         const val ACTION_USB_PERMISSION = "cn.devcxl.photosync.USB_PERMISSION"
-        fun get(): App? {
-            return instance
+        fun get(): App {
+            return instance!!
         }
     }
 
     override fun onCreate() {
         super.onCreate()
         instance = this
-        usbPtpConnectionController = UsbPtpConnectionController(this)
-        // initialize Timber for logging — use debuggable flag instead of generated BuildConfig
-        val isDebug = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
-        if (isDebug) Timber.plant(Timber.DebugTree())
+        Timber.plant(Timber.DebugTree())
 
         try {
             val ver = RawWrapper.version()

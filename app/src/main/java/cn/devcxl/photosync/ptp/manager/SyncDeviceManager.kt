@@ -14,7 +14,7 @@ import java.util.Date
  */
 class SyncDeviceManager(private var device: UsbDevice) {
 
-    private val dao = AppDatabase.getInstance(App.get()!!).syncDeviceDao()
+    private val dao = AppDatabase.getInstance(App.get()).syncDeviceDao()
 
     fun updateDeviceInfo(): SyncDevice? {
         val uuid = getUUIDFromDevice(device)
