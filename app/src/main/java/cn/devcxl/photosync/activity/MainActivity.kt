@@ -533,10 +533,17 @@ class MainActivity : ComponentActivity() {
                 val resolver = contentResolver
                 val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
                 if (uri != null) {
-                    resolver.openOutputStream(uri)?.use { out ->
-                        val ok = bitmap.compress(Bitmap.CompressFormat.JPEG, quality, out)
-                        out.flush()
-                        if (!ok) throw RuntimeException("JPEG compress failed")
+                    try {
+                        val stream = resolver.openOutputStream(uri)
+                            ?: throw RuntimeException("openOutputStream returned null")
+                        stream.use { out ->
+                            val ok = bitmap.compress(Bitmap.CompressFormat.JPEG, quality, out)
+                            out.flush()
+                            if (!ok) throw RuntimeException("JPEG compress failed")
+                        }
+                    } catch (e: Exception) {
+                        resolver.delete(uri, null, null)
+                        throw e
                     }
                     values.clear()
                     values.put(MediaStore.Images.Media.IS_PENDING, 0)
@@ -579,11 +586,18 @@ class MainActivity : ComponentActivity() {
                 val resolver = contentResolver
                 val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
                 if (uri != null) {
-                    resolver.openOutputStream(uri)?.use { out ->
-                        srcFile.inputStream().use { input ->
-                            input.copyTo(out)
-                            out.flush()
+                    try {
+                        val stream = resolver.openOutputStream(uri)
+                            ?: throw RuntimeException("openOutputStream returned null")
+                        stream.use { out ->
+                            srcFile.inputStream().use { input ->
+                                input.copyTo(out)
+                                out.flush()
+                            }
                         }
+                    } catch (e: Exception) {
+                        resolver.delete(uri, null, null)
+                        throw e
                     }
                     values.clear()
                     values.put(MediaStore.Images.Media.IS_PENDING, 0)
