@@ -100,7 +100,7 @@ open class BaselineInitiator : NameFactory, Runnable {
     protected var epOut: UsbEndpoint? = null
     protected var epEv: UsbEndpoint? = null
     protected var intrMaxPS: Int = 0
-    protected var session: Session? = null
+    protected lateinit var session: Session
     protected var info: DeviceInfo? = null
     @JvmField var rand: Random = Random()
     @JvmField var mConnection: UsbDeviceConnection? = null
@@ -153,7 +153,7 @@ open class BaselineInitiator : NameFactory, Runnable {
             throw PTPException("dev = null")
         }
         session = Session()
-        session!!.setFactory(this as NameFactory)
+        session.setFactory(this as NameFactory)
         this.device = dev
         intf = findUsbInterface(dev)
 
@@ -231,7 +231,7 @@ open class BaselineInitiator : NameFactory, Runnable {
             DEFAULT_TIMEOUT
         )
 
-        session!!.close()
+        session.close()
     }
 
     @Throws(PTPException::class)
@@ -239,13 +239,13 @@ open class BaselineInitiator : NameFactory, Runnable {
         var command: Command
         var response: Response
 
-        synchronized(session!!) {
-            command = Command(Command.OpenSession, session!!,
-                session!!.nextSessionID)
+        synchronized(session) {
+            command = Command(Command.OpenSession, session,
+                session.nextSessionID)
             response = transactUnsync(command, null)
             when (response.getCode()) {
                 Response.OK -> {
-                    session!!.open()
+                    session.open()
                     pollingThread = Thread(this)
                     pollingThread!!.start()
                     return
@@ -254,11 +254,11 @@ open class BaselineInitiator : NameFactory, Runnable {
                     if (autoCloseSessionIfSessionAlreadyOpenWhenOpenSession) {
                         closeSession()
                         session = Session()
-                        command = Command(Command.OpenSession, session!!,
-                            session!!.nextSessionID)
+                        command = Command(Command.OpenSession, session,
+                            session.nextSessionID)
                         response = transactUnsync(command, null)
                         if (response.getCode() == Response.OK) {
-                            session!!.open()
+                            session.open()
                             pollingThread = Thread(this)
                             pollingThread!!.start()
                         }
@@ -273,7 +273,7 @@ open class BaselineInitiator : NameFactory, Runnable {
     open fun closeSession() {
         var response: Response
 
-        synchronized(session!!) {
+        synchronized(session) {
             response = transact0(Command.CloseSession, null)
             when (response.getCode()) {
                 Response.SessionNotOpen -> {
@@ -285,7 +285,7 @@ open class BaselineInitiator : NameFactory, Runnable {
                 }
                 else -> throw PTPException(response.toString())
             }
-            session!!.close()
+            session.close()
             return
         }
     }
@@ -329,39 +329,39 @@ open class BaselineInitiator : NameFactory, Runnable {
     }
 
     fun isSessionActive(): Boolean {
-        synchronized(session!!) {
-            return session!!.isActive()
+        synchronized(session) {
+            return session.isActive()
         }
     }
 
     @Throws(PTPException::class)
     protected fun transact0(code: Int, data: Data?): Response {
-        synchronized(session!!) {
-            val command = Command(code, session!!)
+        synchronized(session) {
+            val command = Command(code, session)
             return transactUnsync(command, data)
         }
     }
 
     @Throws(PTPException::class)
     protected fun transact1(code: Int, data: Data?, p1: Int): Response {
-        synchronized(session!!) {
-            val command = Command(code, session!!, p1)
+        synchronized(session) {
+            val command = Command(code, session, p1)
             return transactUnsync(command, data)
         }
     }
 
     @Throws(PTPException::class)
     protected fun transact2(code: Int, data: Data?, p1: Int, p2: Int): Response {
-        synchronized(session!!) {
-            val command = Command(code, session!!, p1, p2)
+        synchronized(session) {
+            val command = Command(code, session, p1, p2)
             return transactUnsync(command, data)
         }
     }
 
     @Throws(PTPException::class)
     protected fun transact3(code: Int, data: Data?, p1: Int, p2: Int, p3: Int): Response {
-        synchronized(session!!) {
-            val command = Command(code, session!!, p1, p2, p3)
+        synchronized(session) {
+            val command = Command(code, session, p1, p2, p3)
             return transactUnsync(command, data)
         }
     }
@@ -460,9 +460,9 @@ open class BaselineInitiator : NameFactory, Runnable {
         val data = DeviceInfo(this)
         var response: Response
 
-        synchronized(session!!) {
+        synchronized(session) {
             val command: Command
-            command = Command(Command.GetDeviceInfo, session!!)
+            command = Command(Command.GetDeviceInfo, session)
             response = transactUnsync(command, data)
         }
 
@@ -483,7 +483,7 @@ open class BaselineInitiator : NameFactory, Runnable {
 
         val opcode = command.getCode()
 
-        if (session!!.isActive()) {
+        if (session.isActive()) {
             if (Command.OpenSession == opcode) {
                 throw IllegalStateException("session already open")
             }
@@ -825,10 +825,10 @@ open class BaselineInitiator : NameFactory, Runnable {
 
         val outputStream = BufferedOutputStream(fos, 64 * 1024)
 
-        synchronized(session!!) {
+        synchronized(session) {
             val startDownloadAt = System.currentTimeMillis()
-            val command = Command(Command.GetObject, session!!, objectHandle)
-            if (!session!!.isActive())
+            val command = Command(Command.GetObject, session, objectHandle)
+            if (!session.isActive())
                 throw IllegalStateException("no session")
 
             if (info != null && !info!!.supportsOperation(Command.GetObject)) {
@@ -1016,7 +1016,7 @@ open class BaselineInitiator : NameFactory, Runnable {
         var response: Response
         val data = Data(this)
 
-        synchronized(session!!) {
+        synchronized(session) {
             response = transact0(Command.GetStorageIDs, data)
             when (response.getCode()) {
                 Response.OK -> {
@@ -1033,7 +1033,7 @@ open class BaselineInitiator : NameFactory, Runnable {
         var response: Response
         val data = Data(this)
 
-        synchronized(session!!) {
+        synchronized(session) {
             response = transact3(Command.GetObjectHandles, data, storageId, format, objectHandle)
             when (response.getCode()) {
                 Response.OK -> {
@@ -1050,7 +1050,7 @@ open class BaselineInitiator : NameFactory, Runnable {
         var response: Response
         val data = ObjectInfo(objectHandle, this)
 
-        synchronized(session!!) {
+        synchronized(session) {
             response = transact1(Command.GetObjectInfo, data, objectHandle)
             when (response.getCode()) {
                 Response.OK -> {
@@ -1067,7 +1067,7 @@ open class BaselineInitiator : NameFactory, Runnable {
         var response: Response
         val data = StorageInfo(this)
 
-        synchronized(session!!) {
+        synchronized(session) {
             response = transact1(Command.GetStorageInfo, data, storageId)
             when (response.getCode()) {
                 Response.OK -> {

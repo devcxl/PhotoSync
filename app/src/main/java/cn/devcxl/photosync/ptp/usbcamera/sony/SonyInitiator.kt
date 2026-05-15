@@ -120,7 +120,7 @@ class SonyInitiator(dev: UsbDevice, connection: UsbDeviceConnection) : BaselineI
 
         val props: MutableList<DevicePropDesc> = ArrayList()
 
-        synchronized(session!!) {
+        synchronized(session) {
             try {
                 transact0(PTP_OC_SONY_GetAllDevicePropData, data)
                 if (data == null) {
@@ -169,7 +169,7 @@ class SonyInitiator(dev: UsbDevice, connection: UsbDeviceConnection) : BaselineI
     fun setSDIOConnect(mode: Int): Response? {
         Log.d(TAG, "set setSDIOConnect :$mode")
         val data = Data(this)
-        synchronized(session!!) {
+        synchronized(session) {
             try {
                 val response = transact1(Command.SONY_SDIOCOMMAND, data, mode)
                 return@setSDIOConnect response

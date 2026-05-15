@@ -314,7 +314,7 @@ open class EosInitiator @Throws(PTPException::class) constructor(
     @Throws(PTPException::class)
     override fun setupLiveview() {
 
-        val command = Command(Command.EOS_OC_SetPCConnectMode, session!!, 1)
+        val command = Command(Command.EOS_OC_SetPCConnectMode, session, 1)
         write(command.data!!, command.length, DEFAULT_TIMEOUT)
         val buf = read(DEFAULT_TIMEOUT)
 
@@ -325,7 +325,7 @@ open class EosInitiator @Throws(PTPException::class) constructor(
     }
 
     override fun getLiveView(imageView: ImageView) {
-        val command = Command(Command.EOS_OC_GetLiveViewPicture, session!!, 0x00100000)
+        val command = Command(Command.EOS_OC_GetLiveViewPicture, session, 0x00100000)
         write(command.data!!, command.length, DEFAULT_TIMEOUT)
         var buf = read(DEFAULT_TIMEOUT)
         val item = Data(true, buf, this)
@@ -363,7 +363,7 @@ open class EosInitiator @Throws(PTPException::class) constructor(
 
     override fun setFocusPos(x: Int, y: Int) {
 
-        val command = Command(EosEventConstants.PTP_OC_CANON_EOS_ZoomPosition, session!!, x, y)
+        val command = Command(EosEventConstants.PTP_OC_CANON_EOS_ZoomPosition, session, x, y)
 
         write(command.data!!, command.length, DEFAULT_TIMEOUT)
 
@@ -377,7 +377,7 @@ open class EosInitiator @Throws(PTPException::class) constructor(
     override fun setZoom(zoomLevel: Int) {
         // zoomLevel = 5 or 10 or 1
 
-        val command = Command(EosEventConstants.PTP_OC_CANON_EOS_Zoom, session!!, zoomLevel)
+        val command = Command(EosEventConstants.PTP_OC_CANON_EOS_Zoom, session, zoomLevel)
 
         write(command.data!!, command.length, DEFAULT_TIMEOUT)
 
@@ -390,7 +390,7 @@ open class EosInitiator @Throws(PTPException::class) constructor(
 
     override fun doAutoFocus() {
 
-        val command = Command(EosEventConstants.PTP_OC_CANON_EOS_DoAf, session!!)
+        val command = Command(EosEventConstants.PTP_OC_CANON_EOS_DoAf, session)
         write(command.data!!, command.length, DEFAULT_TIMEOUT)
         val buf = read(DEFAULT_TIMEOUT)
         // tv3.setText("Received:")

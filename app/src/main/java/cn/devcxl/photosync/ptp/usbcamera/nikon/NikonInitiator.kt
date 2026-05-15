@@ -154,7 +154,7 @@ class NikonInitiator(dev: UsbDevice, connection: UsbDeviceConnection) :
         data.offset = 0
         data.putHeader(buff.size, Container.BLOCK_TYPE_DATA, Command.SetDevicePropValue, 0)
         data.put32(value)
-        val command = Command(Command.SetDevicePropValue, session!!, property)
+        val command = Command(Command.SetDevicePropValue, session, property)
         writeExtraData(command, data, BaselineInitiator.DEFAULT_TIMEOUT)
 
         val buf = ByteArray(inMaxPS)
@@ -170,7 +170,7 @@ class NikonInitiator(dev: UsbDevice, connection: UsbDeviceConnection) :
 
     @Throws(PTPException::class)
     override fun getPropValue(value: Int): DevicePropDesc {
-        val command = Command(Command.GetDevicePropDesc, session!!, value)
+        val command = Command(Command.GetDevicePropDesc, session, value)
         mConnection!!.bulkTransfer(epOut, command.data, command.length, BaselineInitiator.DEFAULT_TIMEOUT)
 
         var buf = ByteArray(inMaxPS)
@@ -249,7 +249,7 @@ class NikonInitiator(dev: UsbDevice, connection: UsbDeviceConnection) :
         data.putHeader(buff.size, Container.BLOCK_TYPE_DATA, Command.SetDevicePropValue, 0)
 
         data.putString(value)
-        val command = Command(Command.SetDevicePropValue, session!!, property)
+        val command = Command(Command.SetDevicePropValue, session, property)
         writeExtraData(command, data, BaselineInitiator.DEFAULT_TIMEOUT)
 
         val buf = ByteArray(inMaxPS)
