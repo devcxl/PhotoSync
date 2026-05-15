@@ -10,7 +10,7 @@ permissions:
 
 jobs:
     build:
-        name: Build Release APK
+        name: Build Release AAB
         runs-on: ubuntu-latest
         steps:
             -   name: Checkout
@@ -61,19 +61,19 @@ jobs:
                 env:
                     KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
 
-            -   name: Build release APK (signed)
-                run: ./gradlew --no-daemon clean :app:assembleRelease
+            -   name: Build release AAB (signed)
+                run: ./gradlew --no-daemon clean :app:bundleRelease
                 env:
                     KEYSTORE_PATH: "${{ github.workspace }}/release.keystore"
                     KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
                     KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
                     KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
 
-            -   name: Upload signed APK artifact
+            -   name: Upload signed AAB artifact
                 uses: actions/upload-artifact@v4
                 with:
-                    name: app-release-apk
-                    path: app/build/outputs/apk/release/app-release.apk
+                    name: app-release-aab
+                    path: app/build/outputs/bundle/release/app-release.aab
                     if-no-files-found: error
 
             -   name: Clean up keystore
@@ -88,16 +88,16 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         runs-on: ubuntu-latest
         steps:
-            -   name: Download APK artifact
+            -   name: Download AAB artifact
                 uses: actions/download-artifact@v4
                 with:
-                    name: app-release-apk
+                    name: app-release-aab
                     path: artifacts
 
-            -   name: Create GitHub Release (draft) and upload APKs
+            -   name: Create GitHub Release (draft) and upload AAB
                 uses: softprops/action-gh-release@v2
                 with:
-                    files: artifacts/*.apk
+                    files: artifacts/*.aab
                     draft: true
                     tag_name: ${{ github.ref_name }}
                     generate_release_notes: true
