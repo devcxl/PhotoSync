@@ -44,7 +44,7 @@ PhotoSync is an Android camera companion app designed for photographers and imag
 
 | Category | Tech |
 |----------|------|
-| Language | Kotlin 2.0 / Java |
+| Language | Kotlin 2.0 / C++ / JNI |
 | UI | XML + ViewBinding / Jetpack Compose |
 | Async | Coroutines + Flow |
 | Database | Room |
@@ -86,6 +86,9 @@ git submodule update --init --recursive
 # Debug APK
 ./gradlew assembleDebug
 
+# Release AAB (Google Play)
+./gradlew bundleRelease
+
 # Run unit tests
 ./gradlew testDebugUnitTest
 
@@ -94,3 +97,4 @@ git submodule update --init --recursive
 ```
 
 APK is generated at `app/build/outputs/apk/debug/app-debug.apk`.
+Release AAB is at `app/build/outputs/bundle/release/app-release.aab`.
