@@ -70,7 +70,7 @@ jobs:
                     KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
 
             -   name: Build release APKs (per ABI, signed)
-                run: ./gradlew --no-daemon :app:assembleRelease
+                run: ./gradlew --no-daemon :app:assembleRelease -PenableAbiSplits
                 env:
                     KEYSTORE_PATH: "${{ github.workspace }}/release.keystore"
                     KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
