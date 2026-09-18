@@ -3,20 +3,18 @@ package cn.devcxl.photosync
 import android.app.Application
 import android.content.Context
 import android.content.IntentFilter
-import android.content.pm.ApplicationInfo
 import android.hardware.usb.UsbManager
 import cn.devcxl.photosync.ptp.manager.UsbPtpConnectionController
 import cn.devcxl.photosync.receiver.UsbPermissionReceiver
 import cn.devcxl.photosync.receiver.UsbReceiver
 import cn.devcxl.photosync.wrapper.RawWrapper
-import org.opencv.android.OpenCVLoader
 import timber.log.Timber
 
 /**
  * Application entry point for the PhotoSync app.
  *
  * Responsibilities:
- * - Initialize global SDKs (OpenCV, native Raw wrapper) and logging.
+ * - Initialize global SDKs (native Raw wrapper) and logging.
  * - Register USB broadcast receivers for device attach/detach and permission results.
  *
  * This class is intentionally lightweight; platform- or DI-based initialization can be
@@ -33,14 +31,6 @@ class App : Application() {
     }
     private val permissionFilter = IntentFilter().apply {
         addAction(ACTION_USB_PERMISSION)
-    }
-
-    init {
-        if (!OpenCVLoader.initDebug()) {
-            Timber.e("无法初始化 OpenCV")
-        } else {
-            Timber.d("OpenCV 初始化成功")
-        }
     }
 
     val usbPtpConnectionController: UsbPtpConnectionController by lazy {

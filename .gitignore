@@ -30,3 +30,5 @@ local.properties
 /.idea/inspectionProfiles/
 /.idea/vcs.xml
 /.idea/copilot.data.migration.*.xml
+# Kotlin incremental compilation state
+.kotlin/

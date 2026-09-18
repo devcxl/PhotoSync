@@ -22,12 +22,6 @@ interface SyncDeviceDao {
     @Update
     fun update(device: SyncDevice): Int
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    fun upsertAll(devices: List<SyncDevice>): LongArray
-
-    @Query("DELETE FROM sync_device WHERE device_uuid = :uuid")
-    fun deleteByUuid(uuid: String): Int
-
     @Delete
     fun delete(device: SyncDevice): Int
 }
