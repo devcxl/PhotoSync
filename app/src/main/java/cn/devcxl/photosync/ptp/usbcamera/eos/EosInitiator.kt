@@ -20,7 +20,6 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbDeviceConnection
-import android.util.Log
 import android.widget.ImageView
 import cn.devcxl.photosync.ptp.params.SyncParams
 import cn.devcxl.photosync.ptp.usbcamera.BaselineInitiator
@@ -32,6 +31,7 @@ import cn.devcxl.photosync.ptp.usbcamera.PTPException
 import cn.devcxl.photosync.ptp.usbcamera.PTPUnsupportedException
 import cn.devcxl.photosync.ptp.usbcamera.Response
 import java.io.ByteArrayInputStream
+import timber.log.Timber
 
 /**
  * This supports all standardized PTP-over-USB operations, including
@@ -97,7 +97,7 @@ open class EosInitiator @Throws(PTPException::class) constructor(
         // Special initialization for EOS cameras
         //
         if (!info!!.supportsOperation(Command.EosRemoteRelease)) {
-            Log.d(BaselineInitiator.TAG, "The camera does not support EOS capture")
+            Timber.d("The camera does not support EOS capture")
             throw PTPException("The camera does not support EOS capture")
         }
 
@@ -111,28 +111,25 @@ open class EosInitiator @Throws(PTPException::class) constructor(
         try {
             Thread.sleep(100)
         } catch (e: InterruptedException) {
-            e.printStackTrace()
+            Timber.w(e, "initiateCapture failed")
         }
         checkEvents() // Prevents  EosRemoteRelease!
         try {
             Thread.sleep(100)
         } catch (e: InterruptedException) {
-            e.printStackTrace()
+            Timber.w(e, "initiateCapture failed")
         }
         checkEvents() // Prevents  EosRemoteRelease!
         try {
             Thread.sleep(100)
         } catch (e: InterruptedException) {
-            e.printStackTrace()
+            Timber.w(e, "initiateCapture failed")
         }
         checkEvents() // Prevents  EosRemoteRelease!
 
         resp = transact0(Command.EosRemoteRelease, null)
         ret = resp.getCode()
-        Log.d(
-            BaselineInitiator.TAG,
-            "  EosRemoteRelease Response code: 0x${Integer.toHexString(ret)}  OK: ${ret == Response.OK}"
-        )
+        Timber.d("  EosRemoteRelease Response code: 0x${Integer.toHexString(ret)}  OK: ${ret == Response.OK}")
         if (ret != Response.OK) {
             var msg = "Canon EOS Capture failed to release: Unknown error $ret , please report."
             if (ret == 1) {
@@ -140,7 +137,7 @@ open class EosInitiator @Throws(PTPException::class) constructor(
             } else if (ret == 7) {
                 msg = "Canon EOS Capture failed to release: Perhaps no more memory on card?"
             }
-            Log.d(BaselineInitiator.TAG, msg)
+            Timber.d(msg)
             throw PTPException(msg, ret)
         }
         ret = transact1(Command.EosSetRemoteMode, null, 0).getCode()
@@ -151,19 +148,19 @@ open class EosInitiator @Throws(PTPException::class) constructor(
         try {
             Thread.sleep(100)
         } catch (e: InterruptedException) {
-            e.printStackTrace()
+            Timber.w(e, "initiateCapture failed")
         }
         checkEvents() // Prevents  EosRemoteRelease!
         try {
             Thread.sleep(100)
         } catch (e: InterruptedException) {
-            e.printStackTrace()
+            Timber.w(e, "initiateCapture failed")
         }
         checkEvents() // Prevents  EosRemoteRelease!
         try {
             Thread.sleep(100)
         } catch (e: InterruptedException) {
-            e.printStackTrace()
+            Timber.w(e, "initiateCapture failed")
         }
         checkEvents() // Prevents  EosRemoteRelease!
 
@@ -370,19 +367,19 @@ open class EosInitiator @Throws(PTPException::class) constructor(
             try {
                 runPollListPoll()
             } catch (e: PTPException) {
-                e.printStackTrace()
+                Timber.w(e, "run failed")
             }
         }
     }
 
     private fun runEosCheckEventPoll() {
-        Log.v("PTP_EVENT", "开始event轮询")
+        Timber.tag("PTP_EVENT").v("开始event轮询")
 
         try {
             setEosRemoteMode()
             setEosEventMode()
         } catch (e: PTPException) {
-            e.printStackTrace()
+            Timber.w(e, "runEosCheckEventPoll failed")
         }
 
 
@@ -391,7 +388,7 @@ open class EosInitiator @Throws(PTPException::class) constructor(
             try {
                 val events = checkEvents()
                 for (event in events) {
-                    Log.v("PTP_EVENT", event.toString())
+                    Timber.tag("PTP_EVENT").v(event.toString())
 
                     if (event.code == EosEventConstants.EosEventObjectAddedEx) {
                         processFileAddEvent(event.getIntParam(1), event)
@@ -403,37 +400,37 @@ open class EosInitiator @Throws(PTPException::class) constructor(
             try {
                 Thread.sleep(200) // poll interval every 200 ms
             } catch (e: InterruptedException) {
-                e.printStackTrace()
+                Timber.w(e, "runEosCheckEventPoll failed")
                 return
             }
 
         }
-        Log.v("PTP_EVENT", "结束轮询")
+        Timber.tag("PTP_EVENT").v("结束轮询")
     }
 
     override fun pollListSetUp() {
         try {
             setEosRemoteMode()
         } catch (e: PTPException) {
-            e.printStackTrace()
+            Timber.w(e, "pollListSetUp failed")
         }
     }
 
     @Throws(PTPException::class)
     private fun setEosEventMode() {
-        Log.v("PTP_EVENT", "set EosSetEventMode 1 ")
+        Timber.tag("PTP_EVENT").v("set EosSetEventMode 1 ")
         val ret = transact1(Command.EosSetEventMode, null, 1).getCode()
         if (ret != Response.OK) {
-            Log.v("PTP_EVENT", "set failed")
+            Timber.tag("PTP_EVENT").v("set failed")
         }
     }
 
     @Throws(PTPException::class)
     private fun setEosRemoteMode() {
-        Log.v("PTP_EVENT", "set EosSetRemoteMode 1 ")
+        Timber.tag("PTP_EVENT").v("set EosSetRemoteMode 1 ")
         val ret = transact1(Command.EosSetRemoteMode, null, 1).getCode()
         if (ret != Response.OK) {
-            Log.v("PTP_EVENT", "set failed")
+            Timber.tag("PTP_EVENT").v("set failed")
         }
     }
 }

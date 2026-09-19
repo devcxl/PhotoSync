@@ -17,13 +17,13 @@
 
 package cn.devcxl.photosync.ptp.usbcamera.nikon
 
-import android.util.Log
 
 import java.io.IOException
 import java.io.InputStream
 
 import cn.devcxl.photosync.ptp.usbcamera.PTPException
 import cn.devcxl.photosync.ptp.usbcamera.PTPUnsupportedException
+import timber.log.Timber
 
 /**
  * This class parses a stream of bytes as a sequence of events accordingly
@@ -81,19 +81,13 @@ class NikonEventParser(private var `is`: InputStream) {
             }
             val code = getNextS32()
             event.setCode(code)
-            Log.d(
-                "EventParser",
-                "   Event len: $len, Code: 0x" + String.format("%04x", code) + " " + NikonEvent.getEventName(code)
-            )
+            Timber.tag("EventParser").d("   Event len: $len, Code: 0x" + String.format("%04x", code) + " " + NikonEvent.getEventName(code))
             parseParameters(event, len - 8)
             for (i in 1..event.paramCount) {
-                Log.d(
-                    "EventParser",
-                    "          params $i: " + String.format("0x%04x  %d", event.getParam(i), event.getParam(i))
-                )
+                Timber.tag("EventParser").d("          params $i: " + String.format("0x%04x  %d", event.getParam(i), event.getParam(i)))
             }
         } catch (e: IOException) {
-            Log.d("EventParser", "   Error reading event stream")
+            Timber.tag("EventParser").d("   Error reading event stream")
             throw PTPException("Error reading event stream", e)
         }
 

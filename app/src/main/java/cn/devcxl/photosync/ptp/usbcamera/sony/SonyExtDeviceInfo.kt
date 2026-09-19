@@ -1,9 +1,9 @@
 package cn.devcxl.photosync.ptp.usbcamera.sony
 
-import android.util.Log
 
 import cn.devcxl.photosync.ptp.usbcamera.Data
 import cn.devcxl.photosync.ptp.usbcamera.NameFactory
+import timber.log.Timber
 
 /**
  * @author devcxl
@@ -62,7 +62,7 @@ class SonyExtDeviceInfo(f: NameFactory) : Data(true, ByteArray(0), 0, f) {
                 0x1000 -> opcodes++
                 0x4000 -> events++
                 0x5000 -> propcodes++
-                else -> Log.d(TAG, "ptp_sony_get_vendorpropcodes() unknown opcode $op")
+                else -> Timber.d("ptp_sony_get_vendorpropcodes() unknown opcode $op")
             }
         }
 

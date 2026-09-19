@@ -132,10 +132,7 @@ internal fun resolveJpegTiledSourceMode(
     }
 }
 
-internal fun resolvePhotoViewerMode(
-    isCurrentPage: Boolean,
-    isJpeg: Boolean
-): PhotoViewerMode {
+internal fun resolvePhotoViewerMode(isJpeg: Boolean): PhotoViewerMode {
     return if (isJpeg) {
         PhotoViewerMode.JPEG_TILED
     } else {
@@ -196,7 +193,6 @@ class PhotoPagerAdapter(
             path = entity.path,
             renderState = renderStateProvider(entity.path),
             viewerMode = resolvePhotoViewerMode(
-                isCurrentPage = isCurrentPage,
                 isJpeg = isJpegProvider(entity.path)
             ),
             isCurrentPage = isCurrentPage,
@@ -214,7 +210,6 @@ class PhotoPagerAdapter(
                 path = entity.path,
                 renderState = renderStateProvider(entity.path),
                 viewerMode = resolvePhotoViewerMode(
-                    isCurrentPage = isCurrentPage,
                     isJpeg = isJpegProvider(entity.path)
                 ),
                 isCurrentPage = isCurrentPage,

@@ -18,7 +18,6 @@ package cn.devcxl.photosync.ptp.usbcamera.nikon
 
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbDeviceConnection
-import android.util.Log
 
 import cn.devcxl.photosync.ptp.usbcamera.BaselineInitiator
 import cn.devcxl.photosync.ptp.usbcamera.Command
@@ -27,6 +26,7 @@ import cn.devcxl.photosync.ptp.usbcamera.Data
 import cn.devcxl.photosync.ptp.usbcamera.DevicePropDesc
 import cn.devcxl.photosync.ptp.usbcamera.PTPException
 import cn.devcxl.photosync.ptp.usbcamera.Response
+import timber.log.Timber
 
 /**
  * This supports all standardized PTP-over-USB operations, including
@@ -78,7 +78,7 @@ class NikonInitiator(dev: UsbDevice, connection: UsbDeviceConnection) :
         var resp: Response? = null
 
         if (!info!!.supportsOperation(Command.InitiateCapture)) {
-            Log.d(BaselineInitiator.TAG, "The camera does not support Nikon capture")
+            Timber.d("The camera does not support Nikon capture")
             throw PTPException("The camera does not support Nikon capture")
         }
 
@@ -87,32 +87,29 @@ class NikonInitiator(dev: UsbDevice, connection: UsbDeviceConnection) :
         try {
             Thread.sleep(100)
         } catch (e: InterruptedException) {
-            e.printStackTrace()
+            Timber.w(e, "initiateCapture failed")
         }
         try {
             Thread.sleep(100)
         } catch (e: InterruptedException) {
-            e.printStackTrace()
+            Timber.w(e, "initiateCapture failed")
         }
 
         resp = transact0(Command.InitiateCapture, null)
         ret = resp.getCode()
-        Log.d(
-            BaselineInitiator.TAG,
-            "  NK_OC_Capture Response code: 0x" + Integer.toHexString(ret) + "  OK: " + (ret == Response.OK)
-        )
+        Timber.d("  NK_OC_Capture Response code: 0x" + Integer.toHexString(ret) + "  OK: " + (ret == Response.OK))
         if (ret != Response.OK) {
             val msg = "NK_OC_Capture  Capture failed to release: Unknown error " +
                 ret +
                 " , please report."
-            Log.d(BaselineInitiator.TAG, msg)
+            Timber.d(msg)
             throw PTPException(msg, ret)
         }
 
         try {
             Thread.sleep(100)
         } catch (e: InterruptedException) {
-            e.printStackTrace()
+            Timber.w(e, "initiateCapture failed")
         }
 
         return resp

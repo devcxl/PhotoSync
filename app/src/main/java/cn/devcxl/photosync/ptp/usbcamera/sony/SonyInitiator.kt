@@ -2,7 +2,6 @@ package cn.devcxl.photosync.ptp.usbcamera.sony
 
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbDeviceConnection
-import android.util.Log
 
 import cn.devcxl.photosync.ptp.usbcamera.BaselineInitiator
 import cn.devcxl.photosync.ptp.usbcamera.Command
@@ -12,6 +11,7 @@ import cn.devcxl.photosync.ptp.usbcamera.ObjectInfo
 import cn.devcxl.photosync.ptp.usbcamera.PTPException
 import cn.devcxl.photosync.ptp.usbcamera.Response
 import cn.devcxl.photosync.ptp.usbcamera.Session
+import timber.log.Timber
 
 /**
  * @author devcxl
@@ -31,7 +31,7 @@ class SonyInitiator(dev: UsbDevice, connection: UsbDeviceConnection) : BaselineI
     }
 
     protected fun runEventPoll_NOTUSE() {
-        Log.v("PTP_EVENT", "开始event轮询")
+        Timber.tag("PTP_EVENT").v("开始event轮询")
         var loopTimes: Long = 0
         pollEventSetUp()
         val buffer = ByteArray(intrMaxPS)
@@ -41,7 +41,7 @@ class SonyInitiator(dev: UsbDevice, connection: UsbDeviceConnection) : BaselineI
                 try {
                     Thread.sleep(DEFAULT_TIMEOUT.toLong())
                 } catch (e: InterruptedException) {
-                    e.printStackTrace()
+                    Timber.w(e, "runEventPoll_NOTUSE failed")
                     return
                 }
                 continue
@@ -51,7 +51,7 @@ class SonyInitiator(dev: UsbDevice, connection: UsbDeviceConnection) : BaselineI
                 try {
                     Thread.sleep(DEFAULT_TIMEOUT.toLong())
                 } catch (e: InterruptedException) {
-                    e.printStackTrace()
+                    Timber.w(e, "runEventPoll_NOTUSE failed")
                     return
                 }
             }
@@ -64,18 +64,18 @@ class SonyInitiator(dev: UsbDevice, connection: UsbDeviceConnection) : BaselineI
             for (prop in props) {
                 if (prop.propertyCode == PTP_DPC_SONY_ObjectInMemory) {
                     if ((prop.getValue() as Int) > 0x8000) {
-                        Log.d(TAG, "SONY ObjectInMemory count change seen, retrieving file")
+                        Timber.d("SONY ObjectInMemory count change seen, retrieving file")
                         val info = getObjectInfo(0xffffc001.toInt())
                         processFileAddEvent(0xffffc001.toInt(), info)
                     } else {
-                        Log.d(TAG, "current prop.value of PTP_DPC_SONY_ObjectInMemory is " +
+                        Timber.d("current prop.value of PTP_DPC_SONY_ObjectInMemory is " +
                                 Integer.toHexString(prop.getValue() as Int))
                     }
                 }
             }
         }
 
-        Log.v("PTP_EVENT", "结束轮询")
+        Timber.tag("PTP_EVENT").v("结束轮询")
     }
 
     protected override fun waitVendorSpecifiedFileReadySignal(): Any? {
@@ -93,17 +93,17 @@ class SonyInitiator(dev: UsbDevice, connection: UsbDeviceConnection) : BaselineI
                             val info = getObjectInfo(0xffffc001.toInt())
                             return info
                         } catch (e: PTPException) {
-                            e.printStackTrace()
+                            Timber.w(e, "waitVendorSpecifiedFileReadySignal failed")
                         }
-                        Log.d(TAG, "SONY ObjectInMemory count change seen, retrieving file")
+                        Timber.d("SONY ObjectInMemory count change seen, retrieving file")
                     } else {
-                        Log.d(TAG, "current PTP_DPC_SONY_ObjectInMemory is " +
+                        Timber.d("current PTP_DPC_SONY_ObjectInMemory is " +
                                 Integer.toHexString(prop.getValue() as Int))
                     }
                 }
             }
         }
-        Log.d(TAG, "Sony waitVendorSpecifiedFileReadySignal timeout!")
+        Timber.d("Sony waitVendorSpecifiedFileReadySignal timeout!")
         return null
     }
 
@@ -111,7 +111,7 @@ class SonyInitiator(dev: UsbDevice, connection: UsbDeviceConnection) : BaselineI
         try {
             Thread.sleep(2000L)
         } catch (e: InterruptedException) {
-            e.printStackTrace()
+            Timber.w(e, "waitVendorSpecifiedFileReadySignal1 failed")
         }
     }
 
@@ -124,15 +124,15 @@ class SonyInitiator(dev: UsbDevice, connection: UsbDeviceConnection) : BaselineI
             try {
                 transact0(PTP_OC_SONY_GetAllDevicePropData, data)
                 if (data == null) {
-                    Log.d(TAG, "data is null")
+                    Timber.d("data is null")
                     return@getAllDevicePropDesc null
                 }
                 if (data.getLength() < 8) {
-                    Log.d(TAG, "data length is short than 8")
+                    Timber.d("data length is short than 8")
                     return@getAllDevicePropDesc null
                 }
 
-                Log.d(TAG, "PTP_OC_SONY_GetAllDevicePropData recv data is : " +
+                Timber.d("PTP_OC_SONY_GetAllDevicePropData recv data is : " +
                         BaselineInitiator.byteArrayToHex(data.data))
 
                 data.offset = 12 + 8
@@ -141,14 +141,14 @@ class SonyInitiator(dev: UsbDevice, connection: UsbDeviceConnection) : BaselineI
                     try {
                         desc.parse()
                     } catch (e: Exception) {
-                        e.printStackTrace()
+                        Timber.w(e, "getAllDevicePropDesc failed")
                         break
                     }
                     props.add(desc)
                 }
                 return@getAllDevicePropDesc props
             } catch (e: PTPException) {
-                e.printStackTrace()
+                Timber.w(e, "getAllDevicePropDesc failed")
                 return@getAllDevicePropDesc null
             }
         }
@@ -161,20 +161,20 @@ class SonyInitiator(dev: UsbDevice, connection: UsbDeviceConnection) : BaselineI
             data.toString()
             return null
         } catch (e: PTPException) {
-            e.printStackTrace()
+            Timber.w(e, "getDevicePropDesc failed")
             return null
         }
     }
 
     fun setSDIOConnect(mode: Int): Response? {
-        Log.d(TAG, "set setSDIOConnect :$mode")
+        Timber.d("set setSDIOConnect :$mode")
         val data = Data(this)
         synchronized(session) {
             try {
                 val response = transact1(Command.SONY_SDIOCOMMAND, data, mode)
                 return@setSDIOConnect response
             } catch (e: PTPException) {
-                e.printStackTrace()
+                Timber.w(e, "setSDIOConnect failed")
                 return@setSDIOConnect null
             }
         }
@@ -186,7 +186,7 @@ class SonyInitiator(dev: UsbDevice, connection: UsbDeviceConnection) : BaselineI
         try {
             getDeviceInfo()
         } catch (e: PTPException) {
-            e.printStackTrace()
+            Timber.w(e, "pollEventSetUp failed")
         }
         setSDIOConnect(0x01)
         setSDIOConnect(0x02)
@@ -201,12 +201,12 @@ class SonyInitiator(dev: UsbDevice, connection: UsbDeviceConnection) : BaselineI
             try {
                 data.parse()
                 sonyExtDeviceInfo = data
-                Log.d(TAG, sonyExtDeviceInfo.toString())
+                Timber.d(sonyExtDeviceInfo.toString())
             } catch (e: Exception) {
-                e.printStackTrace()
+                Timber.w(e, "sendSonyGetExtDeviceInfoCommand failed")
             }
         } catch (e: PTPException) {
-            e.printStackTrace()
+            Timber.w(e, "sendSonyGetExtDeviceInfoCommand failed")
         }
     }
 
@@ -215,7 +215,7 @@ class SonyInitiator(dev: UsbDevice, connection: UsbDeviceConnection) : BaselineI
         try {
             getDeviceInfo()
         } catch (e: PTPException) {
-            e.printStackTrace()
+            Timber.w(e, "pollListSetUp failed")
         }
         setSDIOConnect(0x01)
         setSDIOConnect(0x02)
@@ -223,13 +223,13 @@ class SonyInitiator(dev: UsbDevice, connection: UsbDeviceConnection) : BaselineI
     }
 
     override fun pollListAfterGetStorages(ids: IntArray) {
-        Log.v(TAG, "pollListAfterGetStorages : get storages : ${ids?.contentToString()}")
+        Timber.v("pollListAfterGetStorages : get storages : ${ids?.contentToString()}")
         setSDIOConnect(0x03)
     }
 
     @Throws(PTPException::class)
     override fun openSession() {
-        Log.d(TAG, "claimInterface")
+        Timber.d("claimInterface")
         mConnection!!.claimInterface(intf!!, false)
         super.openSession()
     }

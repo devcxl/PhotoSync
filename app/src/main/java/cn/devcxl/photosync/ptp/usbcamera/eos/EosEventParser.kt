@@ -17,7 +17,6 @@
 
 package cn.devcxl.photosync.ptp.usbcamera.eos
 
-import android.util.Log
 import cn.devcxl.photosync.ptp.usbcamera.PTPException
 import cn.devcxl.photosync.ptp.usbcamera.PTPUnsupportedException
 import cn.devcxl.photosync.ptp.usbcamera.eos.EosEventConstants.EosEventCameraStatusChanged
@@ -30,6 +29,7 @@ import cn.devcxl.photosync.ptp.usbcamera.eos.EosEventConstants.EosPropPictureSty
 import cn.devcxl.photosync.ptp.usbcamera.eos.EosEventConstants.EosPropPictureStyleUserTypeMonochrome
 import java.io.IOException
 import java.io.InputStream
+import timber.log.Timber
 
 /**
  * This class parses a stream of bytes as a sequence of events accordingly
@@ -71,24 +71,22 @@ class EosEventParser(private val inputStream: InputStream) {
             }
             val code = getNextS32()
             event.code = code
-            Log.d(
-                "EventParser", "   Event len: $len, Code: 0x${String.format("%04x", code)} ${
+            Timber.tag("EventParser").d("   Event len: $len, Code: 0x${String.format("%04x", code)} ${
                     EosEvent.getEventName(
                         code
                     )
-                }"
-            )
+                }")
             parseParameters(event, len - 8)
             for (i in 1..event.paramCount) {
                 val p = event.getParam(i)
                 when (p) {
-                    is String -> Log.d("EventParser", "          params $i: ${String.format("%s", p)}")
-                    is java.lang.Boolean -> Log.d("EventParser", "          params $i: ${String.format("%b", p)}")
-                    else -> Log.d("EventParser", "          params $i: ${String.format("0x%04x  %d", p, p)}")
+                    is String -> Timber.tag("EventParser").d("          params $i: ${String.format("%s", p)}")
+                    is java.lang.Boolean -> Timber.tag("EventParser").d("          params $i: ${String.format("%b", p)}")
+                    else -> Timber.tag("EventParser").d("          params $i: ${String.format("0x%04x  %d", p, p)}")
                 }
             }
         } catch (e: IOException) {
-            Log.d("EventParser", "   Error reading event stream")
+            Timber.tag("EventParser").d("   Error reading event stream")
             throw PTPException("Error reading event stream", e)
         }
 

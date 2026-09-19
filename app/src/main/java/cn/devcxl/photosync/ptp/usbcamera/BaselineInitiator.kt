@@ -5,7 +5,6 @@ import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbEndpoint
 import android.hardware.usb.UsbInterface
-import android.util.Log
 import android.widget.ImageView
 import cn.devcxl.photosync.ptp.manager.SyncDeviceManager
 import cn.devcxl.photosync.ptp.interfaces.FileDownloadedListener
@@ -18,6 +17,7 @@ import java.io.FileNotFoundException
 import java.io.FileOutputStream
 import java.io.IOException
 import java.util.Random
+import timber.log.Timber
 
 /**
  * @author devcxl
@@ -27,7 +27,6 @@ open class BaselineInitiator : NameFactory, Runnable {
     companion object {
         const val DEBUG = false
         const val TRACE = false
-        const val TAG = "BaselineInitiator"
         const val DEFAULT_TIMEOUT = 1000
 
         // USB Class-specific control requests; from Annex D.5.2
@@ -134,7 +133,7 @@ open class BaselineInitiator : NameFactory, Runnable {
             throw PTPException("can't init")
         }
 
-        Log.d(TAG, "trying getDeviceInfoUncached")
+        Timber.d("trying getDeviceInfoUncached")
         info = getDeviceInfoUncached()
 
         if (info!!.vendorExtensionId != 0) {
@@ -146,7 +145,7 @@ open class BaselineInitiator : NameFactory, Runnable {
         val count = device.interfaceCount
         for (i in 0 until count) {
             val intf = device.getInterface(i)
-            Log.d(TAG, "Interface $i Class " + intf.interfaceClass + " Prot " + intf.interfaceProtocol)
+            Timber.d("Interface $i Class " + intf.interfaceClass + " Prot " + intf.interfaceProtocol)
             if (intf.interfaceClass == 6
             ) {
                 return intf
@@ -265,7 +264,7 @@ open class BaselineInitiator : NameFactory, Runnable {
     }
 
     fun showResponseCode(comment: String, code: Int) {
-        Log.d(TAG, comment + " Response: " + Response._getResponseString(code) + ",  code: 0x" + Integer.toHexString(code))
+        Timber.d(comment + " Response: " + Response._getResponseString(code) + ",  code: 0x" + Integer.toHexString(code))
     }
 
     fun isSessionActive(): Boolean {
@@ -338,7 +337,7 @@ open class BaselineInitiator : NameFactory, Runnable {
                     status = getDeviceStatus(null)
                 } catch (x: PTPException) {
                     if (DEBUG) {
-                        x.printStackTrace()
+                        Timber.w(x, "getClearStatus failed")
                     }
                 }
                 if (status == Response.OK) {
@@ -445,7 +444,7 @@ open class BaselineInitiator : NameFactory, Runnable {
             System.err.println(command.toString())
         }
         var lenC = mConnection!!.bulkTransfer(epOut!!, command.data, command.length, DEFAULT_TIMEOUT)
-        Log.d(TAG, "Command " + Command._getOpcodeString(command.getCode()) + " bytes sent $lenC")
+        Timber.d("Command " + Command._getOpcodeString(command.getCode()) + " bytes sent $lenC")
 
         if ((command.length % epOut!!.maxPacketSize) == 0) {
             lenC = mConnection!!.bulkTransfer(epOut!!, command.data, 0, DEFAULT_TIMEOUT)
@@ -480,7 +479,7 @@ open class BaselineInitiator : NameFactory, Runnable {
                 readLen = mConnection!!.bulkTransfer(epIn!!, readBuffer, inMaxPS,
                     DEFAULT_TIMEOUT)
                 if (readLen == 0) {
-                    Log.d(TAG, "rainx note: 有的时候，端点会返回空包，这个时候需要再次发送请求 ")
+                    Timber.d("rainx note: 有的时候，端点会返回空包，这个时候需要再次发送请求 ")
                     readLen = mConnection!!.bulkTransfer(epIn!!, readBuffer, inMaxPS, DEFAULT_TIMEOUT)
                 }
                 data.data = readBuffer
@@ -494,7 +493,7 @@ open class BaselineInitiator : NameFactory, Runnable {
                         data.data = readBuffer
                         data.length = readLen
 
-                        Log.d(TAG, "read a unkonwn pack , read again:" + byteArrayToHex(data.data))
+                        Timber.d("read a unkonwn pack , read again:" + byteArrayToHex(data.data))
                     }
                     throw PTPException("protocol err 1, " + data +
                             "\n data:" + byteArrayToHex(data.data))
@@ -524,9 +523,9 @@ open class BaselineInitiator : NameFactory, Runnable {
         }
 
         val buf = ByteArray(inMaxPS)
-        Log.d(TAG, "read response")
+        Timber.d("read response")
         var len = mConnection!!.bulkTransfer(epIn!!, buf, inMaxPS, DEFAULT_TIMEOUT)
-        Log.d(TAG, "received data bytes: $len")
+        Timber.d("received data bytes: $len")
 
         if (len == 0) {
             len = mConnection!!.bulkTransfer(epIn!!, buf, inMaxPS, DEFAULT_TIMEOUT)
@@ -555,11 +554,11 @@ open class BaselineInitiator : NameFactory, Runnable {
             throw PTPException("No input interrupt end-point found!")
         }
         if (DEBUG) {
-            Log.d(TAG, "Get: " + device!!.interfaceCount + " Other: " + device!!.deviceName)
-            Log.d(TAG, "\nClass: " + intf!!.interfaceClass + "," + intf!!.interfaceSubclass + "," + intf!!.interfaceProtocol
+            Timber.d("Get: " + device!!.interfaceCount + " Other: " + device!!.deviceName)
+            Timber.d("\nClass: " + intf!!.interfaceClass + "," + intf!!.interfaceSubclass + "," + intf!!.interfaceProtocol
                     + "\nIendpoints: " + epIn!!.maxPacketSize + " Type " + epIn!!.type + " Dir " + epIn!!.direction)
-            Log.d(TAG, "\nOendpoints: " + epOut!!.maxPacketSize + " Type " + epOut!!.type + " Dir " + epOut!!.direction)
-            Log.d(TAG, "\nEendpoints: " + epEv!!.maxPacketSize + " Type " + epEv!!.type + " Dir " + epEv!!.direction)
+            Timber.d("\nOendpoints: " + epOut!!.maxPacketSize + " Type " + epOut!!.type + " Dir " + epOut!!.direction)
+            Timber.d("\nEendpoints: " + epEv!!.maxPacketSize + " Type " + epEv!!.type + " Dir " + epEv!!.direction)
         }
     }
 
@@ -641,7 +640,7 @@ open class BaselineInitiator : NameFactory, Runnable {
 
     @Throws(PTPException::class)
     open fun setExposure(exposureValue: Double): Response? {
-        Log.d(TAG, "Not overriden!!!")
+        Timber.d("Not overriden!!!")
         return null
     }
 
@@ -693,7 +692,7 @@ open class BaselineInitiator : NameFactory, Runnable {
     }
 
     fun read(timeout: Int): ByteArray {
-        Log.d(TAG, "Reading data")
+        Timber.d("Reading data")
         val data = ByteArray(inMaxPS)
 
         var retries = 10
@@ -702,7 +701,7 @@ open class BaselineInitiator : NameFactory, Runnable {
         while (i < retries && isSessionActive() && pollThreadRunning) {
             tmp = mConnection!!.bulkTransfer(epIn!!, data, inMaxPS, timeout)
             if (tmp < 0)
-                Log.e(TAG, "Reading failed, retry")
+                Timber.e("Reading failed, retry")
             else
                 break
             retries--
@@ -712,7 +711,7 @@ open class BaselineInitiator : NameFactory, Runnable {
     }
 
     fun write(data: ByteArray, length: Int, timeout: Int) {
-        Log.d(TAG, "Sending command")
+        Timber.d("Sending command")
         mConnection!!.bulkTransfer(epOut!!, data, length, timeout)
     }
 
@@ -726,7 +725,7 @@ open class BaselineInitiator : NameFactory, Runnable {
     }
 
     fun readInter(timeout: Int, data: ByteArray): Int {
-        Log.d(TAG, "Reading interrupt data")
+        Timber.d("Reading interrupt data")
 
         var retries = 10
         var length = -1
@@ -734,7 +733,7 @@ open class BaselineInitiator : NameFactory, Runnable {
         while (i < retries) {
             length = mConnection!!.bulkTransfer(epEv!!, data, intrMaxPS, timeout)
             if (length < 0)
-                Log.e(TAG, "Reading failed, retry")
+                Timber.e("Reading failed, retry")
             else
                 break
             retries--
@@ -808,7 +807,7 @@ open class BaselineInitiator : NameFactory, Runnable {
             val fullLength = data.getLength()
 
             if (fullLength < Container.HDR_LEN) {
-                Log.v("ptp-error", "fullLength is too short: $fullLength")
+                Timber.tag("ptp-error").v("fullLength is too short: $fullLength")
                 outputStream.close()
                 return false
             }
@@ -846,7 +845,7 @@ open class BaselineInitiator : NameFactory, Runnable {
                     readLen = retry
                 }
                 if (readLen > READ_BUF_SIZE) {
-                    Log.d(TAG, "readLen $readLen is bigger than buffer size:$READ_BUF_SIZE")
+                    Timber.d("readLen $readLen is bigger than buffer size:$READ_BUF_SIZE")
                     readLen = READ_BUF_SIZE
                 }
                 outputStream.write(readBuffer, 0, readLen)
@@ -995,13 +994,13 @@ open class BaselineInitiator : NameFactory, Runnable {
             try {
                 runPollListPoll()
             } catch (e: PTPException) {
-                e.printStackTrace()
+                Timber.w(e, "run failed")
             }
         }
     }
 
     protected open fun runEventPoll() {
-        Log.v("PTP_EVENT", "开始event轮询")
+        Timber.tag("PTP_EVENT").v("开始event轮询")
         var loopTimes: Long = 0
         pollEventSetUp()
         if (epEv != null) {
@@ -1018,14 +1017,14 @@ open class BaselineInitiator : NameFactory, Runnable {
                     try {
                         importFile(singal.handle, outputFilePath)
                     } catch (e: PTPException) {
-                        Log.e(TAG, "Failed to import file for handle " + singal.handle + " to " + outputFilePath, e)
+                        Timber.e(e, "Failed to import file for handle " + singal.handle + " to " + outputFilePath)
                     } catch (e: IOException) {
-                        Log.e(TAG, "I/O error while importing file for handle " + singal.handle + " to " + outputFilePath, e)
+                        Timber.e(e, "I/O error while importing file for handle " + singal.handle + " to " + outputFilePath)
                     }
                 }
             }
         }
-        Log.v("PTP_EVENT", "结束轮询")
+        Timber.tag("PTP_EVENT").v("结束轮询")
     }
 
     protected open fun waitVendorSpecifiedFileReadySignal(): Any? {
@@ -1040,7 +1039,7 @@ open class BaselineInitiator : NameFactory, Runnable {
     protected open fun runPollListPoll() {
         pollThreadRunning = true
         val PTP_POLL_LIST = "PTP_POLL_LIST"
-        Log.v(PTP_POLL_LIST, "开始event轮询")
+        Timber.tag(PTP_POLL_LIST).v("开始event轮询")
         var loopTimes: Long = 0
         var syncDeviceManager: SyncDeviceManager
 
@@ -1051,7 +1050,7 @@ open class BaselineInitiator : NameFactory, Runnable {
         sids = getStorageIds()
         sids = filterValidStorageIds(sids)
         if (sids.isEmpty()) {
-            Log.w(TAG, "未发现可用存储卡槽，停止轮询")
+            Timber.w("未发现可用存储卡槽，停止轮询")
             pollListTearDown()
             return
         }
@@ -1070,7 +1069,7 @@ open class BaselineInitiator : NameFactory, Runnable {
                 if (oldObjectHandles != null) {
                     syncDeviceManager.updateIdList(oldObjectHandles)
                 } else {
-                    Log.d(TAG, "init oldObjectHandles is null")
+                    Timber.d("init oldObjectHandles is null")
                 }
             }
         } else if (syncRecordMode == SyncParams.SYNC_RECORD_MODE_FORGET) {
@@ -1083,13 +1082,13 @@ open class BaselineInitiator : NameFactory, Runnable {
             oldObjectHandles = mutableListOf()
         }
 
-        Log.v(PTP_POLL_LIST, "初始objectHandle列表: $oldObjectHandles")
+        Timber.tag(PTP_POLL_LIST).v("初始objectHandle列表: $oldObjectHandles")
         while (pollThreadRunning) {
             if (!isSessionActive() || !autoPollEvent || mConnection == null) {
                 try {
                     Thread.sleep(DEFAULT_TIMEOUT.toLong())
                 } catch (e: InterruptedException) {
-                    e.printStackTrace()
+                    Timber.w(e, "poll loop interrupted, stopping")
                     return
                 }
                 continue
@@ -1097,13 +1096,13 @@ open class BaselineInitiator : NameFactory, Runnable {
                 try {
                     Thread.sleep(2000)
                 } catch (e: InterruptedException) {
-                    e.printStackTrace()
+                    Timber.w(e, "poll loop interrupted, stopping")
                     return
                 }
 
                 val newObjectHandles = getObjectHandlesByStorageIds(sids)
                 val newAdded = getAllNewAddedObjectHandles(oldObjectHandles, newObjectHandles)
-                Log.v(PTP_POLL_LIST, "New Added objectHandle : $newAdded")
+                Timber.tag(PTP_POLL_LIST).v("New Added objectHandle : $newAdded")
                 val newAddedDownloaded = mutableListOf<Int>()
                 if (newAdded.size > 0) {
                     var downloadInterrupted = false
@@ -1131,7 +1130,7 @@ open class BaselineInitiator : NameFactory, Runnable {
         }
 
         pollListTearDown()
-        Log.v(PTP_POLL_LIST, "结束轮询")
+        Timber.tag(PTP_POLL_LIST).v("结束轮询")
     }
 
     private fun filterValidStorageIds(sids: IntArray): IntArray {
@@ -1146,7 +1145,7 @@ open class BaselineInitiator : NameFactory, Runnable {
                     validSids.add(sid)
                 }
             } catch (e: PTPException) {
-                Log.w(TAG, "存储卡槽不可用，跳过 sid=$sid，原因=" + e.message)
+                Timber.w(e, "存储卡槽不可用，跳过 sid=%s", sid)
             }
         }
         val result = IntArray(validSids.size)
@@ -1177,7 +1176,7 @@ open class BaselineInitiator : NameFactory, Runnable {
                     objectHandles.add(h)
                 }
             } catch (e: PTPException) {
-                Log.w(TAG, "读取存储卡槽失败，跳过 sid=$sid，原因=" + e.message)
+                Timber.w(e, "读取存储卡槽失败，跳过 sid=%s", sid)
             }
         }
         return objectHandles
@@ -1196,7 +1195,7 @@ open class BaselineInitiator : NameFactory, Runnable {
     }
 
     protected open fun processFileAddEvent(fileHandle: Int, event: Any?): Boolean {
-        Log.v(TAG, "start processFileAddEvent : handle -> $fileHandle")
+        Timber.v("start processFileAddEvent : handle -> $fileHandle")
         if (autoDownloadFile && fileDownloadPath != null) {
             try {
                 var downloadFileName: String
@@ -1209,7 +1208,7 @@ open class BaselineInitiator : NameFactory, Runnable {
                     try {
                         objectInfo = getObjectInfo(fileHandle)
                     } catch (ex: Exception) {
-                        Log.w(TAG, "Failed to resolve ObjectInfo for handle $fileHandle: " + ex.message)
+                        Timber.w(ex, "Failed to resolve ObjectInfo for handle %s", fileHandle)
                         return false
                     }
                 }
@@ -1228,7 +1227,7 @@ open class BaselineInitiator : NameFactory, Runnable {
                 if (!downloadDir.exists()) {
                     val created = downloadDir.mkdirs()
                     if (!created) {
-                        Log.e(TAG, "Failed to create download directory: $fileDownloadPath")
+                        Timber.e("Failed to create download directory: $fileDownloadPath")
                         return false
                     }
                 }
@@ -1237,17 +1236,17 @@ open class BaselineInitiator : NameFactory, Runnable {
                 val outputFilePath = outputFile.path
                 val ok = importFile(fileHandle, outputFilePath)
                 if (!ok) {
-                    Log.w(TAG, "importFile returned false for handle $fileHandle, path: $outputFilePath")
+                    Timber.w("importFile returned false for handle $fileHandle, path: $outputFilePath")
                 }
                 return ok
             } catch (e: PTPException) {
-                Log.e(TAG, "PTPException in processFileAddEvent for handle $fileHandle: " + e.message, e)
+                Timber.e(e, "PTPException in processFileAddEvent for handle %s", fileHandle)
                 return false
             } catch (e: IOException) {
-                Log.e(TAG, "IOException in processFileAddEvent for handle $fileHandle: " + e.message, e)
+                Timber.e(e, "IOException in processFileAddEvent for handle %s", fileHandle)
                 return false
             } catch (e: Exception) {
-                Log.e(TAG, "Exception in processFileAddEvent for handle $fileHandle: " + e.message, e)
+                Timber.e(e, "Exception in processFileAddEvent for handle %s", fileHandle)
                 return false
             }
         }

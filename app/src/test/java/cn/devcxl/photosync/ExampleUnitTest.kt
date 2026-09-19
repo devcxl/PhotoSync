@@ -18,15 +18,11 @@ class ExampleUnitTest {
     fun shouldUseTiledViewer_whenIsJpegAndUsePhotoViewOtherwise() {
         assertEquals(
             PhotoViewerMode.JPEG_TILED,
-            resolvePhotoViewerMode(isCurrentPage = true, isJpeg = true)
-        )
-        assertEquals(
-            PhotoViewerMode.JPEG_TILED,
-            resolvePhotoViewerMode(isCurrentPage = false, isJpeg = true)
+            resolvePhotoViewerMode(isJpeg = true)
         )
         assertEquals(
             PhotoViewerMode.PHOTO_VIEW,
-            resolvePhotoViewerMode(isCurrentPage = true, isJpeg = false)
+            resolvePhotoViewerMode(isJpeg = false)
         )
     }
 
@@ -48,16 +44,6 @@ class ExampleUnitTest {
         )
 
         assertEquals("TILED_WITH_PREVIEW", mode.name)
-    }
-
-    @Test
-    fun shouldLoadPreview_returnsTrueForCurrentPageEvenWhilePagerIsSettling() {
-        assertTrue(shouldLoadPreview(isCurrentPage = true))
-    }
-
-    @Test
-    fun shouldLoadPreview_returnsFalseForNonCurrentPage() {
-        assertFalse(shouldLoadPreview(isCurrentPage = false))
     }
 
     @Test

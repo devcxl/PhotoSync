@@ -4,6 +4,8 @@ import kotlin.math.roundToInt
 
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
+import java.io.OutputStream
 import java.text.SimpleDateFormat
 import java.util.Collections
 import java.util.Date
@@ -66,6 +68,9 @@ class MainActivity : ComponentActivity() {
         private const val RAW_PREVIEW_MAX_EDGE_PX = 1200
         private const val FULL_PREVIEW_SCALE_FACTOR = 2
         private const val FULL_PREVIEW_MAX_EDGE_PX = 4096
+        private const val JPEG_MIME = "image/jpeg"
+        private const val JPEG_EXPORT_QUALITY = 100
+        private const val GALLERY_DIR_NAME = "PhotoSync"
         private val exportDateFormat = ThreadLocal.withInitial {
             SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
         }
@@ -84,6 +89,7 @@ class MainActivity : ComponentActivity() {
     private val inFlightThumbnailPaths = Collections.synchronizedSet(mutableSetOf<String>())
     private val inFlightFullPaths = Collections.synchronizedSet(mutableSetOf<String>())
     private val jpegSourceInfoCache = Collections.synchronizedMap(mutableMapOf<String, JpegSourceInfo>())
+
     @OptIn(ExperimentalCoroutinesApi::class)
     private val rawThumbnailDispatcher = Dispatchers.Default.limitedParallelism(1)
     private val previewLongEdgePx: Int by lazy {
@@ -147,6 +153,7 @@ class MainActivity : ComponentActivity() {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 dao.getAllFlow().collect { list ->
                     adapter.updateItems(list.toList())
+                    evictCachesForRemovedItems(list)
                     pendingRevealPath?.let { target ->
                         val idx = list.indexOfFirst { it.path == target }
                         if (idx >= 0) {
@@ -274,11 +281,26 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Drops per-path cache entries whose photo is no longer present in the database.
+     *
+     * The bitmap caches are bounded [LruCache]s, but [jpegSourceInfoCache] is a plain
+     * map, so it would keep one entry per imported path for the whole session without
+     * this eviction.
+     */
+    private fun evictCachesForRemovedItems(currentItems: List<PhotoEntity>) {
+        val livePaths = currentItems.mapTo(mutableSetOf()) { it.path }
+        jpegSourceInfoCache.keys.retainAll(livePaths)
+    }
+
     private fun ensurePhotoForPosition(path: String, position: Int) {
-        if (shouldLoadThumbnail(position == binding.viewPager.currentItem, isRawPath(path))) {
+        val isCurrentPage = position == binding.viewPager.currentItem
+        if (shouldLoadThumbnail(isCurrentPage, isRawPath(path))) {
             ensureThumbnail(path)
         }
-        if (shouldLoadPreview(isCurrentPage = position == binding.viewPager.currentItem)) {
+        // The full preview is only decoded for the page on screen; pager settling
+        // still reports the outgoing position, so neighbours stay thumbnail-only.
+        if (isCurrentPage) {
             ensureFullPreview(path)
         }
     }
@@ -293,12 +315,6 @@ class MainActivity : ComponentActivity() {
         next?.takeUnless { isRawPath(it.path) }?.let { ensureThumbnail(it.path) }
     }
 
-    private fun getCurrentEntity(): PhotoEntity? {
-        if (adapter.itemCount == 0) return null
-        val currentIndex = binding.viewPager.currentItem.coerceIn(0, adapter.itemCount - 1)
-        return adapter.getItem(currentIndex)
-    }
-
     private fun getJpegSourceInfo(path: String): JpegSourceInfo? {
         if (!isJpegPath(path)) return null
         jpegSourceInfoCache[path]?.let { return it }
@@ -311,11 +327,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun isJpegPath(path: String): Boolean {
-        return ExtensionUtils.isJpegExtension(path.substringAfterLast('.', "").lowercase(Locale.ROOT))
+        return ExtensionUtils.isJpegExtension(ExtensionUtils.fileExtension(path))
     }
 
     private fun isRawPath(path: String): Boolean {
-        return ExtensionUtils.isRawExtension(path.substringAfterLast('.', "").lowercase(Locale.ROOT))
+        return ExtensionUtils.isRawExtension(ExtensionUtils.fileExtension(path))
     }
 
     private fun ensureThumbnail(path: String) {
@@ -344,13 +360,8 @@ class MainActivity : ComponentActivity() {
 
     private fun ensureFullPreview(path: String) {
         if (fullBitmapCache.get(path) != null) return
+        if (isRawPath(path)) return
         if (!inFlightFullPaths.add(path)) return
-        val isRaw = ExtensionUtils.isRawExtension(
-            path.substringAfterLast('.', "").lowercase(Locale.ROOT))
-        if (isRaw) {
-            inFlightFullPaths.remove(path)
-            return
-        }
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val bitmap = decodeFullPreviewBitmap(path) ?: return@launch
@@ -365,7 +376,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun decodeThumbnailBitmap(path: String): Bitmap? {
-        val ext = path.substringAfterLast('.', "").lowercase(Locale.ROOT)
+        val ext = ExtensionUtils.fileExtension(path)
         return try {
             when {
                 ExtensionUtils.isRawExtension(ext) -> {
@@ -386,7 +397,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun decodeFullPreviewBitmap(path: String): Bitmap? {
-        val ext = path.substringAfterLast('.', "").lowercase(Locale.ROOT)
+        val ext = ExtensionUtils.fileExtension(path)
         return try {
             when {
                 ExtensionUtils.isRawExtension(ext) -> RawWrapper.decodeThumbnailBitmap(path)
@@ -461,7 +472,7 @@ class MainActivity : ComponentActivity() {
                 }
                 return@launch
             }
-            val ext = path.substringAfterLast('.', "").lowercase(Locale.ROOT)
+            val ext = ExtensionUtils.fileExtension(path)
 
             val displayName = makeExportName(entity.name)
             val saved: Uri? = try {
@@ -520,9 +531,36 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun saveBitmapToGallery(bitmap: Bitmap, displayName: String): Uri? {
+        return saveToGallery(displayName, mime = JPEG_MIME) { out ->
+            if (!bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_EXPORT_QUALITY, out)) {
+                throw IOException("JPEG compress failed")
+            }
+        }
+    }
+
+    // 直接复制文件至相册（用于JPEG等已经是目标格式的文件）
+    private fun saveFileToGalleryByCopying(srcFile: File, displayName: String, mime: String = JPEG_MIME): Uri? {
+        return saveToGallery(displayName, mime) { out ->
+            srcFile.inputStream().use { input -> input.copyTo(out) }
+        }
+    }
+
+    /**
+     * Writes one image into the system gallery under Pictures/PhotoSync.
+     *
+     * On API 29+ the entry is inserted through MediaStore with `IS_PENDING` set, so a
+     * failed write never leaves a half-written image visible. Older versions write the
+     * file directly to external storage, then announce it to MediaStore and return that
+     * insert's result.
+     *
+     * @param displayName File name to publish in the gallery.
+     * @param mime MIME type to record in MediaStore.
+     * @param write Callback that writes the image bytes; returning normally means success,
+     *   throwing marks the entry as failed and it is removed again.
+     * @return The MediaStore [Uri] of the new entry, or null when saving failed.
+     */
+    private fun saveToGallery(displayName: String, mime: String, write: (OutputStream) -> Unit): Uri? {
         return try {
-            val mime = "image/jpeg"
-            val quality = 100
             if (Build.VERSION.SDK_INT >= 29) {
                 val values = ContentValues().apply {
                     put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
@@ -535,11 +573,10 @@ class MainActivity : ComponentActivity() {
                 if (uri != null) {
                     try {
                         val stream = resolver.openOutputStream(uri)
-                            ?: throw RuntimeException("openOutputStream returned null")
+                            ?: throw IOException("openOutputStream returned null")
                         stream.use { out ->
-                            val ok = bitmap.compress(Bitmap.CompressFormat.JPEG, quality, out)
+                            write(out)
                             out.flush()
-                            if (!ok) throw RuntimeException("JPEG compress failed")
                         }
                     } catch (e: Exception) {
                         resolver.delete(uri, null, null)
@@ -552,12 +589,11 @@ class MainActivity : ComponentActivity() {
                 uri
             } else {
                 val pictures = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
-                val dir = File(pictures, "PhotoSync").apply { if (!exists()) mkdirs() }
+                val dir = File(pictures, GALLERY_DIR_NAME).apply { if (!exists()) mkdirs() }
                 val file = File(dir, displayName)
                 FileOutputStream(file).use { out ->
-                    val ok = bitmap.compress(Bitmap.CompressFormat.JPEG, quality, out)
+                    write(out)
                     out.flush()
-                    if (!ok) throw RuntimeException("JPEG compress failed")
                 }
                 // Insert into MediaStore on older devices so it shows up in gallery
                 val values = ContentValues().apply {
@@ -568,61 +604,7 @@ class MainActivity : ComponentActivity() {
                 contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
             }
         } catch (e: Exception) {
-            Timber.e(e, "saveBitmapToGallery failed")
-            null
-        }
-    }
-
-    // 直接复制文件至相册（用于JPEG等已经是目标格式的文件）
-    private fun saveFileToGalleryByCopying(srcFile: File, displayName: String, mime: String = "image/jpeg"): Uri? {
-        return try {
-            if (Build.VERSION.SDK_INT >= 29) {
-                val values = ContentValues().apply {
-                    put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
-                    put(MediaStore.MediaColumns.MIME_TYPE, mime)
-                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/PhotoSync")
-                    put(MediaStore.Images.Media.IS_PENDING, 1)
-                }
-                val resolver = contentResolver
-                val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-                if (uri != null) {
-                    try {
-                        val stream = resolver.openOutputStream(uri)
-                            ?: throw RuntimeException("openOutputStream returned null")
-                        stream.use { out ->
-                            srcFile.inputStream().use { input ->
-                                input.copyTo(out)
-                                out.flush()
-                            }
-                        }
-                    } catch (e: Exception) {
-                        resolver.delete(uri, null, null)
-                        throw e
-                    }
-                    values.clear()
-                    values.put(MediaStore.Images.Media.IS_PENDING, 0)
-                    resolver.update(uri, values, null, null)
-                }
-                uri
-            } else {
-                val pictures = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
-                val dir = File(pictures, "PhotoSync").apply { if (!exists()) mkdirs() }
-                val dst = File(dir, displayName)
-                srcFile.inputStream().use { input ->
-                    dst.outputStream().use { output ->
-                        input.copyTo(output)
-                        output.flush()
-                    }
-                }
-                val values = ContentValues().apply {
-                    put(MediaStore.MediaColumns.DATA, dst.absolutePath)
-                    put(MediaStore.MediaColumns.MIME_TYPE, mime)
-                    put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
-                }
-                contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-            }
-        } catch (e: Exception) {
-            Timber.e(e, "saveFileToGalleryByCopying failed")
+            Timber.e(e, "saveToGallery failed for %s", displayName)
             null
         }
     }
@@ -668,6 +650,7 @@ class MainActivity : ComponentActivity() {
                 fullBitmapCache.remove(entity.path)
                 inFlightThumbnailPaths.remove(entity.path)
                 inFlightFullPaths.remove(entity.path)
+                jpegSourceInfoCache.remove(entity.path)
 
                 // Delete physical file
                 val file = File(entity.path)
@@ -704,11 +687,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-}
-
-@VisibleForTesting
-internal fun shouldLoadPreview(isCurrentPage: Boolean): Boolean {
-    return isCurrentPage
 }
 
 @VisibleForTesting
