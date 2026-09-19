@@ -8,7 +8,6 @@ import android.hardware.usb.UsbInterface
 import android.util.Log
 import android.widget.ImageView
 import cn.devcxl.photosync.ptp.manager.SyncDeviceManager
-import cn.devcxl.photosync.ptp.interfaces.FileAddedListener
 import cn.devcxl.photosync.ptp.interfaces.FileDownloadedListener
 import cn.devcxl.photosync.ptp.interfaces.FileTransferListener
 import cn.devcxl.photosync.ptp.params.SyncParams
@@ -60,7 +59,6 @@ open class BaselineInitiator : NameFactory, Runnable {
 
     protected open var OBJECT_ADDED_EVENT_CODE: Int = Event.ObjectAdded
 
-    protected var fileAddedListenerList: MutableList<FileAddedListener> = mutableListOf()
     protected var fileDownloadedListenerList: MutableList<FileDownloadedListener> = mutableListOf()
     protected var fileTransferListenerList: MutableList<FileTransferListener> = mutableListOf()
 
@@ -83,8 +81,6 @@ open class BaselineInitiator : NameFactory, Runnable {
     @JvmField var pollThreadRunning: Boolean = false
 
     @JvmField var fileNameRule: Int = SyncParams.FILE_NAME_RULE_HANDLE_ID
-
-    @JvmField var autoCloseSessionIfSessionAlreadyOpenWhenOpenSession: Boolean = true
 
     protected constructor() {
     }
@@ -205,17 +201,15 @@ open class BaselineInitiator : NameFactory, Runnable {
                     return
                 }
                 Response.SessionAlreadyOpen -> {
-                    if (autoCloseSessionIfSessionAlreadyOpenWhenOpenSession) {
-                        closeSession()
-                        session = Session()
-                        command = Command(Command.OpenSession, session,
-                            session.nextSessionID)
-                        response = transactUnsync(command, null)
-                        if (response.getCode() == Response.OK) {
-                            session.open()
-                            pollingThread = Thread(this)
-                            pollingThread!!.start()
-                        }
+                    closeSession()
+                    session = Session()
+                    command = Command(Command.OpenSession, session,
+                        session.nextSessionID)
+                    response = transactUnsync(command, null)
+                    if (response.getCode() == Response.OK) {
+                        session.open()
+                        pollingThread = Thread(this)
+                        pollingThread!!.start()
                     }
                 }
             }
@@ -268,14 +262,6 @@ open class BaselineInitiator : NameFactory, Runnable {
         } catch (ignore: Exception) {
             throw PTPException("Unable to close the USB device")
         }
-    }
-
-    fun showResponse(response: Response): Response {
-        Log.d(TAG, "  Type: " + Container.getBlockTypeName(response.blockType) + " (Code: " + response.blockType + ")\n")
-        Log.d(TAG, "  Name: " + response.getCodeName(response.getCode()) + ", code: 0x" + Integer.toHexString(response.getCode()) + "\n")
-        Log.d(TAG, "  Length: " + response.getLength() + " bytes\n")
-        Log.d(TAG, "  String: " + response.toString())
-        return response
     }
 
     fun showResponseCode(comment: String, code: Int) {
@@ -913,28 +899,12 @@ open class BaselineInitiator : NameFactory, Runnable {
         return response
     }
 
-    fun resetListeners() {
-        resetFileAddedlistener()
-        resetFileDownloadedListener()
-        resetFileTransferListener()
-    }
-
-    fun resetFileAddedlistener() {
-        fileAddedListenerList.clear()
-    }
-
     fun resetFileDownloadedListener() {
         fileDownloadedListenerList.clear()
     }
 
     fun resetFileTransferListener() {
         fileTransferListenerList.clear()
-    }
-
-    fun setFileAddedListener(l: FileAddedListener) {
-        if (!fileAddedListenerList.contains(l)) {
-            fileAddedListenerList.add(l)
-        }
     }
 
     fun setFileDownloadedListener(l: FileDownloadedListener) {
@@ -947,22 +917,6 @@ open class BaselineInitiator : NameFactory, Runnable {
         if (!fileTransferListenerList.contains(l)) {
             fileTransferListenerList.add(l)
         }
-    }
-
-    fun isAutoDownloadFile(): Boolean {
-        return autoDownloadFile
-    }
-
-    fun setAutoDownloadFile(autoDownloadFile: Boolean) {
-        this.autoDownloadFile = autoDownloadFile
-    }
-
-    fun isAutoPollEvent(): Boolean {
-        return autoPollEvent
-    }
-
-    fun setAutoPollEvent(autoPollEvent: Boolean) {
-        this.autoPollEvent = autoPollEvent
     }
 
     @Throws(PTPException::class)
@@ -1243,9 +1197,6 @@ open class BaselineInitiator : NameFactory, Runnable {
 
     protected open fun processFileAddEvent(fileHandle: Int, event: Any?): Boolean {
         Log.v(TAG, "start processFileAddEvent : handle -> $fileHandle")
-        for (fileAddedListener in fileAddedListenerList) {
-            fileAddedListener.onFileAdded(this, fileHandle, event)
-        }
         if (autoDownloadFile && fileDownloadPath != null) {
             try {
                 var downloadFileName: String
@@ -1339,51 +1290,11 @@ open class BaselineInitiator : NameFactory, Runnable {
         return if (trimmed.isEmpty()) getRandomFileName() else trimmed.replace(Regex("[\\\\/:*?\"<>|]"), "_")
     }
 
-    fun getFileDownloadPath(): String? {
-        return fileDownloadPath
-    }
-
     fun setFileDownloadPath(fileDownloadPath: String?) {
         this.fileDownloadPath = fileDownloadPath
     }
 
-    fun getSyncTriggerMode(): Int {
-        return syncTriggerMode
-    }
-
     fun setSyncTriggerMode(syncTriggerMode: Int) {
         this.syncTriggerMode = syncTriggerMode
-    }
-
-    fun getSyncMode(): Int {
-        return syncMode
-    }
-
-    fun setSyncMode(syncMode: Int) {
-        this.syncMode = syncMode
-    }
-
-    fun getSyncRecordMode(): Int {
-        return syncRecordMode
-    }
-
-    fun setSyncRecordMode(syncRecordMode: Int) {
-        this.syncRecordMode = syncRecordMode
-    }
-
-    fun getGetObjectHandleFilterParam(): Int {
-        return getObjectHandleFilterParam
-    }
-
-    fun setGetObjectHandleFilterParam(getObjectHandleFilterParam: Int) {
-        this.getObjectHandleFilterParam = getObjectHandleFilterParam
-    }
-
-    fun getFileNameRule(): Int {
-        return fileNameRule
-    }
-
-    fun setFileNameRule(fileNameRule: Int) {
-        this.fileNameRule = fileNameRule
     }
 }

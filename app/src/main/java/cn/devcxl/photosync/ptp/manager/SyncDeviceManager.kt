@@ -53,32 +53,6 @@ class SyncDeviceManager(private var device: UsbDevice) {
         return syncDevice
     }
 
-    fun removeDevice(): Boolean {
-        val syncDevice = getSyncDevice(device)
-        return if (syncDevice != null) {
-            dao.delete(syncDevice) > 0
-        } else {
-            false
-        }
-    }
-
-    fun startSync() {
-        val syncDevice = getSyncDevice(device) ?: return
-        if (syncDevice.syncAt == null || syncDevice.syncAt == 0L) {
-            syncDevice.syncAt = Date().time
-        }
-        syncDevice.updatedAt = Date().time
-        syncDevice.isSyncing = true
-        dao.update(syncDevice)
-    }
-
-    fun stopSync() {
-        val syncDevice = getSyncDevice(device) ?: return
-        syncDevice.updatedAt = Date().time
-        syncDevice.isSyncing = false
-        dao.update(syncDevice)
-    }
-
     fun updateIdList(ids: List<Int>?) {
         val sb = StringBuilder()
         if (ids != null) {
@@ -124,12 +98,6 @@ class SyncDeviceManager(private var device: UsbDevice) {
     }
 
     fun getDevice(): UsbDevice = device
-
-    fun setDevice(device: UsbDevice) {
-        this.device = device
-    }
-
-    fun getAllSyncDevices(): List<SyncDevice> = dao.getAll()
 
     private fun getUUIDFromDevice(device: UsbDevice): String {
         val cd = CameraDetector(device)
