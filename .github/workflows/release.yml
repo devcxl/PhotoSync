@@ -30,6 +30,11 @@ jobs:
 
             -   name: Set up Android SDK
                 uses: android-actions/setup-android@v3
+                with:
+                    # The action's default is "tools platform-tools", but the legacy
+                    # "tools" package no longer exists in the SDK repository and makes
+                    # sdkmanager exit 1.
+                    packages: platform-tools
 
             -   name: Install Android SDK components (API 36, NDK, CMake) and accept licenses
                 shell: bash
