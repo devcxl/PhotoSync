@@ -8,8 +8,8 @@
 
 ![Android](https://img.shields.io/badge/Android-7.0%20%28API%2024%29-brightgreen?style=flat-square&logo=android)
 ![Kotlin](https://img.shields.io/badge/Kotlin-2.0.21-purple?style=flat-square&logo=kotlin&logoColor=purple)
-![Gradle](https://img.shields.io/badge/Gradle-8.12-yellow?style=flat-square&logo=gradle)
-![NDK](https://img.shields.io/badge/NDK-27.0.12014523-red?style=flat-square&logo=android-ndk)
+![Gradle](https://img.shields.io/badge/Gradle-8.13-yellow?style=flat-square&logo=gradle)
+![NDK](https://img.shields.io/badge/NDK-29.0.14033849-red?style=flat-square&logo=android-ndk)
 ![CI](https://img.shields.io/github/actions/workflow/status/devcxl/PhotoSync/release.yml?style=flat-square&logo=github-actions)
 ![Stars](https://img.shields.io/github/stars/devcxl/PhotoSync?style=flat-square&logo=github)
 
@@ -47,10 +47,10 @@ PhotoSync is an Android camera companion app designed for photographers and imag
 | Category | Tech |
 |----------|------|
 | Language | Kotlin 2.0 / C++ / JNI |
-| UI | XML + ViewBinding / Jetpack Compose |
+| UI | XML + ViewBinding |
 | Async | Coroutines + Flow |
 | Database | Room |
-| Image Processing | LibRaw 0.21.4 + lcms2 2.18 + OpenCV 4.12.0 |
+| Image Processing | LibRaw 0.21.4 + lcms2 2.18 |
 | Architecture | MVVM + Clean Architecture |
 | Min Version | Android 7.0 (API 24) |
 

@@ -145,7 +145,7 @@ open class BaselineInitiator : NameFactory, Runnable {
         val count = device.interfaceCount
         for (i in 0 until count) {
             val intf = device.getInterface(i)
-            Timber.d("Interface $i Class " + intf.interfaceClass + " Prot " + intf.interfaceProtocol)
+            Timber.d("Interface %d Class %d Prot %d", i, intf.interfaceClass, intf.interfaceProtocol)
             if (intf.interfaceClass == 6
             ) {
                 return intf
@@ -264,7 +264,7 @@ open class BaselineInitiator : NameFactory, Runnable {
     }
 
     fun showResponseCode(comment: String, code: Int) {
-        Timber.d(comment + " Response: " + Response._getResponseString(code) + ",  code: 0x" + Integer.toHexString(code))
+        Timber.d("%s Response: %s,  code: 0x%s", comment, Response._getResponseString(code), Integer.toHexString(code))
     }
 
     fun isSessionActive(): Boolean {
@@ -444,7 +444,7 @@ open class BaselineInitiator : NameFactory, Runnable {
             System.err.println(command.toString())
         }
         var lenC = mConnection!!.bulkTransfer(epOut!!, command.data, command.length, DEFAULT_TIMEOUT)
-        Timber.d("Command " + Command._getOpcodeString(command.getCode()) + " bytes sent $lenC")
+        Timber.d("Command %s bytes sent %d", Command._getOpcodeString(command.getCode()), lenC)
 
         if ((command.length % epOut!!.maxPacketSize) == 0) {
             lenC = mConnection!!.bulkTransfer(epOut!!, command.data, 0, DEFAULT_TIMEOUT)
@@ -493,7 +493,7 @@ open class BaselineInitiator : NameFactory, Runnable {
                         data.data = readBuffer
                         data.length = readLen
 
-                        Timber.d("read a unkonwn pack , read again:" + byteArrayToHex(data.data))
+                        Timber.d("read a unkonwn pack , read again:%s", byteArrayToHex(data.data))
                     }
                     throw PTPException("protocol err 1, " + data +
                             "\n data:" + byteArrayToHex(data.data))
@@ -554,11 +554,14 @@ open class BaselineInitiator : NameFactory, Runnable {
             throw PTPException("No input interrupt end-point found!")
         }
         if (DEBUG) {
-            Timber.d("Get: " + device!!.interfaceCount + " Other: " + device!!.deviceName)
-            Timber.d("\nClass: " + intf!!.interfaceClass + "," + intf!!.interfaceSubclass + "," + intf!!.interfaceProtocol
-                    + "\nIendpoints: " + epIn!!.maxPacketSize + " Type " + epIn!!.type + " Dir " + epIn!!.direction)
-            Timber.d("\nOendpoints: " + epOut!!.maxPacketSize + " Type " + epOut!!.type + " Dir " + epOut!!.direction)
-            Timber.d("\nEendpoints: " + epEv!!.maxPacketSize + " Type " + epEv!!.type + " Dir " + epEv!!.direction)
+            Timber.d("Get: %d Other: %s", device!!.interfaceCount, device!!.deviceName)
+            Timber.d(
+                "\nClass: %d,%d,%d\nIendpoints: %d Type %d Dir %d",
+                intf!!.interfaceClass, intf!!.interfaceSubclass, intf!!.interfaceProtocol,
+                epIn!!.maxPacketSize, epIn!!.type, epIn!!.direction
+            )
+            Timber.d("\nOendpoints: %d Type %d Dir %d", epOut!!.maxPacketSize, epOut!!.type, epOut!!.direction)
+            Timber.d("\nEendpoints: %d Type %d Dir %d", epEv!!.maxPacketSize, epEv!!.type, epEv!!.direction)
         }
     }
 
@@ -1017,9 +1020,9 @@ open class BaselineInitiator : NameFactory, Runnable {
                     try {
                         importFile(singal.handle, outputFilePath)
                     } catch (e: PTPException) {
-                        Timber.e(e, "Failed to import file for handle " + singal.handle + " to " + outputFilePath)
+                        Timber.e(e, "Failed to import file for handle %d to %s", singal.handle, outputFilePath)
                     } catch (e: IOException) {
-                        Timber.e(e, "I/O error while importing file for handle " + singal.handle + " to " + outputFilePath)
+                        Timber.e(e, "I/O error while importing file for handle %d to %s", singal.handle, outputFilePath)
                     }
                 }
             }

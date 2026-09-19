@@ -97,7 +97,7 @@ class NikonInitiator(dev: UsbDevice, connection: UsbDeviceConnection) :
 
         resp = transact0(Command.InitiateCapture, null)
         ret = resp.getCode()
-        Timber.d("  NK_OC_Capture Response code: 0x" + Integer.toHexString(ret) + "  OK: " + (ret == Response.OK))
+        Timber.d("  NK_OC_Capture Response code: 0x%s  OK: %b", Integer.toHexString(ret), ret == Response.OK)
         if (ret != Response.OK) {
             val msg = "NK_OC_Capture  Capture failed to release: Unknown error " +
                 ret +

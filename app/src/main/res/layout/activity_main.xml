@@ -43,7 +43,7 @@
                 android:layout_marginTop="16dp"
                 android:layout_marginEnd="16dp"
                 android:background="@null"
-                android:contentDescription="导出到相册"
+                android:contentDescription="@string/export_to_gallery"
                 android:src="@android:drawable/ic_menu_save"
                 android:visibility="visible"/>
 

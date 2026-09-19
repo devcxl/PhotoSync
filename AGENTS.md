@@ -23,7 +23,7 @@ This file provides coding conventions and operational instructions for AI agents
 ### Running Tests
 ```bash
 ./gradlew testDebugUnitTest                    # All unit tests
-./gradlew testDebugUnitTest --tests "cn.devcxl.photosync.activity.ExampleUnitTest.resolvePhotoViewerMode_usesTiledViewerForAllJpegItems"  # Single test
+./gradlew testDebugUnitTest --tests "cn.devcxl.photosync.activity.ExampleUnitTest.shouldUseTiledViewer_whenIsJpegAndUsePhotoViewOtherwise"  # Single test
 ./gradlew connectedAndroidTest                 # Instrumented tests (device/emulator required)
 ./gradlew testDebugUnitTest --info             # Verbose test output
 ```
@@ -36,9 +36,11 @@ This file provides coding conventions and operational instructions for AI agents
 
 ### Code Quality
 ```bash
-./gradlew ktlintCheck            # Kotlin style check (if configured)
-./gradlew detekt                 # Static analysis (if configured)
+./gradlew lintDebug              # Android lint (runs as part of the quality gate)
 ```
+
+> `ktlint` and `detekt` are not configured in this repository; do not add them to the
+gate without wiring the plugins first.
 
 ---
 
@@ -46,26 +48,40 @@ This file provides coding conventions and operational instructions for AI agents
 
 ```
 PhotoSync/
-├── app/
+├── app/                            # Application module (UI, Room, PTP client)
 │   ├── src/
 │   │   ├── main/java/cn/devcxl/photosync/
-│   │   │   ├── activity/         # UI layer - Activities, ViewModels
-│   │   │   ├── adapter/           # RecyclerView adapters
+│   │   │   ├── activity/         # UI layer - Activities
+│   │   │   ├── adapter/           # RecyclerView adapters, render decisions
 │   │   │   ├── data/             # Data layer - Room DB, DAOs, Entities
 │   │   │   ├── ptp/               # USB PTP protocol implementation
+│   │   │   │   ├── detect/        # CameraDetector (vendor detection)
+│   │   │   │   ├── interfaces/    # Transfer/download listener interfaces
+│   │   │   │   ├── manager/       # UsbPtpConnectionController, SyncDeviceManager
+│   │   │   │   ├── params/        # SyncParams constants
+│   │   │   │   └── usbcamera/     # PTP core + per-vendor initiators (eos/nikon/sony)
 │   │   │   ├── receiver/         # Broadcast receivers
 │   │   │   ├── utils/             # Utility extensions
-│   │   │   ├── wrapper/           # Native library wrappers (LibRaw)
 │   │   │   └── App.kt             # Application class
-│   │   ├── test/                  # Unit tests (JUnit4)
-│   │   └── androidTest/           # Instrumented tests
+│   │   ├── test/java/cn/devcxl/photosync/  # Unit tests (JUnit4, JVM only)
+│   │   └── androidTest/java/cn/devcxl/photosync/  # Instrumented tests
+│   └── build.gradle
+├── libraw/                         # Native library module (LibRaw + lcms2 via CMake + JNI)
+│   ├── src/main/cpp/               # CMakeLists.txt, libraw_jni.cpp, third_party/ submodules
+│   ├── src/main/java/cn/devcxl/photosync/wrapper/RawWrapper.kt
 │   └── build.gradle
 ├── gradle/
-│   └── libs.versions.toml         # Version catalog for dependencies
+│   ├── libs.versions.toml         # Version catalog for dependencies
+│   └── wrapper/                    # Gradle wrapper (pinned via gradle-wrapper.properties)
 ├── build.gradle                   # Root build config
 ├── settings.gradle
 └── gradle.properties
 ```
+
+> RAW decoding lives in the `:libraw` module, not in `app`. `RawWrapper` is re-exported
+> under the package `cn.devcxl.photosync.wrapper`, so app-side imports are unchanged.
+> The `:libraw` sources under `src/main/cpp/third_party/` are git submodules: run
+> `git submodule update --init --recursive` after a fresh clone or the native build fails.
 
 ### Architecture Pattern
 - **Clean Architecture** with MVVM for presentation
@@ -278,10 +294,12 @@ data class PhotoEntity(
 
 ## 11. UI Framework
 
-- **Jetpack Compose** for new UI components
-- **XML with ViewBinding** for existing screens (`activity_main.xml`)
-- Follow **unidirectional data flow (UDF)** in Compose
-- Avoid mixing Compose and XML in the same screen
+- **XML with ViewBinding** for all screens (`activity_main.xml` is the only one).
+- There is **no Jetpack Compose** in this project: the Compose dependencies and the
+  Compose compiler plugin were removed. Do not reintroduce them without also adding
+  actual Compose screens; a declared-but-unused Compose toolchain is not a valid setup.
+- Use `ViewPager2` + `RecyclerView` for the photo pager, `PhotoView` for zoom/pan on
+  bitmaps, and `SubsamplingScaleImageView` for tiled JPEG rendering.
 
 ---
 
@@ -300,6 +318,7 @@ data class PhotoEntity(
 Before completing any change:
 - [ ] Code compiles: `./gradlew assembleDebug`
 - [ ] All unit tests pass: `./gradlew testDebugUnitTest`
+- [ ] Lint passes: `./gradlew lintDebug`
 - [ ] No hardcoded strings (use `strings.xml`)
 - [ ] No sensitive data in logs
 - [ ] Public APIs have KDoc
@@ -323,6 +342,12 @@ Before completing any change:
 ### Export Behavior
 - **JPEG**: Direct file copy to gallery (no re-encoding)
 - **RAW**: Decode to JPEG via `RawWrapper`, then save
+- Both paths funnel through `MainActivity.saveToGallery`, which handles the
+  `MediaStore` + `IS_PENDING` dance on API 29+ and the legacy direct-write path below it.
+
+### Logging
+- Use **Timber** everywhere. `android.util.Log` and `printStackTrace()` are not used in
+  this codebase; pass throwables as Timber's first argument so stack traces survive.
 
 ### Ignore Files
 - `.secrets` - local secrets (never commit)

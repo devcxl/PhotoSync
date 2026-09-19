@@ -81,10 +81,17 @@ class NikonEventParser(private var `is`: InputStream) {
             }
             val code = getNextS32()
             event.setCode(code)
-            Timber.tag("EventParser").d("   Event len: $len, Code: 0x" + String.format("%04x", code) + " " + NikonEvent.getEventName(code))
+            Timber.tag("EventParser").d(
+                "   Event len: %d, Code: 0x%04x %s",
+                len, code, NikonEvent.getEventName(code)
+            )
             parseParameters(event, len - 8)
             for (i in 1..event.paramCount) {
-                Timber.tag("EventParser").d("          params $i: " + String.format("0x%04x  %d", event.getParam(i), event.getParam(i)))
+                val p = event.getParam(i)
+                when (p) {
+                    is Int -> Timber.tag("EventParser").d("          params %d: 0x%04x  %d", i, p, p)
+                    else -> Timber.tag("EventParser").d("          params %d: %s", i, p)
+                }
             }
         } catch (e: IOException) {
             Timber.tag("EventParser").d("   Error reading event stream")

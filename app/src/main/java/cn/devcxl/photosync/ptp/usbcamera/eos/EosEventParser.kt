@@ -71,18 +71,16 @@ class EosEventParser(private val inputStream: InputStream) {
             }
             val code = getNextS32()
             event.code = code
-            Timber.tag("EventParser").d("   Event len: $len, Code: 0x${String.format("%04x", code)} ${
-                    EosEvent.getEventName(
-                        code
-                    )
-                }")
+            Timber.tag("EventParser").d(
+                "   Event len: %d, Code: 0x%04x %s",
+                len, code, EosEvent.getEventName(code)
+            )
             parseParameters(event, len - 8)
             for (i in 1..event.paramCount) {
                 val p = event.getParam(i)
                 when (p) {
-                    is String -> Timber.tag("EventParser").d("          params $i: ${String.format("%s", p)}")
-                    is java.lang.Boolean -> Timber.tag("EventParser").d("          params $i: ${String.format("%b", p)}")
-                    else -> Timber.tag("EventParser").d("          params $i: ${String.format("0x%04x  %d", p, p)}")
+                    is Int -> Timber.tag("EventParser").d("          params %d: 0x%04x  %d", i, p, p)
+                    else -> Timber.tag("EventParser").d("          params %d: %s", i, p)
                 }
             }
         } catch (e: IOException) {

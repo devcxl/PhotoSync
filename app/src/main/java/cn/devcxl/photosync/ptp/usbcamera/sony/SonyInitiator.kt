@@ -68,8 +68,10 @@ class SonyInitiator(dev: UsbDevice, connection: UsbDeviceConnection) : BaselineI
                         val info = getObjectInfo(0xffffc001.toInt())
                         processFileAddEvent(0xffffc001.toInt(), info)
                     } else {
-                        Timber.d("current prop.value of PTP_DPC_SONY_ObjectInMemory is " +
-                                Integer.toHexString(prop.getValue() as Int))
+                        Timber.d(
+                            "current prop.value of PTP_DPC_SONY_ObjectInMemory is %s",
+                            Integer.toHexString(prop.getValue() as Int)
+                        )
                     }
                 }
             }
@@ -97,8 +99,10 @@ class SonyInitiator(dev: UsbDevice, connection: UsbDeviceConnection) : BaselineI
                         }
                         Timber.d("SONY ObjectInMemory count change seen, retrieving file")
                     } else {
-                        Timber.d("current PTP_DPC_SONY_ObjectInMemory is " +
-                                Integer.toHexString(prop.getValue() as Int))
+                        Timber.d(
+                            "current PTP_DPC_SONY_ObjectInMemory is %s",
+                            Integer.toHexString(prop.getValue() as Int)
+                        )
                     }
                 }
             }
@@ -132,8 +136,10 @@ class SonyInitiator(dev: UsbDevice, connection: UsbDeviceConnection) : BaselineI
                     return@getAllDevicePropDesc null
                 }
 
-                Timber.d("PTP_OC_SONY_GetAllDevicePropData recv data is : " +
-                        BaselineInitiator.byteArrayToHex(data.data))
+                Timber.d(
+                    "PTP_OC_SONY_GetAllDevicePropData recv data is : %s",
+                    BaselineInitiator.byteArrayToHex(data.data)
+                )
 
                 data.offset = 12 + 8
                 while (data.getLength() - data.offset > 0) {
