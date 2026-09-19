@@ -17,208 +17,75 @@
 
 package cn.devcxl.photosync.ptp.usbcamera.nikon
 
-
-import java.io.IOException
-import java.io.InputStream
-
-import cn.devcxl.photosync.ptp.usbcamera.PTPException
-import cn.devcxl.photosync.ptp.usbcamera.PTPUnsupportedException
-import timber.log.Timber
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 /**
- * This class parses a stream of bytes as a sequence of events accordingly
- * to how Canon EOS returns events.
+ * Parses the event list returned by the Nikon `NK_OC_CheckEvent` (0x90C7) operation.
  *
- * The event information is returned in a standard PTP data packet as a number
- * of records followed by an empty record at the end of the packet. Each record
- * consists of multiple four-byte fields and always starts with record length
- * field. Further structure of the record depends on the device property code
- * which always goes in the third field. The empty record consists of the size
- * field and four byte empty field, which is always zero.
+ * The payload carries a `uint16` event count followed by that many fixed-size 6 byte
+ * records:
  *
- * @author devcxl
+ * ```
+ * offset 0  uint16  event count
+ * offset 2  uint16  event code
+ * offset 4  uint32  param1
+ * ```
+ *
+ * Every Nikon event record holds exactly one 32 bit parameter, so this parser has no
+ * notion of variable-length records; that shape belongs to the Canon EOS event format.
+ *
+ * Layout verified against libgphoto2 `ptp_unpack_Nikon_EC`. The caller is responsible
+ * for removing the leading PTP data container header, matching how [EosEventParser]
+ * is used.
+ *
+ * @param payload Event list bytes, with the PTP container header already stripped.
  */
-class NikonEventParser(private var `is`: InputStream) {
+class NikonEventParser(payload: ByteArray) {
 
-    init {
-        if (`is` == null) {
-            throw IllegalArgumentException("The input stream cannot be null")
-        }
+    private val buffer: ByteBuffer = ByteBuffer
+        .wrap(payload)
+        .order(ByteOrder.LITTLE_ENDIAN)
+
+    private val eventCount: Int = if (buffer.remaining() >= COUNT_LEN) {
+        buffer.short.toInt() and 0xFFFF
+    } else {
+        0
     }
 
+    private var nextEventIndex: Int = 0
+
     /**
-     * Returns true is there are events in the stream (and the stream is still
-     * open), false otherwise.
+     * Returns true while another complete event record remains unread.
      *
-     * @return true is there are events in the stream (and the stream is still
-     * open), false otherwise.
+     * A truncated trailing record is treated as absent, so a partially received payload
+     * still yields the events it did contain instead of throwing.
      */
     fun hasEvents(): Boolean {
-        try {
-            if (`is`.available() <= 0) {
-                return false
-            }
-        } catch (e: IOException) {
-            return false
-        }
-
-        return true
+        if (nextEventIndex >= eventCount) return false
+        return buffer.remaining() >= EVENT_LEN
     }
 
     /**
-     * Returns the next event in the stream.
+     * Reads the next event record.
      *
-     * @return the next event in the stream.
-     * @throws PTPException in case of errors
+     * @return The parsed event, carrying its code and a single parameter.
+     * @throws IllegalStateException if called when [hasEvents] returns false.
      */
     fun getNextEvent(): NikonEvent {
+        check(hasEvents()) { "No more events to read" }
+
         val event = NikonEvent()
-
-        try {
-            val len = getNextS32() // len
-            if (len < 0x8) {
-                throw PTPUnsupportedException("Unsupported event (size<8 ???)")
-            }
-            val code = getNextS32()
-            event.setCode(code)
-            Timber.tag("EventParser").d(
-                "   Event len: %d, Code: 0x%04x %s",
-                len, code, NikonEvent.getEventName(code)
-            )
-            parseParameters(event, len - 8)
-            for (i in 1..event.paramCount) {
-                val p = event.getParam(i)
-                when (p) {
-                    is Int -> Timber.tag("EventParser").d("          params %d: 0x%04x  %d", i, p, p)
-                    else -> Timber.tag("EventParser").d("          params %d: %s", i, p)
-                }
-            }
-        } catch (e: IOException) {
-            Timber.tag("EventParser").d("   Error reading event stream")
-            throw PTPException("Error reading event stream", e)
-        }
-
+        event.setCode(buffer.short.toInt() and 0xFFFF)
+        event.setParam(1, buffer.int)
+        nextEventIndex++
         return event
     }
 
-    // --------------------------------------------------------- Private methods
+    companion object {
+        private const val COUNT_LEN = 2
 
-    @Throws(PTPException::class, IOException::class)
-    private fun parseParameters(event: NikonEvent, len: Int) {
-        val code = event.code
-
-        if (code == NikonEventConstants.EosEventPropValueChanged) {
-            parsePropValueChangedParameters(event)
-        } else if (code == NikonEventConstants.EosEventShutdownTimerUpdated) {
-        } else if (code == NikonEventConstants.EosEventCameraStatusChanged) {
-            event.setParam(1, getNextS32())
-        } else if (code == NikonEventConstants.EosEventObjectAddedEx) {
-            parseEosEventObjectAddedEx(event)
-        } else {
-            `is`.skip(len.toLong())
-            throw PTPUnsupportedException("Unsupported event")
-        }
-    }
-
-    @Throws(IOException::class)
-    private fun parsePropValueChangedParameters(event: NikonEvent) {
-        val property = getNextS32()
-        event.setParam(1, property) // property changed
-
-        if (property >= NikonEventConstants.EosPropPictureStyleStandard &&
-            property <= NikonEventConstants.EosPropPictureStyleUserSet3
-        ) {
-            var monochrome = property == NikonEventConstants.EosPropPictureStyleMonochrome
-            val size = getNextS32()
-            if (size > 0x1C) {
-                monochrome = getNextS32() == NikonEventConstants.EosPropPictureStyleUserTypeMonochrome
-            }
-            event.setParam(2, if (monochrome) java.lang.Boolean.TRUE else java.lang.Boolean.FALSE)
-            event.setParam(3, getNextS32()) // contrast
-            event.setParam(4, getNextS32()) // sharpness
-            if (monochrome) {
-                getNextS32()
-                getNextS32()
-                event.setParam(5, getNextS32()) // filter effect
-                event.setParam(6, getNextS32()) // toning effect
-            } else {
-                event.setParam(5, getNextS32()) // saturation
-                event.setParam(6, getNextS32()) // color tone
-                getNextS32()
-                getNextS32()
-            }
-        } else {
-            event.setParam(2, getNextS32())
-        }
-    }
-
-    @Throws(IOException::class)
-    private fun parseEosEventObjectAddedEx(event: NikonEvent) {
-        event.setParam(1, getNextS32()) // object id
-        event.setParam(2, getNextS32()) // storage id
-        event.setParam(4, getNextS16()) // format
-        `is`.skip(10)
-        event.setParam(5, getNextS32()) // size
-        event.setParam(3, getNextS32()) // parent object id
-        `is`.skip(4) // unknown
-        event.setParam(6, getNextString()) // file name
-        `is`.skip(4)
-    }
-
-    /**
-     * Reads and return the next signed 32 bit integer read from the input
-     * stream.
-     *
-     * @return the next signed 32 bit integer in the stream
-     * @throws IOException in case of IO errors
-     */
-    @Throws(IOException::class)
-    private fun getNextS32(): Int {
-        var retval: Int
-
-        retval = (0xff and `is`.read())
-        retval = retval or ((0xff and `is`.read()) shl 8)
-        retval = retval or ((0xff and `is`.read()) shl 16)
-        retval = retval or (`is`.read() shl 24)
-
-        return retval
-    }
-
-    /**
-     * Reads and return the next signed 16 bit integer read from the input
-     * stream.
-     *
-     * @return the next signed 16 bit integer in the stream
-     * @throws IOException in case of IO errors
-     */
-    @Throws(IOException::class)
-    private fun getNextS16(): Int {
-        var retval: Int
-
-        retval = (0xff and `is`.read())
-        retval = retval or ((0xff and `is`.read()) shl 8)
-
-        return retval
-    }
-
-    /**
-     * Reads and return the next string read from the input stream. Strings are
-     * zero (32 bit) terminated string
-     *
-     * @return the next string in the stream
-     * @throws IOException in case of IO errors
-     */
-    @Throws(IOException::class)
-    private fun getNextString(): String {
-        val retval = StringBuilder()
-
-        var c: Char = 0.toChar()
-        while (`is`.read().also { c = it.toChar() } != 0) {
-            retval.append(c)
-        }
-
-        `is`.skip(3)
-
-        return retval.toString()
+        /** Size of one event record: a uint16 code plus a uint32 param1. */
+        private const val EVENT_LEN = 6
     }
 }

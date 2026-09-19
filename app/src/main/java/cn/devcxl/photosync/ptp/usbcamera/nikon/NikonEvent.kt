@@ -17,9 +17,11 @@
 
 package cn.devcxl.photosync.ptp.usbcamera.nikon
 
-import java.util.ArrayList
-
 /**
+ * One Nikon vendor event, as returned by `NK_OC_CheckEvent`.
+ *
+ * Nikon event records carry a single 32 bit parameter, exposed here as parameter 1.
+ *
  * @author devcxl
  */
 class NikonEvent {
@@ -30,93 +32,73 @@ class NikonEvent {
     @JvmField
     var code: Int = 0
 
-    /**
-     * Params
-     */
     private var params: MutableList<Any?> = ArrayList()
 
     fun setCode(code: Int) {
         this.code = code
     }
 
-    fun getCode(): Int {
-        return code
-    }
+    fun getCode(): Int = code
 
     /**
-     * @param i the parameter index
+     * @param i the parameter index, starting at 1
      * @param value the param to set
      */
     fun setParam(i: Int, value: Any?) {
-        if (i < 0) {
-            throw IllegalArgumentException("param index cannot be < 0")
+        if (i < 1) {
+            throw IllegalArgumentException("param index cannot be < 1")
         }
-        if (params.size <= i) {
-            val newParams = ArrayList<Any?>(i)
-            newParams.addAll(params)
-            params = newParams
-            for (j in params.size until i) {
-                params.add(null)
-            }
+        while (params.size < i) {
+            params.add(null)
         }
         params[i - 1] = value
     }
 
     fun setParam(i: Int, value: Int) {
-        setParam(i, Integer(value) as Any?)
+        setParam(i, value as Any?)
     }
 
+    /**
+     * @param i the parameter index, starting at 1
+     * @return the parameter, or null when the event did not carry one
+     */
     fun getParam(i: Int): Any? {
         if (i < 1 || i > paramCount) {
-            throw IllegalArgumentException(
-                "index $i out of range (0-$paramCount)"
-            )
+            throw IllegalArgumentException("index $i out of range (1-$paramCount)")
         }
         return params[i - 1]
     }
 
-    fun getIntParam(i: Int): Int {
-        return getParam(i) as Int
-    }
-
-    fun getStringParam(i: Int): String {
-        return getParam(i) as String
-    }
+    fun getIntParam(i: Int): Int = getParam(i) as Int
 
     /**
-     * @return the number of parameters in this event
+     * @return the number of parameters carried by this event
      */
     val paramCount: Int
         get() = params.size
 
+    override fun toString(): String {
+        val name = getEventName(code)
+        return if (paramCount >= 1) {
+            "$name (0x${Integer.toHexString(code)}), param1=0x${Integer.toHexString(getIntParam(1))}"
+        } else {
+            "$name (0x${Integer.toHexString(code)})"
+        }
+    }
+
     companion object {
-        fun getEventName(code: Int): String {
-            when (code) {
-                NikonEventConstants.EosEventRequestGetEvent -> return "EosEventRequestGetEvent"
-                NikonEventConstants.EosEventObjectAddedEx -> return "EosEventObjectAddedEx"
-                NikonEventConstants.EosEventObjectRemoved -> return "EosEventObjectRemoved"
-                NikonEventConstants.EosEventRequestGetObjectInfoEx -> return "EosEventRequestGetObjectInfoEx"
-                NikonEventConstants.EosEventStorageStatusChanged -> return "EosEventStorageStatusChanged"
-                NikonEventConstants.EosEventStorageInfoChanged -> return "EosEventStorageInfoChanged"
-                NikonEventConstants.EosEventRequestObjectTransfer -> return "EosEventRequestObjectTransfer"
-                NikonEventConstants.EosEventObjectInfoChangedEx -> return "EosEventObjectInfoChangedEx"
-                NikonEventConstants.EosEventObjectContentChanged -> return "EosEventObjectContentChanged"
-                NikonEventConstants.EosEventPropValueChanged -> return "EosEventPropValueChanged"
-                NikonEventConstants.EosEventAvailListChanged -> return "EosEventAvailListChanged"
-                NikonEventConstants.EosEventCameraStatusChanged -> return "EosEventCameraStatusChanged"
-                NikonEventConstants.EosEventWillSoonShutdown -> return "EosEventWillSoonShutdown"
-                NikonEventConstants.EosEventShutdownTimerUpdated -> return "EosEventShutdownTimerUpdated"
-                NikonEventConstants.EosEventRequestCancelTransfer -> return "EosEventRequestCancelTransfer"
-                NikonEventConstants.EosEventRequestObjectTransferDT -> return "EosEventRequestObjectTransferDT"
-                NikonEventConstants.EosEventRequestCancelTransferDT -> return "EosEventRequestCancelTransferDT"
-                NikonEventConstants.EosEventStoreAdded -> return "EosEventStoreAdded"
-                NikonEventConstants.EosEventStoreRemoved -> return "EosEventStoreRemoved"
-                NikonEventConstants.EosEventBulbExposureTime -> return "EosEventBulbExposureTime"
-                NikonEventConstants.EosEventRecordingTime -> return "EosEventRecordingTime"
-                NikonEventConstants.EosEventAfResult -> return "EosEventRequestObjectTransferTS"
-                NikonEventConstants.EosEventRequestObjectTransferTS -> return "EosEventAfResult"
-            }
-            return "0x" + Integer.toHexString(code)
+
+        /**
+         * Maps a Nikon event code to its printable name.
+         *
+         * @param code event code reported by the camera
+         * @return the constant name, or the raw hex code when it is not a known event
+         */
+        fun getEventName(code: Int): String = when (code) {
+            NikonEventConstants.NK_EC_ObjectAddedInSDRAM -> "ObjectAddedInSDRAM"
+            NikonEventConstants.NK_EC_CaptureOverflow -> "CaptureOverflow"
+            NikonEventConstants.NK_EC_AdvancedTransfer -> "AdvancedTransfer"
+            else -> "0x" + Integer.toHexString(code)
         }
     }
 }

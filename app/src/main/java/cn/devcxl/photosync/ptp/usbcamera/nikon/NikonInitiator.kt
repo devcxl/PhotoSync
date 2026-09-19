@@ -19,12 +19,14 @@ package cn.devcxl.photosync.ptp.usbcamera.nikon
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbDeviceConnection
 
+import cn.devcxl.photosync.ptp.params.SyncParams
 import cn.devcxl.photosync.ptp.usbcamera.BaselineInitiator
 import cn.devcxl.photosync.ptp.usbcamera.Command
 import cn.devcxl.photosync.ptp.usbcamera.Container
 import cn.devcxl.photosync.ptp.usbcamera.Data
 import cn.devcxl.photosync.ptp.usbcamera.DevicePropDesc
 import cn.devcxl.photosync.ptp.usbcamera.PTPException
+import cn.devcxl.photosync.ptp.usbcamera.PTPUnsupportedException
 import cn.devcxl.photosync.ptp.usbcamera.Response
 import timber.log.Timber
 
@@ -43,8 +45,37 @@ class NikonInitiator(dev: UsbDevice, connection: UsbDeviceConnection) :
     companion object {
         const val NIKON_VID = 1200
 
+        /** Length of the PTP data container header preceding an event payload. */
+        private const val EVENT_HEADER_LEN = 12
+
+        /** How long the event loop waits between `NK_OC_CheckEvent` calls. */
+        private const val EVENT_POLL_INTERVAL_MS = 200L
+
         @JvmField
         var eventListenerRunning: Boolean = false
+    }
+
+    /**
+     * The object handle Nikon reports for an in-SDRAM capture whose real handle cannot be
+     * resolved yet. libgphoto2 substitutes this same value when a `0xC101` event arrives
+     * with a zero parameter, because `GetObjectInfo(0)` would fail.
+     */
+    protected var PTP_NIKON_SDRAM_OBJECT_HANDLE: Int = 0xffff0001.toInt()
+
+    override fun getObjectAddedEventCode(): Int = NikonEventConstants.NK_EC_ObjectAddedInSDRAM
+
+    /**
+     * Resolves the handle to download for an object-added event.
+     *
+     * Some cameras announce an in-SDRAM capture with a zero parameter instead of a real
+     * object handle; those resolve to a placeholder that the camera understands.
+     *
+     * @param event the object-added event
+     * @return the handle to pass to the object download path.
+     */
+    protected fun resolveObjectAddedHandle(event: NikonEvent): Int {
+        val handle = event.getIntParam(1)
+        return if (handle == 0) PTP_NIKON_SDRAM_OBJECT_HANDLE else handle
     }
 
     /**
@@ -58,6 +89,98 @@ class NikonInitiator(dev: UsbDevice, connection: UsbDeviceConnection) :
     @Throws(PTPException::class)
     fun getDevicePropDesc(propcode: Int, desc: DevicePropDesc): Int {
         return transact1(Command.GetDevicePropDesc, desc, propcode).getCode()
+    }
+
+    /**
+     * Drains the camera's Nikon vendor event queue via `NK_OC_CheckEvent` (0x90C7).
+     *
+     * The operation answers with a data phase holding a count followed by fixed-size
+     * records, which is why this reads a whole payload rather than a single response.
+     *
+     * @return the events the camera reported, or an empty list when it reported none.
+     * @throws PTPException when the device rejects the operation or the transfer fails.
+     */
+    @Throws(PTPException::class)
+    fun checkEvents(): List<NikonEvent> {
+        if (!info!!.supportsOperation(Command.NK_OC_CheckEvent)) {
+            throw PTPUnsupportedException("Device does not support NK_OC_CheckEvent")
+        }
+
+        val data = Data(this)
+        transact0(Command.NK_OC_CheckEvent, data)
+
+        val length = data.getLength()
+        if (length <= EVENT_HEADER_LEN) {
+            return emptyList()
+        }
+
+        // Discard the PTP data container header; the parser starts at the event count.
+        val payload = ByteArray(length - EVENT_HEADER_LEN)
+        System.arraycopy(data.data, EVENT_HEADER_LEN, payload, 0, payload.size)
+
+        val parser = NikonEventParser(payload)
+        val events = ArrayList<NikonEvent>()
+        while (parser.hasEvents()) {
+            events.add(parser.getNextEvent())
+        }
+        return events
+    }
+
+    override fun run() {
+        if (syncTriggerMode == SyncParams.SYNC_TRIGGER_MODE_EVENT) {
+            runNikonEventPoll()
+        } else if (syncTriggerMode == SyncParams.SYNC_TRIGGER_MODE_POLL_LIST) {
+            try {
+                runPollListPoll()
+            } catch (e: PTPException) {
+                Timber.w(e, "runPollListPoll failed")
+            }
+        }
+    }
+
+    /**
+     * Event-driven transfer loop: polls `NK_OC_CheckEvent` and downloads each object the
+     * camera reports as newly added.
+     *
+     * Cameras that reject `NK_OC_CheckEvent` fall back to the poll-list loop, mirroring
+     * libgphoto2's `event90c7works` handling, so enabling event mode cannot leave a device
+     * without a working transfer loop.
+     */
+    private fun runNikonEventPoll() {
+        Timber.tag("PTP_EVENT").v("开始 Nikon event 轮询")
+        pollThreadRunning = true
+        pollEventSetUp()
+        try {
+            while (pollThreadRunning && isSessionActive() && autoPollEvent) {
+                val events = try {
+                    checkEvents()
+                } catch (e: PTPUnsupportedException) {
+                    Timber.w(e, "NK_OC_CheckEvent unsupported, falling back to poll-list")
+                    runPollListPoll()
+                    return
+                } catch (e: PTPException) {
+                    Timber.w(e, "checkEvents failed")
+                    emptyList()
+                }
+
+                for (event in events) {
+                    Timber.tag("PTP_EVENT").v(NikonEventFormat.format(event))
+                    if (event.code == getObjectAddedEventCode()) {
+                        processFileAddEvent(resolveObjectAddedHandle(event), event)
+                    }
+                }
+
+                try {
+                    Thread.sleep(EVENT_POLL_INTERVAL_MS)
+                } catch (e: InterruptedException) {
+                    Timber.w(e, "event poll interrupted, stopping")
+                    return
+                }
+            }
+        } finally {
+            pollThreadRunning = false
+            Timber.tag("PTP_EVENT").v("结束 Nikon event 轮询")
+        }
     }
 
     /**
