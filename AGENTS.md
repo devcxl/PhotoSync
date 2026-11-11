@@ -216,6 +216,11 @@ All dependency versions are centralized in `gradle/libs.versions.toml`.
 1. Add version to `libs.versions.toml` under `[versions]` and `[libraries]`
 2. Reference via `libs.<name>` in `build.gradle`
 
+### Automated Updates
+`.github/dependabot.yml` opens weekly PRs for the `gradle` ecosystem (version
+catalog, module build scripts, wrapper) and for `github-actions`. Auto-merge is
+not enabled: a maintainer reviews and lets CI pass before merging.
+
 ### Build Config
 - Access build-time constants via `BuildConfig` or `local.properties`
 - Never hardcode secrets in source code
