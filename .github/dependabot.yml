@@ -1,0 +1,55 @@
+# Dependabot keeps Gradle dependencies and GitHub Actions up to date.
+#
+# Policy (see AGENTS.md §6):
+# - Weekly PRs, never auto-merged: a maintainer reviews and lets CI pass first.
+# - The Gradle ecosystem scans the repository root, which covers the version
+#   catalog (gradle/libs.versions.toml), the module build scripts and the
+#   Gradle wrapper.
+# - Related dependencies are grouped so a version skips in lock-step (Kotlin and
+#   KSP must stay on the same version, e.g. "2.0.21" / "2.0.21-1.0.25").
+version: 2
+
+updates:
+    -   package-ecosystem: 'gradle'
+        directory: '/'
+        schedule:
+            interval: 'weekly'
+            day: 'monday'
+            time: '06:00'
+            timezone: 'Asia/Shanghai'
+        open-pull-requests-limit: 5
+        commit-message:
+            prefix: 'chore(deps)'
+        groups:
+            kotlin-and-ksp:
+                patterns:
+                    - 'org.jetbrains.kotlin*'
+                    - 'com.google.devtools.ksp*'
+            androidx:
+                patterns:
+                    - 'androidx.*'
+                    - 'com.android.*'
+            test-libraries:
+                patterns:
+                    - 'junit:junit'
+                    - 'androidx.test*'
+            patch-updates:
+                patterns:
+                    - '*'
+                update-types:
+                    - 'patch'
+
+    -   package-ecosystem: 'github-actions'
+        directory: '/'
+        schedule:
+            interval: 'weekly'
+            day: 'monday'
+            time: '06:00'
+            timezone: 'Asia/Shanghai'
+        open-pull-requests-limit: 3
+        commit-message:
+            prefix: 'chore(ci)'
+        groups:
+            actions:
+                patterns:
+                    - '*'
