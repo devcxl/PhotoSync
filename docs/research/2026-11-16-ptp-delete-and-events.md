@@ -615,6 +615,9 @@ do {
 当前仓库**完全没有删除实现**：`Command.kt:67` 有 `DeleteObject = 0x100b`、
 `Command.kt:111` 有 `EosDeleteObject = 0x9105`，但全项目 `grep -rn "DeleteObject"` 除了
 常量定义与名字映射（`Command.kt:335/356`）之外**没有任何调用点**。
+>
+> **2026-11-16 追加**：该结论已过期，单向删除已落地，实现见 §7。
+
 
 可行的前提条件（缺一即应放弃，而不是发了再看返回码）：
 
@@ -819,3 +822,30 @@ Sony 基本不可行 高。
 - `SyncDevice.syncIdList` 已有持久化承载；Room 目前 `version = 2` 且 `fallbackToDestructiveMigration()`，加列的**迁移代价低但会清库**，这一点要在方案里显式决定。
 
 **置信度**：高（逐行核对）。
+
+---
+
+## 7. 实施记录（2026-11-16）
+
+方向 (a)（App → 机身）已按「可选单向删除」落地：默认不删相机，用户在删除确认框里逐次勾选。
+
+| 提交 | 内容 |
+|------|------|
+| `27df3f1` | `feat(data):` `PhotoEntity` 记录导入时的 `objectHandle`；Room 升 v3 + `MIGRATION_2_3`（不清库，老记录 handle 为空） |
+| `e054b1c` | `feat(ptp):` `supportsObjectDeletion()` / `objectInfoOrNull()` / `storageAcceptsDeletion()` / `deleteObject(handle)`；新增 `StorageInfo.ACCESS_CAPABILITY_READ_ONLY` |
+| `2c74134` | `feat(usb):` 控制器 `deleteOnCamera()` 先做会话、能力、写保护、只读卡、文件夹五项检查，再发 `DeleteObject(handle, 0)`；返回码映射为可读结果 |
+| 本提交 | `feat(ui):` 删除确认框加「同时删除相机上的原件」复选框（默认不勾、不可用时置灰并给出原因） |
+
+行为约定：
+
+- 相机删除失败时**本地也不删**，提示具体原因（未连接 / 不支持 / 找不到 / 受保护 / 只读 / 其它）。
+- 只删这一个 handle：RAW+JPEG 兄弟文件留在相机上（规范不保证联动）。
+- 方向 (b)（机身删除回传）**未实现**，理由见 §4(c)：信号可能缺席、只带 handle、无法区分删除发起方，且 Canon 连接时 UI Lock 让这个场景本身很少发生。
+
+质量门禁：`assembleDebug`、`testDebugUnitTest`（60 条，新增 21 条）、`lintDebug` 通过。
+
+真机待验证：
+
+1. 目标机型 `DeviceInfo.OperationsSupported` 是否含 `0x100B`（logcat 里 `supportsObjectDeletion` 的结果）；
+2. 删除后 `GetObjectHandles` 是否立刻少一个 handle（轮询 2 秒内应能反映）；
+3. RAW+JPEG 双格式拍摄时删掉其中一个，兄弟是否连带消失（规范不保证，需实测记录）。
