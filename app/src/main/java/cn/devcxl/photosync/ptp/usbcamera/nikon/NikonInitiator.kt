@@ -48,9 +48,6 @@ class NikonInitiator(dev: UsbDevice, connection: UsbDeviceConnection) :
         /** Length of the PTP data container header preceding an event payload. */
         private const val EVENT_HEADER_LEN = 12
 
-        /** How long the event loop waits between `NK_OC_CheckEvent` calls. */
-        private const val EVENT_POLL_INTERVAL_MS = 200L
-
         @JvmField
         var eventListenerRunning: Boolean = false
     }
@@ -139,48 +136,54 @@ class NikonInitiator(dev: UsbDevice, connection: UsbDeviceConnection) :
     }
 
     /**
-     * Event-driven transfer loop: polls `NK_OC_CheckEvent` and downloads each object the
-     * camera reports as newly added.
+     * Event-driven transfer loop: hands Nikon's event channel to the shared loop, which
+     * imports each object the camera reports as newly added.
      *
      * Cameras that reject `NK_OC_CheckEvent` fall back to the poll-list loop, mirroring
      * libgphoto2's `event90c7works` handling, so enabling event mode cannot leave a device
-     * without a working transfer loop.
+     * without a working transfer loop. That fallback runs inside [pollVendorEvents].
      */
     private fun runNikonEventPoll() {
         Timber.tag("PTP_EVENT").v("开始 Nikon event 轮询")
+        runVendorEventLoop()
+    }
+
+    override fun eventLoopSetUp() {
         pollThreadRunning = true
         pollEventSetUp()
-        try {
-            while (pollThreadRunning && isSessionActive() && autoPollEvent) {
-                val events = try {
-                    checkEvents()
-                } catch (e: PTPUnsupportedException) {
-                    Timber.w(e, "NK_OC_CheckEvent unsupported, falling back to poll-list")
-                    runPollListPoll()
-                    return
-                } catch (e: PTPException) {
-                    Timber.w(e, "checkEvents failed")
-                    emptyList()
-                }
+    }
 
-                for (event in events) {
-                    Timber.tag("PTP_EVENT").v(NikonEventFormat.format(event))
-                    if (event.code == getObjectAddedEventCode()) {
-                        processFileAddEvent(resolveObjectAddedHandle(event), event)
-                    }
-                }
+    override fun keepEventLoopRunning(): Boolean = pollThreadRunning && autoPollEvent
 
-                try {
-                    Thread.sleep(EVENT_POLL_INTERVAL_MS)
-                } catch (e: InterruptedException) {
-                    Timber.w(e, "event poll interrupted, stopping")
-                    return
-                }
-            }
-        } finally {
-            pollThreadRunning = false
-            Timber.tag("PTP_EVENT").v("结束 Nikon event 轮询")
+    override fun pollVendorEvents(): List<VendorEvent>? {
+        val events = try {
+            checkEvents()
+        } catch (e: PTPUnsupportedException) {
+            Timber.w(e, "NK_OC_CheckEvent unsupported, falling back to poll-list")
+            runPollListPoll()
+            return null
+        } catch (e: PTPException) {
+            Timber.w(e, "checkEvents failed")
+            return emptyList()
         }
+
+        return events.map { event ->
+            VendorEvent(
+                payload = event,
+                objectAddedHandle =
+                    if (event.code == getObjectAddedEventCode()) resolveObjectAddedHandle(event) else null,
+                describe = { NikonEventFormat.format(event) },
+            )
+        }
+    }
+
+    override fun onEventPollInterrupted(e: InterruptedException) {
+        Timber.w(e, "event poll interrupted, stopping")
+    }
+
+    override fun eventLoopTearDown(interrupted: Boolean) {
+        pollThreadRunning = false
+        Timber.tag("PTP_EVENT").v("结束 Nikon event 轮询")
     }
 
     /**

@@ -32,7 +32,12 @@ open class BaselineInitiator : NameFactory, Runnable {
         /** Interval between two object-list polls while a session is open. */
         private const val POLL_LIST_INTERVAL_MS = 2000L
 
+        /** Interval between two polls of a vendor event channel. */
+        private const val EVENT_POLL_INTERVAL_MS = 200L
+
         private const val PTP_POLL_LIST_TAG = "PTP_POLL_LIST"
+
+        private const val PTP_EVENT_TAG = "PTP_EVENT"
 
         // USB Class-specific control requests; from Annex D.5.2
         private const val CLASS_CANCEL_REQ: Byte = 0x64.toByte()
@@ -1133,6 +1138,113 @@ open class BaselineInitiator : NameFactory, Runnable {
 
     protected open fun getObjectAddedEventCode(): Int {
         return OBJECT_ADDED_EVENT_CODE
+    }
+
+    /**
+     * One vendor event, reduced to what the shared event loop acts on.
+     *
+     * @property payload the vendor's own event object; it is handed to
+     *   [processFileAddEvent] unchanged, because Canon EOS carries the file name inside
+     *   its object-added event.
+     * @property objectAddedHandle the handle to import, or null when the event is not an
+     *   "object added" event.
+     * @property describe renders the event for the poll log. It is evaluated when the event
+     *   is logged, in the order the camera reported it, so an event a vendor cannot
+     *   describe still fails where it always did.
+     */
+    protected class VendorEvent(
+        val payload: Any?,
+        val objectAddedHandle: Int?,
+        val describe: () -> String,
+    )
+
+    /**
+     * The shared vendor event loop: a camera that reports new objects through a vendor
+     * event channel plugs its own pieces into this one shape.
+     *
+     * Runs [eventLoopSetUp], then until the session ends: [pollVendorEvents], import every
+     * event it reports as "object added" through [processFileAddEvent], and wait
+     * [EVENT_POLL_INTERVAL_MS] before polling again. A poll that throws never ends the
+     * loop; it is retried at once. [eventLoopTearDown] always runs last.
+     *
+     * Vendors keep their own setup, their own event RPC, how they pull the object handle
+     * out of an event, and their own begin/end log lines.
+     */
+    protected fun runVendorEventLoop() {
+        var interrupted = false
+        eventLoopSetUp()
+        try {
+            while (isSessionActive() && keepEventLoopRunning()) {
+                val events = try {
+                    // Null means the vendor left the event channel; it owns the fallback.
+                    pollVendorEvents() ?: break
+                } catch (e: PTPException) {
+                    // Retry at once: the failed poll already waited out the transfer
+                    // timeout, so the interval would only add latency.
+                    continue
+                }
+
+                for (event in events) {
+                    try {
+                        Timber.tag(PTP_EVENT_TAG).v(event.describe())
+                        val handle = event.objectAddedHandle ?: continue
+                        processFileAddEvent(handle, event.payload)
+                    } catch (e: PTPException) {
+                        // Rendering or importing one vendor event must not take the event
+                        // channel down: EOS events fail to render when a parameter is
+                        // missing, and that case used to be swallowed by the poll's catch.
+                        Timber.w(e, "event dispatch failed")
+                    }
+                }
+
+                try {
+                    Thread.sleep(EVENT_POLL_INTERVAL_MS)
+                } catch (e: InterruptedException) {
+                    interrupted = true
+                    onEventPollInterrupted(e)
+                    return
+                }
+            }
+        } finally {
+            eventLoopTearDown(interrupted)
+        }
+    }
+
+    /** Vendor setup that runs once, before the loop starts polling. */
+    protected open fun eventLoopSetUp() {
+    }
+
+    /**
+     * Whether the loop may poll again, besides the session still being alive.
+     *
+     * Defaults to true; a vendor whose loop also depends on flags of its own answers no.
+     */
+    protected open fun keepEventLoopRunning(): Boolean = true
+
+    /**
+     * Polls the vendor event channel once.
+     *
+     * @return one [VendorEvent] per event the camera reported, in the order it reported
+     *   them, or null when the vendor has left the event channel and the loop must stop.
+     * @throws PTPException when the transfer failed; the loop retries it at once.
+     */
+    protected open fun pollVendorEvents(): List<VendorEvent>? = emptyList()
+
+    /**
+     * Handles the poll thread being interrupted, which stops the loop.
+     *
+     * @param e the interruption that the wait between two polls threw.
+     */
+    protected open fun onEventPollInterrupted(e: InterruptedException) {
+    }
+
+    /**
+     * Runs once when the loop stops, however it stops.
+     *
+     * @param interrupted true when the poll thread was interrupted, false when the loop
+     *   ended on its own.
+     */
+    protected open fun eventLoopTearDown(interrupted: Boolean) {
     }
 
     @Throws(PTPException::class)
