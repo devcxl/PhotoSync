@@ -248,7 +248,7 @@ class MainActivity : ComponentActivity() {
                 binding.progressBar.progress = progressPercent
             }
         }
-        connectionController.setFileDownloadedListener { _, _, localFile, timeduring ->
+        connectionController.setFileDownloadedListener { _, fileHandle, localFile, timeduring ->
             Timber.v("file downloaded at %s, time: %sms", localFile.absolutePath, timeduring)
             lifecycleScope.launch(Dispatchers.Main) { binding.progressBar.visibility = View.GONE }
 
@@ -258,7 +258,7 @@ class MainActivity : ComponentActivity() {
             Timber.d("file downloaded: %s ext=%s raw=%b jpeg=%b",
                 localFile.name, ext, isRaw, isJpeg)
             if (isRaw || isJpeg) {
-                insertItemAndReveal(localFile)
+                insertItemAndReveal(localFile, fileHandle)
             }
         }
     }
@@ -293,11 +293,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun insertItemAndReveal(localFile: File) {
+    private fun insertItemAndReveal(localFile: File, objectHandle: Int) {
         val entity = PhotoEntity(
             path = localFile.absolutePath,
             name = localFile.name,
-            uriString = null
+            uriString = null,
+            objectHandle = objectHandle
         )
         pendingRevealPath = entity.path
         lifecycleScope.launch(Dispatchers.IO) {
