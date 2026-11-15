@@ -159,8 +159,15 @@ class NikonInitiator(dev: UsbDevice, connection: UsbDeviceConnection) :
         return events.map { event ->
             VendorEvent(
                 payload = event,
-                objectAddedHandle =
-                    if (event.code == getObjectAddedEventCode()) resolveObjectAddedHandle(event) else null,
+                objectAddedHandle = when (event.code) {
+                    // Card captures arrive as the standard ObjectAdded; captures held in
+                    // camera memory use Nikon's own code, whose handle 0 stands for the
+                    // camera's fixed pseudo-object. Missing the standard code here meant a
+                    // photo shot to the card while connected was never imported.
+                    Event.ObjectAdded -> event.getIntParam(1)
+                    getObjectAddedEventCode() -> resolveObjectAddedHandle(event)
+                    else -> null
+                },
                 describe = { NikonEventFormat.format(event) },
                 requestsReconcile = event.code == Event.UnreportedStatus,
             )
