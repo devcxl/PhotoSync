@@ -29,6 +29,11 @@ open class BaselineInitiator : NameFactory, Runnable {
         const val TRACE = false
         const val DEFAULT_TIMEOUT = 1000
 
+        /** Interval between two object-list polls while a session is open. */
+        private const val POLL_LIST_INTERVAL_MS = 2000L
+
+        private const val PTP_POLL_LIST_TAG = "PTP_POLL_LIST"
+
         // USB Class-specific control requests; from Annex D.5.2
         private const val CLASS_CANCEL_REQ: Byte = 0x64.toByte()
         private const val CLASS_GET_EVENT_DATA: Byte = 0x65.toByte()
@@ -78,6 +83,16 @@ open class BaselineInitiator : NameFactory, Runnable {
 
     @Volatile
     @JvmField var pollThreadRunning: Boolean = false
+
+    /**
+     * Object handles this device has already imported, as last reconciled with the camera.
+     *
+     * Copy-on-write: the poll thread replaces the whole list, [deleteObject] removes one
+     * entry. Handles disappear from it when the object leaves the card — see
+     * [nextHandledHandles].
+     */
+    @Volatile
+    private var syncedObjectHandles: List<Int> = emptyList()
 
     @JvmField var fileNameRule: Int = SyncParams.FILE_NAME_RULE_HANDLE_ID
 
@@ -1008,7 +1023,33 @@ open class BaselineInitiator : NameFactory, Runnable {
      */
     @Throws(PTPException::class)
     fun deleteObject(objectHandle: Int): Int {
-        return transact2(Command.DeleteObject, null, objectHandle, 0).getCode()
+        val code = transact2(Command.DeleteObject, null, objectHandle, 0).getCode()
+        if (code == Response.OK) {
+            forgetHandledObject(objectHandle)
+        }
+        return code
+    }
+
+    /**
+     * Drops an object we just deleted from the import bookkeeping.
+     *
+     * Object handles get reused: leaving a deleted handle in the "already imported" set
+     * makes the next photo that lands on that handle look imported, and the app silently
+     * stops syncing until it reconnects.
+     */
+    private fun forgetHandledObject(objectHandle: Int) {
+        val remaining = syncedObjectHandles.filter { it != objectHandle }
+        if (remaining.size == syncedObjectHandles.size) {
+            return
+        }
+        syncedObjectHandles = remaining
+        if (syncRecordMode == SyncParams.SYNC_RECORD_MODE_REMEMBER) {
+            try {
+                SyncDeviceManager(device!!).updateIdList(remaining)
+            } catch (e: Exception) {
+                Timber.w(e, "failed to persist handles after deleting %s", objectHandle)
+            }
+        }
     }
 
     @Throws(PTPException::class)
@@ -1097,99 +1138,116 @@ open class BaselineInitiator : NameFactory, Runnable {
     @Throws(PTPException::class)
     protected open fun runPollListPoll() {
         pollThreadRunning = true
-        val PTP_POLL_LIST = "PTP_POLL_LIST"
-        Timber.tag(PTP_POLL_LIST).v("开始event轮询")
-        var loopTimes: Long = 0
-        var syncDeviceManager: SyncDeviceManager
+        Timber.tag(PTP_POLL_LIST_TAG).v("开始对象轮询")
 
         pollListSetUp()
-        var oldObjectHandles: MutableList<Int>
-
-        var sids: IntArray
-        sids = getStorageIds()
-        sids = filterValidStorageIds(sids)
+        val sids = filterValidStorageIds(getStorageIds())
         if (sids.isEmpty()) {
             Timber.w("未发现可用存储卡槽，停止轮询")
             pollListTearDown()
             return
         }
         pollListAfterGetStorages(sids)
-        if (syncRecordMode == SyncParams.SYNC_RECORD_MODE_REMEMBER) {
-            syncDeviceManager = SyncDeviceManager(device!!)
-            val syncDevice = syncDeviceManager.updateDeviceInfo()!!
-            if (syncDevice.syncAt != null) {
-                oldObjectHandles = syncDeviceManager.getIdList().toMutableList()
-            } else {
-                if (syncMode == SyncParams.SYNC_MODE_SYNC_ALL) {
-                    oldObjectHandles = mutableListOf()
-                } else {
-                    oldObjectHandles = getObjectHandlesByStorageIds(sids).toMutableList()
-                }
-                if (oldObjectHandles != null) {
-                    syncDeviceManager.updateIdList(oldObjectHandles)
-                } else {
-                    Timber.d("init oldObjectHandles is null")
-                }
-            }
-        } else if (syncRecordMode == SyncParams.SYNC_RECORD_MODE_FORGET) {
-            if (syncMode == SyncParams.SYNC_MODE_SYNC_ALL) {
-                oldObjectHandles = mutableListOf()
-            } else {
-                oldObjectHandles = getObjectHandlesByStorageIds(sids).toMutableList()
-            }
-        } else {
-            oldObjectHandles = mutableListOf()
-        }
+        syncedObjectHandles = initialHandledHandles(sids)
 
-        Timber.tag(PTP_POLL_LIST).v("初始objectHandle列表: $oldObjectHandles")
+        Timber.tag(PTP_POLL_LIST_TAG).v("初始 objectHandle 列表: %s", syncedObjectHandles)
+        var consecutiveFailures = 0
         while (pollThreadRunning) {
             if (!isSessionActive() || !autoPollEvent || mConnection == null) {
-                try {
-                    Thread.sleep(DEFAULT_TIMEOUT.toLong())
-                } catch (e: InterruptedException) {
-                    Timber.w(e, "poll loop interrupted, stopping")
-                    return
-                }
+                if (!sleepPolling(DEFAULT_TIMEOUT.toLong())) return
                 continue
-            } else {
-                try {
-                    Thread.sleep(2000)
-                } catch (e: InterruptedException) {
-                    Timber.w(e, "poll loop interrupted, stopping")
-                    return
-                }
-
-                val newObjectHandles = getObjectHandlesByStorageIds(sids)
-                val newAdded = getAllNewAddedObjectHandles(oldObjectHandles, newObjectHandles)
-                Timber.tag(PTP_POLL_LIST).v("New Added objectHandle : $newAdded")
-                val newAddedDownloaded = mutableListOf<Int>()
-                if (newAdded.size > 0) {
-                    var downloadInterrupted = false
-                    for (h in newAdded) {
-                        if (processFileAddEvent(h, null)) {
-                            newAddedDownloaded.add(h)
-                        } else {
-                            downloadInterrupted = true
-                            break
-                        }
-                    }
-
-                    if (!downloadInterrupted) {
-                        oldObjectHandles = ArrayList(newObjectHandles)
-                    } else {
-                        oldObjectHandles.addAll(newAddedDownloaded)
-                    }
-
-                    if (syncRecordMode == SyncParams.SYNC_RECORD_MODE_REMEMBER) {
-                        syncDeviceManager = SyncDeviceManager(device!!)
-                        syncDeviceManager.updateIdList(oldObjectHandles)
-                    }
-                }
+            }
+            if (!sleepPolling(POLL_LIST_INTERVAL_MS)) return
+            try {
+                syncNewObjects(sids)
+                consecutiveFailures = 0
+            } catch (e: PTPException) {
+                // A camera that hiccups right after a delete must not take the loop down
+                // with it: the thread used to die here, and new photos silently stopped
+                // being synced for the rest of the session.
+                consecutiveFailures++
+                Timber.w(e, "对象轮询第 %d 次连续失败，稍后重试", consecutiveFailures)
             }
         }
 
         pollListTearDown()
-        Timber.tag(PTP_POLL_LIST).v("结束轮询")
+        Timber.tag(PTP_POLL_LIST_TAG).v("结束轮询")
+    }
+
+    /**
+     * Imports what appeared since the last tick, then reconciles the bookkeeping with what
+     * the camera still reports.
+     */
+    @Throws(PTPException::class)
+    private fun syncNewObjects(sids: IntArray) {
+        val onCamera = getObjectHandlesByStorageIds(sids)
+        val handled = syncedObjectHandles
+        val newAdded = newObjectHandles(handled, onCamera)
+        logVanishedHandles(handled, onCamera)
+        Timber.tag(PTP_POLL_LIST_TAG).v("New Added objectHandle : %s", newAdded)
+
+        val imported = mutableListOf<Int>()
+        for (handle in newAdded) {
+            if (!processFileAddEvent(handle, null)) {
+                // Leave the rest for the next tick instead of giving up on them.
+                break
+            }
+            imported.add(handle)
+        }
+
+        val nextHandled = nextHandledHandles(handled, onCamera, imported)
+        if (nextHandled.toSet() == handled.toSet()) {
+            return
+        }
+        syncedObjectHandles = nextHandled
+        if (syncRecordMode == SyncParams.SYNC_RECORD_MODE_REMEMBER) {
+            SyncDeviceManager(device!!).updateIdList(nextHandled)
+        }
+    }
+
+    private fun logVanishedHandles(handled: List<Int>, onCamera: List<Int>) {
+        val present = onCamera.toHashSet()
+        val vanished = handled.filter { it !in present }
+        if (vanished.isNotEmpty()) {
+            Timber.tag(PTP_POLL_LIST_TAG).d("相机上已不存在的 handle: %s", vanished)
+        }
+    }
+
+    /** @return false when the loop was interrupted and should stop. */
+    private fun sleepPolling(millis: Long): Boolean {
+        return try {
+            Thread.sleep(millis)
+            true
+        } catch (e: InterruptedException) {
+            Timber.w(e, "poll loop interrupted, stopping")
+            false
+        }
+    }
+
+    /**
+     * The handles this device had already imported when the session opened.
+     */
+    @Throws(PTPException::class)
+    private fun initialHandledHandles(sids: IntArray): List<Int> {
+        if (syncRecordMode != SyncParams.SYNC_RECORD_MODE_REMEMBER) {
+            return if (syncMode == SyncParams.SYNC_MODE_SYNC_ALL) {
+                emptyList()
+            } else {
+                getObjectHandlesByStorageIds(sids)
+            }
+        }
+        val syncDeviceManager = SyncDeviceManager(device!!)
+        val syncDevice = syncDeviceManager.updateDeviceInfo()
+        if (syncDevice != null && syncDevice.syncAt != null) {
+            return syncDeviceManager.getIdList(syncDevice)
+        }
+        val handles = if (syncMode == SyncParams.SYNC_MODE_SYNC_ALL) {
+            emptyList()
+        } else {
+            getObjectHandlesByStorageIds(sids)
+        }
+        syncDeviceManager.updateIdList(handles)
+        return handles
     }
 
     private fun filterValidStorageIds(sids: IntArray): IntArray {
@@ -1214,15 +1272,6 @@ open class BaselineInitiator : NameFactory, Runnable {
         return result
     }
 
-    private fun getAllNewAddedObjectHandles(oldHandles: List<Int>, newHandles: List<Int>): List<Int> {
-        val newAdded = mutableListOf<Int>()
-        for (newHandle in newHandles) {
-            if (!oldHandles.contains(newHandle)) {
-                newAdded.add(newHandle)
-            }
-        }
-        return newAdded
-    }
 
     @Throws(PTPException::class)
     private fun getObjectHandlesByStorageIds(sids: IntArray): List<Int> {
