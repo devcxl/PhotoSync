@@ -10,10 +10,10 @@ import cn.devcxl.photosync.ptp.detect.isSupportedCamera
 import cn.devcxl.photosync.ptp.detect.toUsbDeviceTraits
 import cn.devcxl.photosync.ptp.interfaces.FileDownloadedListener
 import cn.devcxl.photosync.ptp.interfaces.FileTransferListener
-import cn.devcxl.photosync.ptp.params.SyncParams
 import cn.devcxl.photosync.ptp.usbcamera.BaselineInitiator
 import cn.devcxl.photosync.ptp.usbcamera.InitiatorFactory
 import cn.devcxl.photosync.ptp.usbcamera.PTPException
+import cn.devcxl.photosync.ptp.usbcamera.toSyncTriggerMode
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -280,8 +280,9 @@ class UsbPtpConnectionController(
         val initiator = try {
             val produced = InitiatorFactory.produceInitiator(device, usbManager)
             produced.getClearStatus()
-            produced.setSyncTriggerMode(SyncParams.SYNC_TRIGGER_MODE_POLL_LIST)
-            Timber.i("同步触发方式: 列表轮询, device=%s", deviceId.deviceName)
+            val triggerDecision = produced.triggerDecision()
+            produced.setSyncTriggerMode(triggerDecision.toSyncTriggerMode())
+            Timber.i("同步触发方式: %s, device=%s", triggerDecision, deviceId.deviceName)
             fileDownloadPath?.let(produced::setFileDownloadPath)
             transferListener?.let(produced::setFileTransferListener)
             downloadedListener?.let(produced::setFileDownloadedListener)

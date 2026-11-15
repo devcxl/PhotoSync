@@ -93,8 +93,8 @@ open class BaselineInitiator : NameFactory, Runnable {
      * Object handles this device has already imported, as last reconciled with the camera.
      *
      * Copy-on-write: the poll thread replaces the whole list, [deleteObject] removes one
-     * entry. Handles disappear from it when the object leaves the card — see
-     * [nextHandledHandles].
+     * entry, and the event loop appends the handle of each import it completes. Handles
+     * disappear from it when the object leaves the card — see [nextHandledHandles].
      */
     @Volatile
     private var syncedObjectHandles: List<Int> = emptyList()
@@ -986,6 +986,34 @@ open class BaselineInitiator : NameFactory, Runnable {
     }
 
     /**
+     * The operations this camera family reads its vendor event channel with.
+     *
+     * Empty means "this camera has no event channel", which leaves the session on the
+     * object-list poll. A vendor that has one names the opcode the camera advertises
+     * instead of overriding any decision logic.
+     */
+    protected open fun vendorEventChannelOpcodes(): Set<Int> = emptySet()
+
+    /**
+     * Whether the connected camera advertises the operation its event channel needs.
+     *
+     * Asked of the operation table the camera sent with its device info — no probe
+     * transaction, so the answer costs nothing at connect time.
+     */
+    fun supportsEventChannel(): Boolean = triggerDecision() == SyncTriggerDecision.EVENT
+
+    /**
+     * The trigger channel this session runs, decided from what the camera advertises.
+     *
+     * Does not consult [syncTriggerMode]: that field is the code-level override, and it is
+     * applied on top of this decision by the caller that sets it.
+     */
+    internal fun triggerDecision(): SyncTriggerDecision = syncTriggerDecision(
+        vendorEventChannelOpcodes(),
+        info?.operationsSupported?.toSet() ?: emptySet()
+    )
+
+    /**
      * Reads an object's metadata, treating "the camera refuses to describe it" as absent.
      *
      * Used by the delete pre-checks: a handle the camera cannot describe is a handle this
@@ -1092,48 +1120,20 @@ open class BaselineInitiator : NameFactory, Runnable {
     }
 
     override fun run() {
-
         if (syncTriggerMode == SyncParams.SYNC_TRIGGER_MODE_EVENT) {
-            runEventPoll()
-        } else if (syncTriggerMode == SyncParams.SYNC_TRIGGER_MODE_POLL_LIST) {
-            try {
-                runPollListPoll()
-            } catch (e: PTPException) {
-                Timber.w(e, "run failed")
+            if (supportsEventChannel()) {
+                runVendorEventLoop()
+                return
             }
+            // A code-level override can select the event channel on a camera that never
+            // advertised one; polling is the only loop that can make progress there.
+            Timber.w("触发模式为事件通道，但相机未声明事件操作，本次改用列表轮询")
         }
-    }
-
-    protected open fun runEventPoll() {
-        Timber.tag("PTP_EVENT").v("开始event轮询")
-        var loopTimes: Long = 0
-        pollEventSetUp()
-        if (epEv != null) {
-            val buffer = ByteArray(intrMaxPS)
-            var length: Int
-            while (isSessionActive()) {
-                loopTimes++
-
-                val singal = waitVendorSpecifiedFileReadySignal() as? ObjectInfo
-                if (singal != null) {
-
-                    val outputFile = getAvailableOutputFile(File(fileDownloadPath!!), getSafeFileName(singal.filename))
-                    val outputFilePath = outputFile.path
-                    try {
-                        importFile(singal.handle, outputFilePath)
-                    } catch (e: PTPException) {
-                        Timber.e(e, "Failed to import file for handle %d to %s", singal.handle, outputFilePath)
-                    } catch (e: IOException) {
-                        Timber.e(e, "I/O error while importing file for handle %d to %s", singal.handle, outputFilePath)
-                    }
-                }
-            }
+        try {
+            runPollListPoll()
+        } catch (e: PTPException) {
+            Timber.w(e, "run failed")
         }
-        Timber.tag("PTP_EVENT").v("结束轮询")
-    }
-
-    protected open fun waitVendorSpecifiedFileReadySignal(): Any? {
-        return null
     }
 
     protected open fun getObjectAddedEventCode(): Int {
@@ -1162,10 +1162,11 @@ open class BaselineInitiator : NameFactory, Runnable {
      * The shared vendor event loop: a camera that reports new objects through a vendor
      * event channel plugs its own pieces into this one shape.
      *
-     * Runs [eventLoopSetUp], then until the session ends: [pollVendorEvents], import every
-     * event it reports as "object added" through [processFileAddEvent], and wait
-     * [EVENT_POLL_INTERVAL_MS] before polling again. A poll that throws never ends the
-     * loop; it is retried at once. [eventLoopTearDown] always runs last.
+     * Runs [eventLoopSetUp], records the handle baseline, then until the session ends:
+     * [pollVendorEvents], import every event it reports as "object added" through
+     * [processFileAddEvent], and wait [EVENT_POLL_INTERVAL_MS] before polling again. A poll
+     * that throws never ends the loop; it is retried at once. [eventLoopTearDown] always
+     * runs last.
      *
      * Vendors keep their own setup, their own event RPC, how they pull the object handle
      * out of an event, and their own begin/end log lines.
@@ -1173,6 +1174,7 @@ open class BaselineInitiator : NameFactory, Runnable {
     protected fun runVendorEventLoop() {
         var interrupted = false
         eventLoopSetUp()
+        initialiseHandledHandles()
         try {
             while (isSessionActive() && keepEventLoopRunning()) {
                 val events = try {
@@ -1188,7 +1190,9 @@ open class BaselineInitiator : NameFactory, Runnable {
                     try {
                         Timber.tag(PTP_EVENT_TAG).v(event.describe())
                         val handle = event.objectAddedHandle ?: continue
-                        processFileAddEvent(handle, event.payload)
+                        if (processFileAddEvent(handle, event.payload)) {
+                            rememberImportedHandle(handle)
+                        }
                     } catch (e: PTPException) {
                         // Rendering or importing one vendor event must not take the event
                         // channel down: EOS events fail to render when a parameter is
@@ -1338,6 +1342,54 @@ open class BaselineInitiator : NameFactory, Runnable {
 
     /**
      * The handles this device had already imported when the session opened.
+     *
+     * Event mode starts its baseline from the same place the poll loop does — the storages
+     * the camera enumerates plus the stored sync record — so that both loops share one
+     * notion of "already imported". Event imports then extend it through
+     * [rememberImportedHandle].
+     */
+    private fun initialiseHandledHandles() {
+        try {
+            val sids = filterValidStorageIds(getStorageIds())
+            if (sids.isEmpty()) {
+                Timber.w("未发现可用存储卡槽，事件模式不建立 handle 基线")
+                return
+            }
+            syncedObjectHandles = initialHandledHandles(sids)
+            Timber.tag(PTP_EVENT_TAG).v("初始 objectHandle 列表: %s", syncedObjectHandles)
+        } catch (e: PTPException) {
+            // Imports still work with an empty baseline; only the dedup bookkeeping of
+            // this session is incomplete, so a later reconnect may re-download.
+            Timber.w(e, "事件模式建立 handle 基线失败")
+        }
+    }
+
+    /**
+     * Adds one event-mode import to the handled set and to the sync record.
+     *
+     * Without this, a photo imported through the event channel is missing from the stored
+     * sync record (`SyncDevice.syncIdList`), and the next session — a reconnect, or the
+     * poll loop after a degradation — would treat it as unknown and download it again.
+     */
+    private fun rememberImportedHandle(objectHandle: Int) {
+        val current = syncedObjectHandles
+        val next = withImportedHandle(current, objectHandle)
+        if (next == current) {
+            return
+        }
+        syncedObjectHandles = next
+        if (syncRecordMode != SyncParams.SYNC_RECORD_MODE_REMEMBER) {
+            return
+        }
+        try {
+            SyncDeviceManager(device!!).updateIdList(next)
+        } catch (e: Exception) {
+            Timber.w(e, "事件模式导入后保存 handle 记录失败: %s", objectHandle)
+        }
+    }
+
+    /**
+     * The handles this device had already imported when the session opened.
      */
     @Throws(PTPException::class)
     private fun initialHandledHandles(sids: IntArray): List<Int> {
@@ -1409,9 +1461,6 @@ open class BaselineInitiator : NameFactory, Runnable {
     }
 
     protected open fun pollListAfterGetStorages(ids: IntArray) {
-    }
-
-    protected open fun pollEventSetUp() {
     }
 
     protected open fun processFileAddEvent(fileHandle: Int, event: Any?): Boolean {

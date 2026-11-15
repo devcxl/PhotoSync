@@ -56,17 +56,16 @@ class SonyInitiator(dev: UsbDevice, connection: UsbDeviceConnection) : BaselineI
     }
 
     @Throws(PTPException::class)
-    override fun pollEventSetUp() {
-        super.pollEventSetUp()
+    override fun pollListSetUp() {
+        super.pollListSetUp()
         try {
             getDeviceInfo()
         } catch (e: PTPException) {
-            Timber.w(e, "pollEventSetUp failed")
+            Timber.w(e, "pollListSetUp failed")
         }
         setSDIOConnect(0x01)
         setSDIOConnect(0x02)
         sendSonyGetExtDeviceInfoCommand()
-        setSDIOConnect(0x03)
     }
 
     private fun sendSonyGetExtDeviceInfoCommand() {
@@ -83,18 +82,6 @@ class SonyInitiator(dev: UsbDevice, connection: UsbDeviceConnection) : BaselineI
         } catch (e: PTPException) {
             Timber.w(e, "sendSonyGetExtDeviceInfoCommand failed")
         }
-    }
-
-    override fun pollListSetUp() {
-        super.pollListSetUp()
-        try {
-            getDeviceInfo()
-        } catch (e: PTPException) {
-            Timber.w(e, "pollListSetUp failed")
-        }
-        setSDIOConnect(0x01)
-        setSDIOConnect(0x02)
-        sendSonyGetExtDeviceInfoCommand()
     }
 
     override fun pollListAfterGetStorages(ids: IntArray) {
