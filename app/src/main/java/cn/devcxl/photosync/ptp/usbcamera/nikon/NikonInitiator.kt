@@ -137,6 +137,10 @@ class NikonInitiator(dev: UsbDevice, connection: UsbDeviceConnection) :
      * libgphoto2's `event90c7works` handling, so choosing the event channel cannot leave a
      * device without a working transfer loop. The poll loop then builds its baseline from
      * the stored sync record, which already holds the event-mode imports.
+     *
+     * Any other failure is left to the shared loop: it counts the consecutive failures and
+     * degrades the session after three. Swallowing them here would make a broken channel
+     * look exactly like a camera with no new photos, and no degradation would ever happen.
      */
     override fun pollVendorEvents(): List<VendorEvent>? {
         val events = try {
@@ -145,9 +149,6 @@ class NikonInitiator(dev: UsbDevice, connection: UsbDeviceConnection) :
             Timber.w(e, "NK_OC_CheckEvent unsupported, falling back to poll-list")
             runPollListPoll()
             return null
-        } catch (e: PTPException) {
-            Timber.w(e, "checkEvents failed")
-            return emptyList()
         }
 
         return events.map { event ->

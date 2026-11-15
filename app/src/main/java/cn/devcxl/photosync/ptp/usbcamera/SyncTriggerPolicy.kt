@@ -3,6 +3,15 @@ package cn.devcxl.photosync.ptp.usbcamera
 import cn.devcxl.photosync.ptp.params.SyncParams
 
 /**
+ * Consecutive event-channel failures after which a session stops using it.
+ *
+ * Three failures is well above the single USB hiccup a busy camera produces, and small
+ * enough that a channel that is consistently broken falls back instead of retrying for
+ * the rest of the session.
+ */
+private const val EVENT_FAILURE_DEGRADE_THRESHOLD = 3
+
+/**
  * How a session notices objects the camera just added.
  */
 internal enum class SyncTriggerDecision {
@@ -49,3 +58,17 @@ internal fun SyncTriggerDecision.toSyncTriggerMode(): Int = when (this) {
     SyncTriggerDecision.EVENT -> SyncParams.SYNC_TRIGGER_MODE_EVENT
     SyncTriggerDecision.POLL -> SyncParams.SYNC_TRIGGER_MODE_POLL_LIST
 }
+
+/**
+ * Whether a session should give up the vendor event channel and poll the object list.
+ *
+ * The signal is repeated failure, never silence: an idle camera sends no events, and
+ * vendor channels legitimately drop some, so "nothing for a while" would degrade sessions
+ * that are working. A single failed poll is only counted and retried.
+ *
+ * @param consecutiveFailures How many polls of the event channel failed in a row; a poll
+ *   that returns, even with no events, resets the count.
+ * @return true once the failures reach [EVENT_FAILURE_DEGRADE_THRESHOLD].
+ */
+internal fun shouldDegradeToPolling(consecutiveFailures: Int): Boolean =
+    consecutiveFailures >= EVENT_FAILURE_DEGRADE_THRESHOLD

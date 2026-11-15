@@ -371,6 +371,13 @@ open class EosInitiator @Throws(PTPException::class) constructor(
         }
     }
 
+    /**
+     * Drains Canon's event channel for the shared loop.
+     *
+     * A failed `EosGetEvent` is left to the loop on purpose, as Nikon does: only the loop
+     * can tell a broken channel from a quiet camera, count the failures and degrade the
+     * session to the object-list poll.
+     */
     override fun pollVendorEvents(): List<VendorEvent> {
         return checkEvents().map { event ->
             VendorEvent(
