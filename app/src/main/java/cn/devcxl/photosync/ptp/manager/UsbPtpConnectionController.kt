@@ -214,7 +214,7 @@ class UsbPtpConnectionController(
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         usbManager.requestPermission(device, permissionIntent)
-        Timber.d("请求设备权限 %s", device.deviceName)
+        Timber.d("请求相机 USB 授权: %s", device.deviceName)
     }
 
     private suspend fun connectInternal(device: UsbDevice): Boolean {

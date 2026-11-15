@@ -25,11 +25,11 @@ class App : Application() {
 
     private val usbReceiver: UsbReceiver = UsbReceiver()
     private val usbPermissionReceiver: UsbPermissionReceiver = UsbPermissionReceiver()
-    private val deviceFilter = IntentFilter().apply {
+    private val usbEventFilter = IntentFilter().apply {
         addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
         addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
     }
-    private val permissionFilter = IntentFilter().apply {
+    private val usbPermissionFilter = IntentFilter().apply {
         addAction(ACTION_USB_PERMISSION)
     }
 
@@ -58,11 +58,11 @@ class App : Application() {
         }
         // Provide explicit export policy for dynamically registered receivers per Android 12+ requirements
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(usbReceiver, deviceFilter, Context.RECEIVER_NOT_EXPORTED)
-            registerReceiver(usbPermissionReceiver, permissionFilter, Context.RECEIVER_EXPORTED)
+            registerReceiver(usbReceiver, usbEventFilter, Context.RECEIVER_NOT_EXPORTED)
+            registerReceiver(usbPermissionReceiver, usbPermissionFilter, Context.RECEIVER_EXPORTED)
         } else {
-            registerReceiver(usbReceiver, deviceFilter)
-            registerReceiver(usbPermissionReceiver, permissionFilter)
+            registerReceiver(usbReceiver, usbEventFilter)
+            registerReceiver(usbPermissionReceiver, usbPermissionFilter)
         }
     }
 

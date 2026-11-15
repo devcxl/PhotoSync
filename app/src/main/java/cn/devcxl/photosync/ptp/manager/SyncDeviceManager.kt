@@ -87,7 +87,7 @@ class SyncDeviceManager(private var device: UsbDevice) {
 
     fun getSyncDevice(device: UsbDevice): SyncDevice? {
         val uuid = getUUIDFromDevice(device)
-        Timber.tag(TAG).d("获取数据库中的同步设备ORM:$uuid")
+        Timber.tag(TAG).d("获取数据库中的同步记录:$uuid")
         val found = dao.getByUuid(uuid)
         if (found != null) {
             return found

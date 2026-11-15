@@ -21,7 +21,7 @@ PhotoSync is an Android camera companion app designed for photographers and imag
 
 ## Features
 
-- **USB PTP Direct Connection** — Connect your camera via USB PTP, plug-and-play, no network required
+- **USB PTP Direct Connection** — Plug in the cable and tap connect, no network required
 - **Auto-Transfer on Capture** — Photos are automatically transferred to your device as you shoot
 - **RAW Decoding** — LibRaw + lcms2 color management, supports 20+ formats including ARW, CR3, NEF, DNG, RAF
 - **Smooth Browsing** — Thumbnail-first loading, JPEG tile rendering, two-finger zoom and pan
@@ -38,7 +38,7 @@ PhotoSync is an Android camera companion app designed for photographers and imag
 
 1. Connect camera to phone/tablet via USB cable
 2. Set camera to "PC Connection" or "PTP/MTP" mode
-3. Open PhotoSync, device is recognized automatically, start browsing and exporting
+3. Open PhotoSync and tap "Connect camera" — photos sync over, ready to browse and export
 
 ---
 
