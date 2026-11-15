@@ -6,6 +6,8 @@ import android.content.Intent
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import cn.devcxl.photosync.App
+import cn.devcxl.photosync.ptp.detect.isSupportedCamera
+import cn.devcxl.photosync.ptp.detect.toUsbDeviceTraits
 import cn.devcxl.photosync.ptp.interfaces.FileDownloadedListener
 import cn.devcxl.photosync.ptp.interfaces.FileTransferListener
 import cn.devcxl.photosync.ptp.params.SyncParams
@@ -26,8 +28,9 @@ import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
 
 /**
- * Manages the lifecycle of a USB PTP connection: scanning, connecting, disconnecting,
- * and routing file-transfer events. Exposes a [StateFlow] of [UsbPtpConnectionState].
+ * Manages the lifecycle of a USB PTP session: detecting attached cameras, connecting,
+ * disconnecting, and routing file-transfer events. Exposes a [StateFlow] of
+ * [UsbPtpConnectionState] and [availableCameras].
  */
 class UsbPtpConnectionController(
     context: Context,
@@ -38,6 +41,7 @@ class UsbPtpConnectionController(
     private val scope = CoroutineScope(SupervisorJob() + ioDispatcher)
     private val stateMutex = Mutex()
     private val _connectionState = MutableStateFlow<UsbPtpConnectionState>(UsbPtpConnectionState.Idle)
+    private val _availableCameras = MutableStateFlow<List<UsbPtpDeviceId>>(emptyList())
 
     private var currentInitiator: BaselineInitiator? = null
     private var currentDevice: UsbDevice? = null
@@ -49,28 +53,36 @@ class UsbPtpConnectionController(
 
     val connectionState: StateFlow<UsbPtpConnectionState> = _connectionState.asStateFlow()
 
-    fun scanAndConnectIfPossible() {
+    /**
+     * Cameras currently attached, as last seen by [refreshAvailableCameras].
+     *
+     * Presence only: an empty list does not mean disconnected, and a non-empty one does
+     * not mean connected.
+     */
+    val availableCameras: StateFlow<List<UsbPtpDeviceId>> = _availableCameras.asStateFlow()
+
+    /**
+     * Re-reads the attached cameras. Never connects.
+     *
+     * Plugging the cable is not the same intent as opening a session: a session locks the
+     * camera out of shooting until it is closed, so only the user starts one.
+     */
+    fun refreshAvailableCameras() {
         scope.launch {
-            val devices = usbManager.deviceList.values.toList()
-            if (devices.isEmpty()) {
-                val current = stateMutex.withLock { currentDeviceId }
-                if (current == null) {
-                    _connectionState.value = UsbPtpConnectionState.Disconnected(null, "no_device")
-                }
-                return@launch
-            }
-            devices.forEach { device ->
-                val connected = tryStartConnection(device)
-                if (connected) {
-                    return@launch
-                }
-            }
+            _availableCameras.value = attachedCameras().map { it.toUsbPtpDeviceId() }
         }
     }
 
-    fun onUsbAttached(device: UsbDevice?) {
-        if (device == null) return
+    /**
+     * Connects the first attached camera, asking for USB permission when it is missing.
+     */
+    fun connectToAvailableCamera() {
         scope.launch {
+            val device = attachedCameras().firstOrNull()
+            if (device == null) {
+                _connectionState.value = UsbPtpConnectionState.Disconnected(null, "no_device")
+                return@launch
+            }
             tryStartConnection(device)
         }
     }
@@ -88,6 +100,7 @@ class UsbPtpConnectionController(
             if (shouldDisconnect != null) {
                 disconnectInternal("usb_detached", shouldDisconnect)
             }
+            _availableCameras.value = attachedCameras().map { it.toUsbPtpDeviceId() }
         }
     }
 
@@ -165,6 +178,11 @@ class UsbPtpConnectionController(
                 }
             }
         }
+    }
+
+    private fun attachedCameras(): List<UsbDevice> {
+        return usbManager.deviceList.values
+            .filter { isSupportedCamera(it.toUsbDeviceTraits()) }
     }
 
     private suspend fun tryStartConnection(device: UsbDevice): Boolean {

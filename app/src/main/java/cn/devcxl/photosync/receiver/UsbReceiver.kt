@@ -27,7 +27,7 @@ class UsbReceiver : BroadcastReceiver() {
             UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
                 Timber.d("USB device attached: %s", intent)
                 Toast.makeText(context, context.getString(R.string.usb_inserted), Toast.LENGTH_SHORT).show()
-                controller?.onUsbAttached(device)
+                controller?.refreshAvailableCameras()
             }
             UsbManager.ACTION_USB_DEVICE_DETACHED -> {
                 Timber.d("USB device detached: %s", intent)

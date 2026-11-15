@@ -8,7 +8,7 @@ import timber.log.Timber
  */
 class CameraDetector(private val device: UsbDevice) {
     fun getSupportedVendorId(): Int {
-        return if (vendorIds.contains(device.vendorId)) {
+        return if (device.vendorId in supportedVendorIds) {
             device.vendorId
         } else {
             VENDOR_ID_OTHER
@@ -34,7 +34,7 @@ class CameraDetector(private val device: UsbDevice) {
 
         const val VENDOR_ID_OTHER: Int = 0xffff
 
-        private val vendorIds = listOf(
+        internal val supportedVendorIds: Set<Int> = setOf(
             VENDOR_ID_CANON,
             VENDOR_ID_NIKON,
             VENDOR_ID_SONY

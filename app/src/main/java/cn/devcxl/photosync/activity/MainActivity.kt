@@ -109,7 +109,14 @@ class MainActivity : ComponentActivity() {
         setupButtons()
         enableEdgeToEdge()
         configureConnectionController()
-        connectMTPDevice()
+        connectionController.refreshAvailableCameras()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Attach broadcasts can be missed while the app is not running; the button state
+        // is derived from what is actually plugged in.
+        connectionController.refreshAvailableCameras()
     }
 
     private fun setupDao() {
@@ -191,12 +198,13 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         connectionController.setFileTransferListener(null)
         connectionController.setFileDownloadedListener(null)
-        connectionController.disconnect("activity_destroyed")
+        // The session belongs to the process, not to this activity (docs/adr/0001):
+        // a system-driven recreate must not tear down a healthy session, so only a real
+        // exit releases the camera.
+        if (isFinishing && !isChangingConfigurations) {
+            connectionController.disconnect("activity_finished")
+        }
         super.onDestroy()
-    }
-
-    fun connectMTPDevice() {
-        connectionController.scanAndConnectIfPossible()
     }
 
     private fun configureConnectionController() {
