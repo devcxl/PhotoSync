@@ -24,6 +24,8 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.util.LruCache
 import android.view.View
+import android.widget.CheckBox
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.enableEdgeToEdge
@@ -53,6 +55,7 @@ import cn.devcxl.photosync.data.PhotoDao
 import cn.devcxl.photosync.data.entity.PhotoEntity
 import cn.devcxl.photosync.databinding.ActivityMainBinding
 import cn.devcxl.photosync.ptp.manager.UsbPtpConnectionState
+import cn.devcxl.photosync.ptp.manager.cameraDeleteBlockedBy
 import cn.devcxl.photosync.utils.ExtensionUtils
 import cn.devcxl.photosync.wrapper.RawWrapper
 
@@ -648,6 +651,10 @@ class MainActivity : ComponentActivity() {
 
     /**
      * Shows confirmation dialog before deleting current photo.
+     *
+     * The camera's copy is only offered when it can actually be deleted: a session is
+     * open, the camera implements DeleteObject, and this photo recorded a handle when it
+     * was imported.
      */
     private fun showDeleteConfirmDialog() {
         if (adapter.itemCount == 0) {
@@ -657,30 +664,79 @@ class MainActivity : ComponentActivity() {
 
         val index = binding.viewPager.currentItem.coerceIn(0, adapter.itemCount - 1)
         val entity = adapter.getItem(index) ?: return
-        val displayName = entity.name ?: getString(R.string.photo_default_name)
+
+        val blocker = cameraDeleteBlockedBy(
+            connected = connectionState is UsbPtpConnectionState.Connected,
+            cameraSupportsDelete = connectionController.canDeleteOnCamera(),
+            hasObjectHandle = entity.objectHandle != null
+        )
+        val dialogView = layoutInflater.inflate(R.layout.dialog_delete_photo, null)
+        val deleteOnCameraCheck = dialogView.findViewById<CheckBox>(R.id.deleteOnCameraCheck)
+        val blockerHint = dialogView.findViewById<TextView>(R.id.cameraDeleteHint)
+        deleteOnCameraCheck.isChecked = false
+        deleteOnCameraCheck.isEnabled = blocker == null
+        if (blocker == null) {
+            blockerHint.visibility = View.GONE
+        } else {
+            blockerHint.setText(cameraDeleteBlockerMessage(blocker))
+            blockerHint.visibility = View.VISIBLE
+        }
 
         AlertDialog.Builder(this)
             .setTitle(getString(R.string.dialog_delete_title))
             .setMessage(getString(R.string.dialog_delete_message))
+            .setView(dialogView)
             .setPositiveButton(getString(R.string.dialog_delete_confirm)) { _, _ ->
-                deleteCurrent(index)
+                deleteCurrent(index, deleteOnCameraCheck.isChecked)
             }
             .setNegativeButton(getString(R.string.dialog_cancel), null)
             .show()
     }
 
     /**
-     * Deletes photo at given index from database, cache, and filesystem.
+     * Deletes the photo at the given index.
      *
-     * @param index The index of photo to delete.
+     * When [deleteOnCamera] is set the camera's copy goes first: if the camera refuses,
+     * nothing is deleted locally and the reason is shown, so the user can retry instead of
+     * losing the only copy they can still see.
+     *
+     * @param index The index of the photo to delete.
+     * @param deleteOnCamera Whether the camera's original should be deleted too.
      */
-    private fun deleteCurrent(index: Int) {
+    private fun deleteCurrent(index: Int, deleteOnCamera: Boolean) {
         val entity = adapter.getItem(index) ?: return
         val displayName = entity.name ?: getString(R.string.photo_default_name)
 
         Toast.makeText(this, getString(R.string.toast_deleting, displayName), Toast.LENGTH_SHORT).show()
 
-        lifecycleScope.launch(Dispatchers.IO) {
+        lifecycleScope.launch {
+            if (deleteOnCamera) {
+                val objectHandle = entity.objectHandle
+                if (objectHandle == null) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        getString(R.string.camera_delete_failed_not_found),
+                        Toast.LENGTH_LONG
+                    ).show()
+                    return@launch
+                }
+                val result = connectionController.deleteOnCamera(objectHandle)
+                val failureMessage = cameraDeleteFailureMessage(result)
+                if (failureMessage != null) {
+                    Timber.w("deleteOnCamera refused: %s", result)
+                    Toast.makeText(this@MainActivity, getString(failureMessage), Toast.LENGTH_LONG).show()
+                    return@launch
+                }
+            }
+            deleteLocalCopy(entity, displayName)
+        }
+    }
+
+    /**
+     * Removes one photo from the cache, the filesystem and the library.
+     */
+    private suspend fun deleteLocalCopy(entity: PhotoEntity, displayName: String) {
+        withContext(Dispatchers.IO) {
             try {
                 // Remove from cache
                 thumbnailCache.remove(entity.path)
@@ -712,7 +768,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             } catch (e: Exception) {
-                Timber.e(e, "deleteCurrent failed")
+                Timber.e(e, "deleteLocalCopy failed")
                 withContext(Dispatchers.Main) {
                     Toast.makeText(
                         this@MainActivity,

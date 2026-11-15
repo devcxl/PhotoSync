@@ -28,6 +28,16 @@
     <string name="toast_delete_failed">删除失败</string>
     <string name="dialog_delete_title">删除照片</string>
     <string name="dialog_delete_message">确定要删除这张照片吗?此操作不可恢复。</string>
+    <string name="delete_on_camera">同时删除相机上的原件</string>
+    <string name="delete_on_camera_unavailable_not_connected">相机未连接，只能删除本机副本</string>
+    <string name="delete_on_camera_unavailable_not_supported">此相机不支持通过 USB 删除</string>
+    <string name="delete_on_camera_unavailable_no_handle">这张照片导入较早，无法定位相机原件</string>
+    <string name="camera_delete_failed">删除相机上的照片失败</string>
+    <string name="camera_delete_failed_not_connected">相机未连接，未删除相机上的照片</string>
+    <string name="camera_delete_failed_not_supported">此相机不支持通过 USB 删除</string>
+    <string name="camera_delete_failed_not_found">相机上找不到这张照片，可能已被删除</string>
+    <string name="camera_delete_failed_protected">这张照片在相机上受保护，无法删除</string>
+    <string name="camera_delete_failed_read_only">相机的存储卡为只读，无法删除</string>
     <string name="dialog_delete_confirm">删除</string>
     <string name="dialog_cancel">取消</string>
 </resources>
