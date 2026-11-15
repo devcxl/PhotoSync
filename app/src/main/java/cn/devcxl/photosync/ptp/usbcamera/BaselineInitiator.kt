@@ -955,6 +955,62 @@ open class BaselineInitiator : NameFactory, Runnable {
         }
     }
 
+    /**
+     * Whether the camera advertises the standard `DeleteObject` operation.
+     *
+     * PTP 1.0 marks it optional, so it has to be asked before sending anything: a device
+     * without it answers `Operation_Not_Supported` only after a round trip.
+     */
+    fun supportsObjectDeletion(): Boolean {
+        return info?.supportsOperation(Command.DeleteObject) == true
+    }
+
+    /**
+     * Reads an object's metadata, treating "the camera refuses to describe it" as absent.
+     *
+     * Used by the delete pre-checks: a handle the camera cannot describe is a handle this
+     * session cannot delete.
+     *
+     * @param objectHandle Handle obtained from this session's object enumeration.
+     * @return the object's metadata, or null when the camera rejected the handle.
+     */
+    fun objectInfoOrNull(objectHandle: Int): ObjectInfo? {
+        val data = ObjectInfo(objectHandle, this)
+        return synchronized(session) {
+            if (transact1(Command.GetObjectInfo, data, objectHandle).getCode() == Response.OK) {
+                data.parse()
+                data
+            } else {
+                null
+            }
+        }
+    }
+
+    /**
+     * Whether the storage card allows the host to delete objects.
+     *
+     * @param storageId Storage the object lives in, as reported by [ObjectInfo.storageId].
+     */
+    @Throws(PTPException::class)
+    fun storageAcceptsDeletion(storageId: Int): Boolean {
+        return getStorageInfo(storageId).accessCapability != StorageInfo.ACCESS_CAPABILITY_READ_ONLY
+    }
+
+    /**
+     * Deletes one object from the camera's storage.
+     *
+     * The second parameter is the format filter; 0 means "exactly this handle". One file
+     * is one object in PTP, so a RAW+JPEG pair needs two calls.
+     *
+     * @param objectHandle Handle obtained from this session's object enumeration.
+     * @return the PTP response code, so callers can tell "not found" from "write protected".
+     * @throws PTPException when the transfer itself fails.
+     */
+    @Throws(PTPException::class)
+    fun deleteObject(objectHandle: Int): Int {
+        return transact2(Command.DeleteObject, null, objectHandle, 0).getCode()
+    }
+
     @Throws(PTPException::class)
     fun getObjectInfo(objectHandle: Int): ObjectInfo {
         var response: Response

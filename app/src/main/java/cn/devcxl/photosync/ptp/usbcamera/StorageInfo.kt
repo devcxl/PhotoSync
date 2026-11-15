@@ -126,4 +126,13 @@ open class StorageInfo(f: NameFactory) : Data(true, ByteArray(0), 0, f) {
             tv.append("Volume Label: $volumeLabel")
         }
     }
+
+    companion object {
+        /**
+         * `AccessCapability` 0x0001: read-only *without* object deletion.
+         *
+         * 0x0000 (read-write) and 0x0002 (read-only with object deletion) both allow it.
+         */
+        const val ACCESS_CAPABILITY_READ_ONLY: Int = 0x0001
+    }
 }
