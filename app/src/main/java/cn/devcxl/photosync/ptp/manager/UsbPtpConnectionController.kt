@@ -91,21 +91,37 @@ class UsbPtpConnectionController(
         }
     }
 
-    fun onUsbPermissionResult(device: UsbDevice?, granted: Boolean) {
+    /**
+     * Handles the USB permission result.
+     *
+     * The granted flag is deliberately *not* read from the broadcast. The permission
+     * [PendingIntent] is created with [PendingIntent.FLAG_IMMUTABLE] (a mutable one with
+     * an implicit intent throws on target SDK 34+), while the system injects
+     * `EXTRA_DEVICE` and `EXTRA_PERMISSION_GRANTED` at send time — exactly the extras an
+     * immutable PendingIntent drops. Reading them reported a granted permission as
+     * denied.
+     *
+     * Instead the device tracked when the permission was requested is re-resolved, and
+     * [UsbManager.hasPermission] decides. That is also immune to a forged broadcast.
+     */
+    fun onUsbPermissionResult() {
         scope.launch {
-            val deviceId = device?.toUsbPtpDeviceId()
-            if (!granted) {
-                stateMutex.withLock {
-                    if (deviceId == null || pendingPermissionDeviceId == deviceId) {
-                        pendingPermissionDeviceId = null
-                    }
-                }
-                _connectionState.value = UsbPtpConnectionState.Error(deviceId, "permission_denied")
+            val pendingDeviceId = stateMutex.withLock { pendingPermissionDeviceId }
+            if (pendingDeviceId == null) {
+                Timber.w("USB permission result without a pending request, ignoring")
                 return@launch
             }
+            val device = usbManager.deviceList.values
+                .firstOrNull { it.toUsbPtpDeviceId() == pendingDeviceId }
             if (device == null) {
-                pendingPermissionDeviceId = null
-                _connectionState.value = UsbPtpConnectionState.Error(null, "permission_missing_device")
+                stateMutex.withLock { pendingPermissionDeviceId = null }
+                _connectionState.value =
+                    UsbPtpConnectionState.Error(pendingDeviceId, "permission_missing_device")
+                return@launch
+            }
+            if (!usbManager.hasPermission(device)) {
+                stateMutex.withLock { pendingPermissionDeviceId = null }
+                _connectionState.value = UsbPtpConnectionState.Error(pendingDeviceId, "permission_denied")
                 return@launch
             }
             connectInternal(device)

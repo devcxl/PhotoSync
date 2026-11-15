@@ -246,7 +246,7 @@ class MainActivity : ComponentActivity() {
             is UsbPtpConnectionState.Error -> {
                 binding.progressBar.visibility = View.GONE
                 if (state.reason == "permission_denied") {
-                    return
+                    Toast.makeText(this, getString(R.string.usb_permission_denied), Toast.LENGTH_LONG).show()
                 }
                 Timber.w("USB connection error: reason=%s detail=%s", state.reason, state.detail)
             }
