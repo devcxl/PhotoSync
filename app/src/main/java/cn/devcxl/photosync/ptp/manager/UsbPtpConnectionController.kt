@@ -25,7 +25,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import timber.log.Timber
+
+/** `ObjectInfo.AssociationType` value for a folder. */
+private const val ASSOCIATION_TYPE_FOLDER = 1
 
 /**
  * Manages the lifecycle of a USB PTP session: detecting attached cameras, connecting,
@@ -50,6 +54,14 @@ class UsbPtpConnectionController(
     private var transferListener: FileTransferListener? = null
     private var downloadedListener: FileDownloadedListener? = null
     private var fileDownloadPath: String? = null
+
+    /**
+     * Whether the connected camera advertises `DeleteObject`.
+     *
+     * Cached at connect time so the UI can ask without a round trip.
+     */
+    @Volatile
+    private var connectedCameraSupportsDeletion = false
 
     val connectionState: StateFlow<UsbPtpConnectionState> = _connectionState.asStateFlow()
 
@@ -144,6 +156,46 @@ class UsbPtpConnectionController(
     fun disconnect(reason: String = "manual_disconnect") {
         scope.launch {
             disconnectInternal(reason, null)
+        }
+    }
+
+    /** Whether the connected camera can delete objects at all. */
+    fun canDeleteOnCamera(): Boolean = connectedCameraSupportsDeletion
+
+    /**
+     * Deletes one photo from the camera's storage.
+     *
+     * Runs the checks the standard ties to a successful delete before sending anything, so
+     * the caller gets a specific reason instead of one generic failure.
+     *
+     * @param objectHandle The PTP handle recorded when the photo was imported.
+     */
+    suspend fun deleteOnCamera(objectHandle: Int): CameraDeleteResult = withContext(ioDispatcher) {
+        val initiator = stateMutex.withLock { currentInitiator }
+            ?: return@withContext CameraDeleteResult.NotConnected
+        if (!initiator.supportsObjectDeletion()) {
+            return@withContext CameraDeleteResult.NotSupported
+        }
+        try {
+            val objectInfo = initiator.objectInfoOrNull(objectHandle)
+                ?: return@withContext CameraDeleteResult.NotFound
+            if (objectInfo.associationType == ASSOCIATION_TYPE_FOLDER) {
+                // Would take every photo in the folder with it; the app never imports one.
+                return@withContext CameraDeleteResult.Failed("association_object")
+            }
+            if (objectInfo.protectionStatus != 0) {
+                return@withContext CameraDeleteResult.Protected
+            }
+            if (!initiator.storageAcceptsDeletion(objectInfo.storageId)) {
+                return@withContext CameraDeleteResult.ReadOnly
+            }
+            cameraDeleteResultOf(initiator.deleteObject(objectHandle))
+        } catch (e: PTPException) {
+            Timber.w(e, "deleteOnCamera failed for handle %s", objectHandle)
+            CameraDeleteResult.Failed(e.message)
+        } catch (e: Exception) {
+            Timber.e(e, "deleteOnCamera unexpected failure for handle %s", objectHandle)
+            CameraDeleteResult.Failed(e.message)
         }
     }
 
@@ -250,6 +302,7 @@ class UsbPtpConnectionController(
         stateMutex.withLock {
             currentInitiator = initiator
             currentDevice = device
+            connectedCameraSupportsDeletion = initiator.supportsObjectDeletion()
         }
         _connectionState.value = UsbPtpConnectionState.Connected(deviceId)
         return true
@@ -280,6 +333,7 @@ class UsbPtpConnectionController(
             currentDevice = null
             currentDeviceId = null
             pendingPermissionDeviceId = null
+            connectedCameraSupportsDeletion = false
         }
 
         try {
