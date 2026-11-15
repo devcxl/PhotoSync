@@ -46,9 +46,6 @@ class NikonInitiator(dev: UsbDevice, connection: UsbDeviceConnection) :
 
         /** Length of the PTP data container header preceding an event payload. */
         private const val EVENT_HEADER_LEN = 12
-
-        @JvmField
-        var eventListenerRunning: Boolean = false
     }
 
     /**
@@ -103,7 +100,12 @@ class NikonInitiator(dev: UsbDevice, connection: UsbDeviceConnection) :
         }
 
         val data = Data(this)
-        transact0(Command.NK_OC_CheckEvent, data)
+        val response = transact0(Command.NK_OC_CheckEvent, data)
+        if (response.getCode() != Response.OK) {
+            // A rejected poll is a broken channel, not a quiet camera: let the shared loop
+            // count it and degrade instead of reporting "no events" forever.
+            throw PTPException("NK_OC_CheckEvent failed: 0x${Integer.toHexString(response.getCode())}")
+        }
 
         val length = data.getLength()
         if (length <= EVENT_HEADER_LEN) {
@@ -126,7 +128,6 @@ class NikonInitiator(dev: UsbDevice, connection: UsbDeviceConnection) :
 
     override fun eventLoopSetUp() {
         Timber.tag("PTP_EVENT").v("开始 Nikon event 轮询")
-        pollThreadRunning = true
     }
 
     override fun keepEventLoopRunning(): Boolean = pollThreadRunning && autoPollEvent

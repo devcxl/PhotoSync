@@ -1076,12 +1076,27 @@ open class BaselineInitiator : NameFactory, Runnable {
             return
         }
         syncedObjectHandles = remaining
-        if (syncRecordMode == SyncParams.SYNC_RECORD_MODE_REMEMBER) {
-            try {
-                SyncDeviceManager(device!!).updateIdList(remaining)
-            } catch (e: Exception) {
-                Timber.w(e, "failed to persist handles after deleting %s", objectHandle)
-            }
+        persistHandledHandles(remaining, "delete $objectHandle")
+    }
+
+    /**
+     * Writes the import bookkeeping back to the sync record.
+     *
+     * A lost write only costs de-duplication in a later session, so it must never fail
+     * the import or the delete that triggered it.
+     *
+     * @param handles Handles imported so far, in camera order.
+     * @param reason What changed, for the log line when the write fails.
+     */
+    private fun persistHandledHandles(handles: List<Int>, reason: String) {
+        if (syncRecordMode != SyncParams.SYNC_RECORD_MODE_REMEMBER) {
+            return
+        }
+        val connectedDevice = device ?: return
+        try {
+            SyncDeviceManager(connectedDevice).updateIdList(handles)
+        } catch (e: RuntimeException) {
+            Timber.w(e, "保存 handle 记录失败（原因: %s）", reason)
         }
     }
 
@@ -1186,6 +1201,9 @@ open class BaselineInitiator : NameFactory, Runnable {
      */
     protected fun runVendorEventLoop() {
         var interrupted = false
+        // read() refuses to touch the bulk endpoint unless this is set, and EOS drives
+        // focus/zoom through it, so the shared loop owns the flag rather than each vendor.
+        pollThreadRunning = true
         eventLoopSetUp()
         val storages = initialiseHandledHandles()
         try {
@@ -1415,9 +1433,7 @@ open class BaselineInitiator : NameFactory, Runnable {
             return
         }
         syncedObjectHandles = nextHandled
-        if (syncRecordMode == SyncParams.SYNC_RECORD_MODE_REMEMBER) {
-            SyncDeviceManager(device!!).updateIdList(nextHandled)
-        }
+        persistHandledHandles(nextHandled, "list poll")
     }
 
     private fun logVanishedHandles(handled: List<Int>, onCamera: List<Int>) {
@@ -1488,14 +1504,7 @@ open class BaselineInitiator : NameFactory, Runnable {
             return
         }
         syncedObjectHandles = next
-        if (syncRecordMode != SyncParams.SYNC_RECORD_MODE_REMEMBER) {
-            return
-        }
-        try {
-            SyncDeviceManager(device!!).updateIdList(next)
-        } catch (e: Exception) {
-            Timber.w(e, "事件模式导入后保存 handle 记录失败: %s", objectHandle)
-        }
+        persistHandledHandles(next, "event import $objectHandle")
     }
 
     /**

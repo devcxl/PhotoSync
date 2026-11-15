@@ -10,8 +10,8 @@ class SyncTriggerPolicyTest {
     @Test
     fun shouldChooseTheEventChannel_whenTheVendorEventOperationIsAdvertised() {
         val decision = syncTriggerDecision(
-            vendorEventOpcodes = setOf(0x9116),
-            operationsSupported = setOf(0x1001, 0x9115, 0x9116)
+            vendorEventOpcodes = setOf(Command.EosGetEvent),
+            operationsSupported = setOf(0x1001, 0x9115, Command.EosGetEvent)
         )
 
         assertEquals(SyncTriggerDecision.EVENT, decision)
@@ -20,7 +20,7 @@ class SyncTriggerPolicyTest {
     @Test
     fun shouldChoosePolling_whenTheVendorEventOperationIsMissing() {
         val decision = syncTriggerDecision(
-            vendorEventOpcodes = setOf(0x9116),
+            vendorEventOpcodes = setOf(Command.EosGetEvent),
             operationsSupported = setOf(0x1001, 0x9114, 0x9115)
         )
 
@@ -30,7 +30,7 @@ class SyncTriggerPolicyTest {
     @Test
     fun shouldChoosePolling_whenTheCameraAdvertisesOnlyUnrelatedOperations() {
         val decision = syncTriggerDecision(
-            vendorEventOpcodes = setOf(0x90C7),
+            vendorEventOpcodes = setOf(Command.NK_OC_CheckEvent),
             operationsSupported = setOf(0x1001, 0x1005, 0x9202)
         )
 
@@ -90,7 +90,7 @@ class SyncTriggerPolicyTest {
     }
 
     @Test
-    fun shouldNotReconcile_onAPeriodicTick() {
+    fun shouldNotReconcile_whenTheTickIsPeriodic() {
         // The pass shares the session with the 200 ms event poll, so no timer starts one.
         assertFalse(shouldReconcile(ReconcileCause.PERIODIC_TICK))
     }
