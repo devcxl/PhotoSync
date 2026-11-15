@@ -17,6 +17,8 @@
 
 package cn.devcxl.photosync.ptp.usbcamera.nikon
 
+import cn.devcxl.photosync.ptp.usbcamera.Event
+
 /**
  * One Nikon vendor event, as returned by `NK_OC_CheckEvent`.
  *
@@ -98,6 +100,7 @@ class NikonEvent {
             NikonEventConstants.NK_EC_ObjectAddedInSDRAM -> "ObjectAddedInSDRAM"
             NikonEventConstants.NK_EC_CaptureOverflow -> "CaptureOverflow"
             NikonEventConstants.NK_EC_AdvancedTransfer -> "AdvancedTransfer"
+            Event.UnreportedStatus -> "UnreportedStatus"
             else -> "0x" + Integer.toHexString(code)
         }
     }

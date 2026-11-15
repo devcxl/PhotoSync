@@ -1151,20 +1151,30 @@ open class BaselineInitiator : NameFactory, Runnable {
      * @property describe renders the event for the poll log. It is evaluated when the event
      *   is logged, in the order the camera reported it, so an event a vendor cannot
      *   describe still fails where it always did.
+     * @property requestsReconcile true when the camera is saying it may have failed to
+     *   report events (`UnreportedStatus`, 0x400E). The loop answers with one object-list
+     *   pass instead of an import.
      */
     protected class VendorEvent(
         val payload: Any?,
         val objectAddedHandle: Int?,
         val describe: () -> String,
+        val requestsReconcile: Boolean = false,
     )
 
     /**
      * The shared vendor event loop: a camera that reports new objects through a vendor
      * event channel plugs its own pieces into this one shape.
      *
-     * Runs [eventLoopSetUp], records the handle baseline, then until the session ends:
-     * [pollVendorEvents], import every event it reports as "object added" through
-     * [processFileAddEvent], and wait [EVENT_POLL_INTERVAL_MS] before polling again.
+     * Runs [eventLoopSetUp], records the handle baseline and reconciles it once against the
+     * card, then until the session ends: [pollVendorEvents], import every event it reports
+     * as "object added" through [processFileAddEvent], and wait [EVENT_POLL_INTERVAL_MS]
+     * before polling again.
+     *
+     * That first pass is what keeps event mode from missing photos shot while the camera was
+     * unplugged: the channel only reports objects added while the session is open, and the
+     * poll loop's first tick used to be the only thing that found the others. A reconnect
+     * opens a new session and gets the same pass; no timer ever runs one.
      *
      * A poll that throws is counted and retried on the next tick. Once
      * [shouldDegradeToPolling] says the channel is broken, the same session continues on
@@ -1177,8 +1187,9 @@ open class BaselineInitiator : NameFactory, Runnable {
     protected fun runVendorEventLoop() {
         var interrupted = false
         eventLoopSetUp()
-        initialiseHandledHandles()
+        val storages = initialiseHandledHandles()
         try {
+            reconcileObjectList(ReconcileCause.SESSION_START, storages)
             var consecutiveFailures = 0
             while (isSessionActive() && keepEventLoopRunning()) {
                 var events: List<VendorEvent> = emptyList()
@@ -1195,7 +1206,7 @@ open class BaselineInitiator : NameFactory, Runnable {
                     }
                 }
 
-                dispatchVendorEvents(events)
+                dispatchVendorEvents(events, storages)
 
                 try {
                     Thread.sleep(EVENT_POLL_INTERVAL_MS)
@@ -1213,14 +1224,25 @@ open class BaselineInitiator : NameFactory, Runnable {
     /**
      * Imports the objects [pollVendorEvents] reported, in the order the camera reported them.
      *
+     * A "may have missed events" report runs one reconcile pass for the whole batch, after
+     * the events it arrived with: those object-added events are imported first, and the
+     * pass then finds whatever the camera never reported.
+     *
      * Failing to render or import one event must not take the event channel down: EOS
      * events fail to render when a parameter is missing, and that case used to be swallowed
      * by the poll's own catch.
+     *
+     * @param storages storages this session enumerates, or null when it has no baseline.
      */
-    private fun dispatchVendorEvents(events: List<VendorEvent>) {
+    private fun dispatchVendorEvents(events: List<VendorEvent>, storages: IntArray?) {
+        var reconcileRequested = false
         for (event in events) {
             try {
                 Timber.tag(PTP_EVENT_TAG).v(event.describe())
+                if (event.requestsReconcile) {
+                    Timber.tag(PTP_EVENT_TAG).i("相机上报可能漏报事件（UnreportedStatus），执行一次对账")
+                    reconcileRequested = true
+                }
                 val handle = event.objectAddedHandle ?: continue
                 if (processFileAddEvent(handle, event.payload)) {
                     rememberImportedHandle(handle)
@@ -1228,6 +1250,45 @@ open class BaselineInitiator : NameFactory, Runnable {
             } catch (e: PTPException) {
                 Timber.w(e, "event dispatch failed")
             }
+        }
+        if (reconcileRequested) {
+            reconcileObjectList(ReconcileCause.UNREPORTED_EVENTS, storages)
+        }
+    }
+
+    /**
+     * Runs one object-list pass: imports what the baseline does not cover, then brings the
+     * baseline back in line with the camera.
+     *
+     * Reuses [syncNewObjects], the poll loop's own tick, so both loops agree on what
+     * "already imported" means — a second implementation could import a photo twice. Both
+     * paths read and write the one baseline: [syncedObjectHandles] plus the stored
+     * `SyncDevice.syncIdList`.
+     *
+     * That shared pass is also why a photo shot with the camera unplugged is found here:
+     * the event channel never reports it, but it is on the card and absent from the
+     * baseline.
+     *
+     * Only runs for the causes [shouldReconcile] allows, so nothing periodic can start one.
+     * A failure is logged and swallowed: a bad enumeration must not end the session, and
+     * the events still arrive.
+     *
+     * @param cause why the pass was requested.
+     * @param storages storages this session enumerates, or null when it never built a
+     *   baseline — reconciling then would treat every object on the card as new.
+     */
+    private fun reconcileObjectList(cause: ReconcileCause, storages: IntArray?) {
+        if (!shouldReconcile(cause)) {
+            return
+        }
+        if (storages == null || storages.isEmpty()) {
+            return
+        }
+        try {
+            Timber.tag(PTP_EVENT_TAG).i("对象列表对账（%s）", cause)
+            syncNewObjects(storages)
+        } catch (e: PTPException) {
+            Timber.w(e, "对象列表对账（%s）失败，继续事件通道", cause)
         }
     }
 
@@ -1379,26 +1440,37 @@ open class BaselineInitiator : NameFactory, Runnable {
     }
 
     /**
-     * The handles this device had already imported when the session opened.
+     * Builds the session's handle baseline from the storages the camera reports.
      *
      * Event mode starts its baseline from the same place the poll loop does — the storages
      * the camera enumerates plus the stored sync record — so that both loops share one
      * notion of "already imported". Event imports then extend it through
      * [rememberImportedHandle].
+     *
+     * @return the storages this baseline covers, or null when no baseline could be built.
+     *   Null also keeps the session-start reconcile away: with an empty baseline every
+     *   object on the card would look new and be downloaded again.
      */
-    private fun initialiseHandledHandles() {
-        try {
-            val sids = filterValidStorageIds(getStorageIds())
-            if (sids.isEmpty()) {
-                Timber.w("未发现可用存储卡槽，事件模式不建立 handle 基线")
-                return
-            }
+    private fun initialiseHandledHandles(): IntArray? {
+        val sids = try {
+            filterValidStorageIds(getStorageIds())
+        } catch (e: PTPException) {
+            Timber.w(e, "事件模式读取存储卡槽失败，本次会话不建立 handle 基线")
+            return null
+        }
+        if (sids.isEmpty()) {
+            Timber.w("未发现可用存储卡槽，事件模式不建立 handle 基线")
+            return null
+        }
+        return try {
             syncedObjectHandles = initialHandledHandles(sids)
             Timber.tag(PTP_EVENT_TAG).v("初始 objectHandle 列表: %s", syncedObjectHandles)
+            sids
         } catch (e: PTPException) {
             // Imports still work with an empty baseline; only the dedup bookkeeping of
             // this session is incomplete, so a later reconnect may re-download.
             Timber.w(e, "事件模式建立 handle 基线失败")
+            null
         }
     }
 

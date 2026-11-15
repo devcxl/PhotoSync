@@ -17,6 +17,7 @@
 
 package cn.devcxl.photosync.ptp.usbcamera.eos
 
+import cn.devcxl.photosync.ptp.usbcamera.Event
 import cn.devcxl.photosync.ptp.usbcamera.PTPException
 import cn.devcxl.photosync.ptp.usbcamera.PTPUnsupportedException
 import cn.devcxl.photosync.ptp.usbcamera.eos.EosEventConstants.EosEventCameraStatusChanged
@@ -107,6 +108,15 @@ class EosEventParser(private val inputStream: InputStream) {
             }
             EosEventCameraStatusChanged -> event.setParam(1, getNextS32())
             EosEventObjectAddedEx -> parseEosEventObjectAddedEx(event)
+            Event.UnreportedStatus -> {
+                //
+                // The standard "I may have missed events" signal. It is not an EOS event,
+                // but a body can put a standard code in its batch. Skip its payload and
+                // let it through instead of throwing: the caller turns it into a
+                // reconcile, while a throw here would look like a channel failure.
+                //
+                inputStream.skip(len.toLong())
+            }
             else -> {
                 inputStream.skip(len.toLong())
                 throw PTPUnsupportedException("Unsupported event")
