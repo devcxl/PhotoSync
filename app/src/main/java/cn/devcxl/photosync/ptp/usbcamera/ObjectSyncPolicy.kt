@@ -36,3 +36,22 @@ internal fun nextHandledHandles(
     known.addAll(imported)
     return onCamera.filter { it in known }
 }
+
+/**
+ * The handled set after one event-mode import.
+ *
+ * Event mode learns about single objects, never about the whole card, so it can only add:
+ * dropping a handle that left the camera needs an enumeration, and that happens either
+ * when the app deletes the object or when the next session builds its baseline.
+ *
+ * @param handled Handles imported before this event.
+ * @param imported Handle the event channel reported and the app has just imported.
+ * @return [handled] itself when the handle was already known, so callers can skip
+ *   persisting an unchanged set.
+ */
+internal fun withImportedHandle(handled: List<Int>, imported: Int): List<Int> {
+    if (imported in handled) {
+        return handled
+    }
+    return handled + imported
+}

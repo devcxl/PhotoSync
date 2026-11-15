@@ -21,7 +21,6 @@ import android.graphics.BitmapFactory
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbDeviceConnection
 import android.widget.ImageView
-import cn.devcxl.photosync.ptp.params.SyncParams
 import cn.devcxl.photosync.ptp.usbcamera.BaselineInitiator
 import cn.devcxl.photosync.ptp.usbcamera.Command
 import cn.devcxl.photosync.ptp.usbcamera.Container
@@ -360,24 +359,10 @@ open class EosInitiator @Throws(PTPException::class) constructor(
         // tv3.append(response.toString())
     }
 
-    override fun run() {
-        if (syncTriggerMode == SyncParams.SYNC_TRIGGER_MODE_EVENT) {
-            runEosCheckEventPoll()
-        } else if (syncTriggerMode == SyncParams.SYNC_TRIGGER_MODE_POLL_LIST) {
-            try {
-                runPollListPoll()
-            } catch (e: PTPException) {
-                Timber.w(e, "run failed")
-            }
-        }
-    }
-
-    private fun runEosCheckEventPoll() {
-        Timber.tag("PTP_EVENT").v("开始event轮询")
-        runVendorEventLoop()
-    }
+    override fun vendorEventChannelOpcodes(): Set<Int> = setOf(Command.EosGetEvent)
 
     override fun eventLoopSetUp() {
+        Timber.tag("PTP_EVENT").v("开始event轮询")
         try {
             setEosRemoteMode()
             setEosEventMode()

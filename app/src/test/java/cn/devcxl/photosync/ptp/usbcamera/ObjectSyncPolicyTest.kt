@@ -77,4 +77,18 @@ class ObjectSyncPolicyTest {
 
         assertEquals(listOf(1, 2, 3), next)
     }
+
+    @Test
+    fun shouldAddHandleToTheBaseline_whenAnEventModeImportSucceeded() {
+        val next = withImportedHandle(handled = listOf(1, 2), imported = 3)
+
+        assertEquals(listOf(1, 2, 3), next)
+    }
+
+    @Test
+    fun shouldKeepOneEntry_whenTheSameHandleIsImportedTwice() {
+        val next = withImportedHandle(handled = listOf(1, 2), imported = 2)
+
+        assertEquals(listOf(1, 2), next)
+    }
 }

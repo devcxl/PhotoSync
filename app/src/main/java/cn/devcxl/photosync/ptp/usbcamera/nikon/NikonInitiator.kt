@@ -18,8 +18,6 @@ package cn.devcxl.photosync.ptp.usbcamera.nikon
 
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbDeviceConnection
-
-import cn.devcxl.photosync.ptp.params.SyncParams
 import cn.devcxl.photosync.ptp.usbcamera.BaselineInitiator
 import cn.devcxl.photosync.ptp.usbcamera.Command
 import cn.devcxl.photosync.ptp.usbcamera.Container
@@ -123,38 +121,23 @@ class NikonInitiator(dev: UsbDevice, connection: UsbDeviceConnection) :
         return events
     }
 
-    override fun run() {
-        if (syncTriggerMode == SyncParams.SYNC_TRIGGER_MODE_EVENT) {
-            runNikonEventPoll()
-        } else if (syncTriggerMode == SyncParams.SYNC_TRIGGER_MODE_POLL_LIST) {
-            try {
-                runPollListPoll()
-            } catch (e: PTPException) {
-                Timber.w(e, "runPollListPoll failed")
-            }
-        }
-    }
-
-    /**
-     * Event-driven transfer loop: hands Nikon's event channel to the shared loop, which
-     * imports each object the camera reports as newly added.
-     *
-     * Cameras that reject `NK_OC_CheckEvent` fall back to the poll-list loop, mirroring
-     * libgphoto2's `event90c7works` handling, so enabling event mode cannot leave a device
-     * without a working transfer loop. That fallback runs inside [pollVendorEvents].
-     */
-    private fun runNikonEventPoll() {
-        Timber.tag("PTP_EVENT").v("开始 Nikon event 轮询")
-        runVendorEventLoop()
-    }
+    override fun vendorEventChannelOpcodes(): Set<Int> = setOf(Command.NK_OC_CheckEvent)
 
     override fun eventLoopSetUp() {
+        Timber.tag("PTP_EVENT").v("开始 Nikon event 轮询")
         pollThreadRunning = true
-        pollEventSetUp()
     }
 
     override fun keepEventLoopRunning(): Boolean = pollThreadRunning && autoPollEvent
 
+    /**
+     * Drains Nikon's event channel for the shared loop.
+     *
+     * Cameras that reject `NK_OC_CheckEvent` fall back to the poll-list loop, mirroring
+     * libgphoto2's `event90c7works` handling, so choosing the event channel cannot leave a
+     * device without a working transfer loop. The poll loop then builds its baseline from
+     * the stored sync record, which already holds the event-mode imports.
+     */
     override fun pollVendorEvents(): List<VendorEvent>? {
         val events = try {
             checkEvents()
