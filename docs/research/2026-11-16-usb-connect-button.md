@@ -305,7 +305,7 @@ internal fun isSupportedCamera(
 
 - `onCreate()` 删掉 `connectMTPDevice()`，改为 `refreshAvailableCameras()`；
 - 新增 `onResume()` → `refreshAvailableCameras()`；
-- `onDestroy()` **删除** `disconnect("activity_destroyed")`，只保留摘监听（连接所有权归 `App`）。
+- `onDestroy()` **不再无条件** `disconnect()`：改为只在 `isFinishing && !isChangingConfigurations` 时断开——系统重建不拆健康会话，真正退出才释放相机（见 `docs/adr/0001-camera-connection-ownership.md`）。
 
 ### 5.4 按钮 UI
 
@@ -395,3 +395,22 @@ internal fun connectButtonUi(
 12. AOSP `UsbDialogHelper.sendPermissionDialogResponse` — https://cs.android.com/android/platform/superproject/main/+/main:frameworks/base/packages/SystemUI/src/com/android/systemui/usb/UsbDialogHelper.java
 13. AOSP `IntentFilter.matchCategories` — https://cs.android.com/android/platform/superproject/main/+/main:frameworks/base/core/java/android/content/IntentFilter.java
 14. AOSP `UsbProfileGroupSettingsManager` — https://cs.android.com/android/platform/superproject/main/+/main:frameworks/base/services/usb/java/com/android/server/usb/UsbProfileGroupSettingsManager.java
+
+---
+
+## 9. 实施记录（2026-11-16）
+
+| 提交 | 内容 |
+|------|------|
+| `bf421c2` | `docs:` 落 `CONTEXT.md` 术语表与 ADR-0001（连接归进程所有，只在真正退出时释放） |
+| `cbe0cf0` | `fix(usb):` 授权结果改由 `hasPermission()` 判定，不再读被 immutable 丢弃的 extras |
+| `168f40a` | `fix(usb):` 摘掉 manifest 的 attach 过滤器与 `device_filter.xml` |
+| `958e04f` | `refactor(usb):` 拆分「设备存在」与「发起连接」，`onDestroy` 仅在真正退出时断开 |
+| `dd03f22` | `feat(ui):` 「连接相机」按钮 + 状态矩阵，新增 12 条单测（`CameraDetectionTest`、`ConnectButtonUiTest`） |
+
+质量门禁：`assembleDebug`、`testDebugUnitTest`（新增 12 条，全量 39 条）、`lintDebug` 均通过。
+
+仍需真机确认的两项：
+
+1. 授权广播的 extras 确实为空（`adb logcat | grep -i "USB permission"` 对照修复前后），确认 D3 的机制在目标机型上就是这条路径；
+2. 目标 ROM 上摘掉 attach 过滤器后不再由系统拉起应用（`singleTask` 在多任务场景下的行为各厂商有差异）。
