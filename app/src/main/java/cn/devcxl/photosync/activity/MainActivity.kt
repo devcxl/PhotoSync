@@ -84,6 +84,9 @@ class MainActivity : ComponentActivity() {
     private lateinit var dao: PhotoDao
     private var pendingRevealPath: String? = null
 
+    private var connectionState: UsbPtpConnectionState = UsbPtpConnectionState.Idle
+    private var cameraPresent: Boolean = false
+
     private val thumbnailCache: LruCache<String, Bitmap> by lazy { createBitmapCache(16) }
     private val fullBitmapCache: LruCache<String, Bitmap> by lazy { createBitmapCache(8) }
     private val inFlightThumbnailPaths = Collections.synchronizedSet(mutableSetOf<String>())
@@ -181,18 +184,43 @@ class MainActivity : ComponentActivity() {
     private fun observeConnectionState() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                var lastState: UsbPtpConnectionState? = null
-                connectionController.connectionState.collect { state ->
-                    renderUsbConnectionState(state, lastState)
-                    lastState = state
+                launch {
+                    var lastState: UsbPtpConnectionState? = null
+                    connectionController.connectionState.collect { state ->
+                        connectionState = state
+                        renderUsbConnectionState(state, lastState)
+                        lastState = state
+                        renderConnectButton()
+                    }
+                }
+                launch {
+                    connectionController.availableCameras.collect { cameras ->
+                        cameraPresent = cameras.isNotEmpty()
+                        renderConnectButton()
+                    }
                 }
             }
         }
     }
 
+    private fun renderConnectButton() {
+        val ui = connectButtonUi(connectionState, cameraPresent)
+        binding.connectButton.setText(ui.label)
+        binding.connectButton.isEnabled = ui.enabled
+    }
+
     private fun setupButtons() {
         binding.exportButton.setOnClickListener { exportCurrent() }
         binding.deleteButton.setOnClickListener { showDeleteConfirmDialog() }
+        binding.connectButton.setOnClickListener { onConnectButtonClick() }
+    }
+
+    private fun onConnectButtonClick() {
+        if (connectionState is UsbPtpConnectionState.Connected) {
+            connectionController.disconnect("user_request")
+        } else {
+            connectionController.connectToAvailableCamera()
+        }
     }
 
     override fun onDestroy() {
