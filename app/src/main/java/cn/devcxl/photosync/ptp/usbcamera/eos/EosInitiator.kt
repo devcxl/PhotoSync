@@ -50,8 +50,8 @@ open class EosInitiator @Throws(PTPException::class) constructor(
     companion object {
         const val CANON_VID: Int = 1193
 
-        @JvmField
-        var eventListenerRunning: Boolean = false
+        /** USB header the EOS event RPC prefixes to its event payload. */
+        private const val EOS_EVENT_HEADER_BYTES = 12
     }
 
     fun getDevicePropDesc(propcode: Int, desc: DevicePropDesc): Int {
@@ -70,8 +70,18 @@ open class EosInitiator @Throws(PTPException::class) constructor(
         //
         // We need to discard the initial 12 USB header bytes
         //
-        val buf = ByteArray(data.getLength() - 12)
-        System.arraycopy(data.data, 12, buf, 0, buf.size)
+        if (res.getCode() != Response.OK) {
+            // Let the shared loop count a rejected poll as a failure; silently returning an
+            // empty list would look like a quiet camera and never degrade.
+            throw PTPException("EosGetEvent failed: 0x${Integer.toHexString(res.getCode())}")
+        }
+        // Discard the initial USB header; a short reply would otherwise blow up here.
+        val payloadLength = data.getLength() - EOS_EVENT_HEADER_BYTES
+        if (payloadLength < 0) {
+            throw PTPException("EosGetEvent returned ${data.getLength()} bytes")
+        }
+        val buf = ByteArray(payloadLength)
+        System.arraycopy(data.data, EOS_EVENT_HEADER_BYTES, buf, 0, buf.size)
 
         val parser = EosEventParser(ByteArrayInputStream(buf))
 
@@ -368,7 +378,7 @@ open class EosInitiator @Throws(PTPException::class) constructor(
             setEosRemoteMode()
             setEosEventMode()
         } catch (e: PTPException) {
-            Timber.w(e, "runEosCheckEventPoll failed")
+            Timber.w(e, "event loop setup failed")
         }
     }
 
@@ -399,14 +409,14 @@ open class EosInitiator @Throws(PTPException::class) constructor(
                     payload = event,
                     objectAddedHandle =
                         if (event.code == EosEventConstants.EosEventObjectAddedEx) event.getIntParam(1) else null,
-                    describe = { event.toString() },
+                    describe = { runCatching { event.toString() }.getOrElse { "event 0x%04x".format(event.code) } },
                 )
             }
         }
     }
 
     override fun onEventPollInterrupted(e: InterruptedException) {
-        Timber.w(e, "runEosCheckEventPoll failed")
+        Timber.w(e, "event loop setup failed")
     }
 
     override fun eventLoopTearDown(interrupted: Boolean) {
