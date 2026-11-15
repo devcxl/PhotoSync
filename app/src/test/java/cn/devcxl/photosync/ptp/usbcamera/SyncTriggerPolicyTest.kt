@@ -73,4 +73,25 @@ class SyncTriggerPolicyTest {
         assertTrue(shouldDegradeToPolling(consecutiveFailures = 4))
         assertTrue(shouldDegradeToPolling(consecutiveFailures = 12))
     }
+
+    @Test
+    fun shouldReconcile_whenTheSessionStarts() {
+        assertTrue(shouldReconcile(ReconcileCause.SESSION_START))
+    }
+
+    @Test
+    fun shouldReconcile_whenTheCameraReportsItMayHaveMissedEvents() {
+        assertTrue(shouldReconcile(ReconcileCause.UNREPORTED_EVENTS))
+    }
+
+    @Test
+    fun shouldReconcile_whenTheCameraIsReconnected() {
+        assertTrue(shouldReconcile(ReconcileCause.RECONNECT))
+    }
+
+    @Test
+    fun shouldNotReconcile_onAPeriodicTick() {
+        // The pass shares the session with the 200 ms event poll, so no timer starts one.
+        assertFalse(shouldReconcile(ReconcileCause.PERIODIC_TICK))
+    }
 }

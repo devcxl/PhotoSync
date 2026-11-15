@@ -26,6 +26,7 @@ import cn.devcxl.photosync.ptp.usbcamera.Command
 import cn.devcxl.photosync.ptp.usbcamera.Container
 import cn.devcxl.photosync.ptp.usbcamera.Data
 import cn.devcxl.photosync.ptp.usbcamera.DevicePropDesc
+import cn.devcxl.photosync.ptp.usbcamera.Event
 import cn.devcxl.photosync.ptp.usbcamera.PTPException
 import cn.devcxl.photosync.ptp.usbcamera.PTPUnsupportedException
 import cn.devcxl.photosync.ptp.usbcamera.Response
@@ -377,15 +378,30 @@ open class EosInitiator @Throws(PTPException::class) constructor(
      * A failed `EosGetEvent` is left to the loop on purpose, as Nikon does: only the loop
      * can tell a broken channel from a quiet camera, count the failures and degrade the
      * session to the object-list poll.
+     *
+     * The standard `UnreportedStatus` (`0x400E`) is surfaced as a reconcile request. No
+     * EOS body has been observed sending it here, so this is a "handle it if it comes":
+     * it costs nothing when it never arrives.
      */
     override fun pollVendorEvents(): List<VendorEvent> {
         return checkEvents().map { event ->
-            VendorEvent(
-                payload = event,
-                objectAddedHandle =
-                    if (event.code == EosEventConstants.EosEventObjectAddedEx) event.getIntParam(1) else null,
-                describe = { event.toString() },
-            )
+            if (event.code == Event.UnreportedStatus) {
+                // The status event carries no parameters, so it must not be described
+                // through toString(), which reads parameter 1.
+                VendorEvent(
+                    payload = event,
+                    objectAddedHandle = null,
+                    describe = { "UnreportedStatus" },
+                    requestsReconcile = true,
+                )
+            } else {
+                VendorEvent(
+                    payload = event,
+                    objectAddedHandle =
+                        if (event.code == EosEventConstants.EosEventObjectAddedEx) event.getIntParam(1) else null,
+                    describe = { event.toString() },
+                )
+            }
         }
     }
 

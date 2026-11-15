@@ -23,6 +23,7 @@ import cn.devcxl.photosync.ptp.usbcamera.Command
 import cn.devcxl.photosync.ptp.usbcamera.Container
 import cn.devcxl.photosync.ptp.usbcamera.Data
 import cn.devcxl.photosync.ptp.usbcamera.DevicePropDesc
+import cn.devcxl.photosync.ptp.usbcamera.Event
 import cn.devcxl.photosync.ptp.usbcamera.PTPException
 import cn.devcxl.photosync.ptp.usbcamera.PTPUnsupportedException
 import cn.devcxl.photosync.ptp.usbcamera.Response
@@ -138,6 +139,10 @@ class NikonInitiator(dev: UsbDevice, connection: UsbDeviceConnection) :
      * device without a working transfer loop. The poll loop then builds its baseline from
      * the stored sync record, which already holds the event-mode imports.
      *
+     * The batch also carries standard event codes, `UnreportedStatus` (`0x400E`) among
+     * them; that one is surfaced as a reconcile request so the shared loop re-reads the
+     * object list once.
+     *
      * Any other failure is left to the shared loop: it counts the consecutive failures and
      * degrades the session after three. Swallowing them here would make a broken channel
      * look exactly like a camera with no new photos, and no degradation would ever happen.
@@ -157,6 +162,7 @@ class NikonInitiator(dev: UsbDevice, connection: UsbDeviceConnection) :
                 objectAddedHandle =
                     if (event.code == getObjectAddedEventCode()) resolveObjectAddedHandle(event) else null,
                 describe = { NikonEventFormat.format(event) },
+                requestsReconcile = event.code == Event.UnreportedStatus,
             )
         }
     }
