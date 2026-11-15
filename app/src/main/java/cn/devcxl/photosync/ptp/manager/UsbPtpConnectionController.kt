@@ -14,7 +14,6 @@ import cn.devcxl.photosync.ptp.params.SyncParams
 import cn.devcxl.photosync.ptp.usbcamera.BaselineInitiator
 import cn.devcxl.photosync.ptp.usbcamera.InitiatorFactory
 import cn.devcxl.photosync.ptp.usbcamera.PTPException
-import cn.devcxl.photosync.ptp.usbcamera.sony.SonyInitiator
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -282,9 +281,7 @@ class UsbPtpConnectionController(
             val produced = InitiatorFactory.produceInitiator(device, usbManager)
             produced.getClearStatus()
             produced.setSyncTriggerMode(SyncParams.SYNC_TRIGGER_MODE_POLL_LIST)
-            if (produced is SonyInitiator) {
-                produced.setSyncTriggerMode(SyncParams.SYNC_TRIGGER_MODE_EVENT)
-            }
+            Timber.i("同步触发方式: 列表轮询, device=%s", deviceId.deviceName)
             fileDownloadPath?.let(produced::setFileDownloadPath)
             transferListener?.let(produced::setFileTransferListener)
             downloadedListener?.let(produced::setFileDownloadedListener)

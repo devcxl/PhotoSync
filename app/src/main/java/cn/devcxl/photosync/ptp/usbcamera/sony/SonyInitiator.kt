@@ -7,158 +7,27 @@ import cn.devcxl.photosync.ptp.usbcamera.BaselineInitiator
 import cn.devcxl.photosync.ptp.usbcamera.Command
 import cn.devcxl.photosync.ptp.usbcamera.Data
 import cn.devcxl.photosync.ptp.usbcamera.DevicePropDesc
-import cn.devcxl.photosync.ptp.usbcamera.ObjectInfo
 import cn.devcxl.photosync.ptp.usbcamera.PTPException
 import cn.devcxl.photosync.ptp.usbcamera.Response
-import cn.devcxl.photosync.ptp.usbcamera.Session
 import timber.log.Timber
 
 /**
+ * Sony cameras sync through the object-list poll: [pollListSetUp] and
+ * [pollListAfterGetStorages] do the SDIO handshake the camera needs before it enumerates
+ * its storages.
+ *
+ * There is deliberately no vendor event implementation here. The former one watched a
+ * single "object in memory" property and only ever fetched one hard-coded pseudo-handle,
+ * which covers captures held in camera memory and nothing shot to the card.
+ *
  * @author devcxl
  */
 class SonyInitiator(dev: UsbDevice, connection: UsbDeviceConnection) : BaselineInitiator(dev, connection) {
 
-    protected override var OBJECT_ADDED_EVENT_CODE: Int = 0xc201
-    protected var PTP_OC_SONY_GetAllDevicePropData: Int = 0x9209
-    protected var PTP_DPC_SONY_ObjectInMemory: Int = 0xD215
     protected var PTP_OC_SONY_GetDevicePropdesc: Int = 0x9203
     protected var PTP_OC_SONY_GetSDIOGetExtDeviceInfo: Int = 0x9202
 
     var sonyExtDeviceInfo: SonyExtDeviceInfo? = null
-
-    protected override fun getObjectAddedEventCode(): Int {
-        return OBJECT_ADDED_EVENT_CODE
-    }
-
-    protected fun runEventPoll_NOTUSE() {
-        Timber.tag("PTP_EVENT").v("开始event轮询")
-        var loopTimes: Long = 0
-        pollEventSetUp()
-        val buffer = ByteArray(intrMaxPS)
-        while (isSessionActive()) {
-            loopTimes++
-            if (!autoPollEvent || mConnection == null) {
-                try {
-                    Thread.sleep(DEFAULT_TIMEOUT.toLong())
-                } catch (e: InterruptedException) {
-                    Timber.w(e, "runEventPoll_NOTUSE failed")
-                    return
-                }
-                continue
-            }
-
-            if (loopTimes % 100 == 0L) {
-                try {
-                    Thread.sleep(DEFAULT_TIMEOUT.toLong())
-                } catch (e: InterruptedException) {
-                    Timber.w(e, "runEventPoll_NOTUSE failed")
-                    return
-                }
-            }
-
-            getAllDevicePropDesc()
-            val props = getAllDevicePropDesc()
-            if (props == null) {
-                return
-            }
-            for (prop in props) {
-                if (prop.propertyCode == PTP_DPC_SONY_ObjectInMemory) {
-                    if ((prop.getValue() as Int) > 0x8000) {
-                        Timber.d("SONY ObjectInMemory count change seen, retrieving file")
-                        val info = getObjectInfo(0xffffc001.toInt())
-                        processFileAddEvent(0xffffc001.toInt(), info)
-                    } else {
-                        Timber.d(
-                            "current prop.value of PTP_DPC_SONY_ObjectInMemory is %s",
-                            Integer.toHexString(prop.getValue() as Int)
-                        )
-                    }
-                }
-            }
-        }
-
-        Timber.tag("PTP_EVENT").v("结束轮询")
-    }
-
-    protected override fun waitVendorSpecifiedFileReadySignal(): Any? {
-        val start = System.currentTimeMillis()
-        while (System.currentTimeMillis() - start < 15000) {
-            getAllDevicePropDesc()
-            val props = getAllDevicePropDesc()
-            if (props == null) {
-                return null
-            }
-            for (prop in props) {
-                if (prop.propertyCode == PTP_DPC_SONY_ObjectInMemory) {
-                    if ((prop.getValue() as Int) > 0x8000) {
-                        try {
-                            val info = getObjectInfo(0xffffc001.toInt())
-                            return info
-                        } catch (e: PTPException) {
-                            Timber.w(e, "waitVendorSpecifiedFileReadySignal failed")
-                        }
-                        Timber.d("SONY ObjectInMemory count change seen, retrieving file")
-                    } else {
-                        Timber.d(
-                            "current PTP_DPC_SONY_ObjectInMemory is %s",
-                            Integer.toHexString(prop.getValue() as Int)
-                        )
-                    }
-                }
-            }
-        }
-        Timber.d("Sony waitVendorSpecifiedFileReadySignal timeout!")
-        return null
-    }
-
-    protected fun waitVendorSpecifiedFileReadySignal1() {
-        try {
-            Thread.sleep(2000L)
-        } catch (e: InterruptedException) {
-            Timber.w(e, "waitVendorSpecifiedFileReadySignal1 failed")
-        }
-    }
-
-    fun getAllDevicePropDesc(): List<DevicePropDesc>? {
-        val data = Data(this)
-
-        val props: MutableList<DevicePropDesc> = ArrayList()
-
-        synchronized(session) {
-            try {
-                transact0(PTP_OC_SONY_GetAllDevicePropData, data)
-                if (data == null) {
-                    Timber.d("data is null")
-                    return@getAllDevicePropDesc null
-                }
-                if (data.getLength() < 8) {
-                    Timber.d("data length is short than 8")
-                    return@getAllDevicePropDesc null
-                }
-
-                Timber.d(
-                    "PTP_OC_SONY_GetAllDevicePropData recv data is : %s",
-                    BaselineInitiator.byteArrayToHex(data.data)
-                )
-
-                data.offset = 12 + 8
-                while (data.getLength() - data.offset > 0) {
-                    val desc = SonyDevicePropDesc(this, data)
-                    try {
-                        desc.parse()
-                    } catch (e: Exception) {
-                        Timber.w(e, "getAllDevicePropDesc failed")
-                        break
-                    }
-                    props.add(desc)
-                }
-                return@getAllDevicePropDesc props
-            } catch (e: PTPException) {
-                Timber.w(e, "getAllDevicePropDesc failed")
-                return@getAllDevicePropDesc null
-            }
-        }
-    }
 
     fun getDevicePropDesc(propcode: Int): DevicePropDesc? {
         val data = Data(this)
