@@ -374,38 +374,37 @@ open class EosInitiator @Throws(PTPException::class) constructor(
 
     private fun runEosCheckEventPoll() {
         Timber.tag("PTP_EVENT").v("开始event轮询")
+        runVendorEventLoop()
+    }
 
+    override fun eventLoopSetUp() {
         try {
             setEosRemoteMode()
             setEosEventMode()
         } catch (e: PTPException) {
             Timber.w(e, "runEosCheckEventPoll failed")
         }
+    }
 
-
-        val buffer = ByteArray(intrMaxPS)
-        while (isSessionActive()) {
-            try {
-                val events = checkEvents()
-                for (event in events) {
-                    Timber.tag("PTP_EVENT").v(event.toString())
-
-                    if (event.code == EosEventConstants.EosEventObjectAddedEx) {
-                        processFileAddEvent(event.getIntParam(1), event)
-                    }
-                }
-            } catch (e: PTPException) {
-                continue
-            }
-            try {
-                Thread.sleep(200) // poll interval every 200 ms
-            } catch (e: InterruptedException) {
-                Timber.w(e, "runEosCheckEventPoll failed")
-                return
-            }
-
+    override fun pollVendorEvents(): List<VendorEvent> {
+        return checkEvents().map { event ->
+            VendorEvent(
+                payload = event,
+                objectAddedHandle =
+                    if (event.code == EosEventConstants.EosEventObjectAddedEx) event.getIntParam(1) else null,
+                describe = { event.toString() },
+            )
         }
-        Timber.tag("PTP_EVENT").v("结束轮询")
+    }
+
+    override fun onEventPollInterrupted(e: InterruptedException) {
+        Timber.w(e, "runEosCheckEventPoll failed")
+    }
+
+    override fun eventLoopTearDown(interrupted: Boolean) {
+        if (!interrupted) {
+            Timber.tag("PTP_EVENT").v("结束轮询")
+        }
     }
 
     override fun pollListSetUp() {
