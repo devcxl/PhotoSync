@@ -1164,9 +1164,12 @@ open class BaselineInitiator : NameFactory, Runnable {
      *
      * Runs [eventLoopSetUp], records the handle baseline, then until the session ends:
      * [pollVendorEvents], import every event it reports as "object added" through
-     * [processFileAddEvent], and wait [EVENT_POLL_INTERVAL_MS] before polling again. A poll
-     * that throws never ends the loop; it is retried at once. [eventLoopTearDown] always
-     * runs last.
+     * [processFileAddEvent], and wait [EVENT_POLL_INTERVAL_MS] before polling again.
+     *
+     * A poll that throws is counted and retried on the next tick. Once
+     * [shouldDegradeToPolling] says the channel is broken, the same session continues on
+     * [runPollListPoll] — the USB connection and the handle record stay as they are — and
+     * this loop ends. [eventLoopTearDown] always runs last, exactly once.
      *
      * Vendors keep their own setup, their own event RPC, how they pull the object handle
      * out of an event, and their own begin/end log lines.
@@ -1176,30 +1179,23 @@ open class BaselineInitiator : NameFactory, Runnable {
         eventLoopSetUp()
         initialiseHandledHandles()
         try {
+            var consecutiveFailures = 0
             while (isSessionActive() && keepEventLoopRunning()) {
-                val events = try {
+                var events: List<VendorEvent> = emptyList()
+                try {
                     // Null means the vendor left the event channel; it owns the fallback.
-                    pollVendorEvents() ?: break
+                    events = pollVendorEvents() ?: return
+                    consecutiveFailures = 0
                 } catch (e: PTPException) {
-                    // Retry at once: the failed poll already waited out the transfer
-                    // timeout, so the interval would only add latency.
-                    continue
-                }
-
-                for (event in events) {
-                    try {
-                        Timber.tag(PTP_EVENT_TAG).v(event.describe())
-                        val handle = event.objectAddedHandle ?: continue
-                        if (processFileAddEvent(handle, event.payload)) {
-                            rememberImportedHandle(handle)
-                        }
-                    } catch (e: PTPException) {
-                        // Rendering or importing one vendor event must not take the event
-                        // channel down: EOS events fail to render when a parameter is
-                        // missing, and that case used to be swallowed by the poll's catch.
-                        Timber.w(e, "event dispatch failed")
+                    consecutiveFailures++
+                    Timber.w(e, "事件通道第 %d 次连续异常，稍后重试", consecutiveFailures)
+                    if (shouldDegradeToPolling(consecutiveFailures)) {
+                        degradeToPollList(consecutiveFailures)
+                        return
                     }
                 }
+
+                dispatchVendorEvents(events)
 
                 try {
                     Thread.sleep(EVENT_POLL_INTERVAL_MS)
@@ -1211,6 +1207,45 @@ open class BaselineInitiator : NameFactory, Runnable {
             }
         } finally {
             eventLoopTearDown(interrupted)
+        }
+    }
+
+    /**
+     * Imports the objects [pollVendorEvents] reported, in the order the camera reported them.
+     *
+     * Failing to render or import one event must not take the event channel down: EOS
+     * events fail to render when a parameter is missing, and that case used to be swallowed
+     * by the poll's own catch.
+     */
+    private fun dispatchVendorEvents(events: List<VendorEvent>) {
+        for (event in events) {
+            try {
+                Timber.tag(PTP_EVENT_TAG).v(event.describe())
+                val handle = event.objectAddedHandle ?: continue
+                if (processFileAddEvent(handle, event.payload)) {
+                    rememberImportedHandle(handle)
+                }
+            } catch (e: PTPException) {
+                Timber.w(e, "event dispatch failed")
+            }
+        }
+    }
+
+    /**
+     * Moves the current session from the event channel to the object-list poll.
+     *
+     * Runs on the poll thread with the session still open, so the camera is not reconnected
+     * and the stored handle record stays valid: [runPollListPoll] rebuilds its baseline from
+     * it, so nothing the event loop already imported is downloaded again.
+     *
+     * @param consecutiveFailures The run of failures that triggered the switch.
+     */
+    private fun degradeToPollList(consecutiveFailures: Int) {
+        Timber.w("事件通道连续 %d 次异常，本次会话改用列表轮询", consecutiveFailures)
+        try {
+            runPollListPoll()
+        } catch (e: PTPException) {
+            Timber.w(e, "降级到列表轮询时启动失败")
         }
     }
 
@@ -1230,7 +1265,10 @@ open class BaselineInitiator : NameFactory, Runnable {
      *
      * @return one [VendorEvent] per event the camera reported, in the order it reported
      *   them, or null when the vendor has left the event channel and the loop must stop.
-     * @throws PTPException when the transfer failed; the loop retries it at once.
+     * @throws PTPException when the transfer failed. The loop counts consecutive failures
+     *   and retries on its next tick; it does not treat a quiet channel as a failure. Let
+     *   the exception out instead of returning an empty list — an empty list means "the
+     *   camera had nothing to report" and resets the count.
      */
     protected open fun pollVendorEvents(): List<VendorEvent>? = emptyList()
 

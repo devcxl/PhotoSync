@@ -1,6 +1,8 @@
 package cn.devcxl.photosync.ptp.usbcamera
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SyncTriggerPolicyTest {
@@ -44,5 +46,31 @@ class SyncTriggerPolicyTest {
         )
 
         assertEquals(SyncTriggerDecision.POLL, decision)
+    }
+
+    @Test
+    fun shouldStayOnTheEventChannel_whenNoEventPollFailed() {
+        assertFalse(shouldDegradeToPolling(consecutiveFailures = 0))
+    }
+
+    @Test
+    fun shouldOnlyCountTheFailure_whenOneEventPollFailed() {
+        assertFalse(shouldDegradeToPolling(consecutiveFailures = 1))
+    }
+
+    @Test
+    fun shouldOnlyCountTheFailures_whenTwoEventPollsFailed() {
+        assertFalse(shouldDegradeToPolling(consecutiveFailures = 2))
+    }
+
+    @Test
+    fun shouldDegradeToPolling_whenThreeEventPollsFailed() {
+        assertTrue(shouldDegradeToPolling(consecutiveFailures = 3))
+    }
+
+    @Test
+    fun shouldKeepPolling_whenMoreEventPollsFailed() {
+        assertTrue(shouldDegradeToPolling(consecutiveFailures = 4))
+        assertTrue(shouldDegradeToPolling(consecutiveFailures = 12))
     }
 }
