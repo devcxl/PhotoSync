@@ -103,6 +103,8 @@ class MainActivity : AppCompatActivity() {
     private var currentPageZoomed: Boolean = false
     private var infoDrawerOpen: Boolean = false
     private var infoTargetPath: String? = null
+    private var autoFollowEnabled: Boolean = true
+    private var pendingNewPhotoCount: Int = 0
     private val mainHandler = Handler(Looper.getMainLooper())
     private val hideFeedbackRunnable = Runnable { hideInlineFeedback() }
 
@@ -208,6 +210,18 @@ class MainActivity : AppCompatActivity() {
             view.layoutParams = lp
             insets
         }
+
+        val bannerBaseBottom =
+            (binding.newPhotoBanner.layoutParams as ViewGroup.MarginLayoutParams).bottomMargin
+        ViewCompat.setOnApplyWindowInsetsListener(binding.newPhotoBanner) { view, insets ->
+            val safe = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            val lp = view.layoutParams as ViewGroup.MarginLayoutParams
+            lp.bottomMargin = bannerBaseBottom + safe.bottom
+            view.layoutParams = lp
+            insets
+        }
     }
 
     override fun onResume() {
@@ -254,9 +268,13 @@ class MainActivity : AppCompatActivity() {
             override fun onPageSelected(position: Int) {
                 currentPageZoomed = false
                 binding.zoomBadge.visibility = View.GONE
+                if (position >= adapter.itemCount - 1) {
+                    pendingNewPhotoCount = 0
+                }
                 adapter.updatePrimaryPosition(position)
                 prefetchAround(position)
                 renderPhotoChrome()
+                renderNewPhotoBanner()
                 updateOverlaysVisibility()
             }
         })
@@ -299,6 +317,7 @@ class MainActivity : AppCompatActivity() {
         animateTopOverlay(show)
         val hasDrawer = show && infoDrawerOpen && hasPhotos
         binding.infoDrawerPanel.visibility = if (hasDrawer) View.VISIBLE else View.GONE
+        renderNewPhotoBanner()
         val controller = WindowCompat.getInsetsController(window, binding.root)
         controller.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
@@ -361,12 +380,20 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 dao.getAllFlow().collect { list ->
+                    val previousCount = adapter.itemCount
+                    val previousIndex = binding.viewPager.currentItem
                     adapter.updateItems(list.toList())
                     evictCachesForRemovedItems(list)
                     pendingRevealPath?.let { target ->
                         val idx = list.indexOfFirst { it.path == target }
                         if (idx >= 0) {
-                            binding.viewPager.setCurrentItem(idx, false)
+                            val wasLatest = isViewingLatestPhoto(previousIndex, previousCount)
+                            if (shouldAutoAdvanceOnNewPhoto(autoFollowEnabled, currentPageZoomed, wasLatest)) {
+                                binding.viewPager.setCurrentItem(idx, previousCount > 0)
+                                pendingNewPhotoCount = 0
+                            } else {
+                                pendingNewPhotoCount++
+                            }
                             pendingRevealPath = null
                         }
                     }
@@ -374,11 +401,37 @@ class MainActivity : AppCompatActivity() {
                         val currentIndex = binding.viewPager.currentItem.coerceIn(0, list.size - 1)
                         adapter.updatePrimaryPosition(currentIndex)
                         prefetchAround(currentIndex)
+                    } else {
+                        pendingNewPhotoCount = 0
                     }
                     renderPhotoChrome()
+                    renderNewPhotoBanner()
                 }
             }
         }
+    }
+
+    private fun renderNewPhotoBanner() {
+        val visible = pendingNewPhotoCount > 0 && adapter.itemCount > 0 && !userImmersive
+        if (visible) {
+            binding.newPhotoBanner.text =
+                getString(R.string.new_photo_banner_count, pendingNewPhotoCount)
+            binding.newPhotoBanner.visibility = View.VISIBLE
+        } else {
+            binding.newPhotoBanner.visibility = View.GONE
+        }
+    }
+
+    private fun updateAutoFollowAppearance() {
+        binding.autoFollowToggleButton.setBackgroundResource(
+            if (autoFollowEnabled) R.drawable.bg_toggle_pill_on else R.drawable.bg_toggle_pill
+        )
+        val tintColor = ContextCompat.getColor(
+            this,
+            if (autoFollowEnabled) R.color.toggle_on_text else R.color.darkroom_text_secondary
+        )
+        binding.autoFollowIcon.setColorFilter(tintColor)
+        binding.autoFollowLabel.setTextColor(tintColor)
     }
 
     private fun observeConnectionState() {
@@ -593,6 +646,24 @@ class MainActivity : AppCompatActivity() {
             updateInfoToggleAppearance()
             renderInfoDrawer()
         }
+        binding.autoFollowToggleButton.setOnClickListener {
+            autoFollowEnabled = !autoFollowEnabled
+            updateAutoFollowAppearance()
+            val msgRes = if (autoFollowEnabled) {
+                R.string.feedback_auto_follow_on
+            } else {
+                R.string.feedback_auto_follow_off
+            }
+            showInlineFeedback(getString(msgRes))
+        }
+        binding.newPhotoBanner.setOnClickListener {
+            if (adapter.itemCount > 0) {
+                binding.viewPager.setCurrentItem(adapter.itemCount - 1, true)
+            }
+            pendingNewPhotoCount = 0
+            renderNewPhotoBanner()
+        }
+        updateAutoFollowAppearance()
     }
 
     private fun onConnectButtonClick() {

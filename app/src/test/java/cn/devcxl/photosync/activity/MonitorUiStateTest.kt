@@ -212,4 +212,50 @@ class MonitorUiStateTest {
             resolveCameraHandleAvailability(100, isConnected = true, cameraSupportsDelete = true)
         )
     }
+
+    @Test
+    fun shouldAutoAdvanceOnly_whenAutoFollowEnabledAndNotZoomedAndViewingLatest() {
+        assertTrue(
+            shouldAutoAdvanceOnNewPhoto(
+                autoFollowEnabled = true,
+                isZoomed = false,
+                wasViewingLatestBeforeInsert = true
+            )
+        )
+        assertFalse(
+            shouldAutoAdvanceOnNewPhoto(
+                autoFollowEnabled = false,
+                isZoomed = false,
+                wasViewingLatestBeforeInsert = true
+            )
+        )
+        assertFalse(
+            shouldAutoAdvanceOnNewPhoto(
+                autoFollowEnabled = true,
+                isZoomed = true,
+                wasViewingLatestBeforeInsert = true
+            )
+        )
+        assertFalse(
+            shouldAutoAdvanceOnNewPhoto(
+                autoFollowEnabled = true,
+                isZoomed = false,
+                wasViewingLatestBeforeInsert = false
+            )
+        )
+        assertFalse(
+            shouldAutoAdvanceOnNewPhoto(
+                autoFollowEnabled = false,
+                isZoomed = true,
+                wasViewingLatestBeforeInsert = false
+            )
+        )
+    }
+
+    @Test
+    fun shouldDetectViewingLatestPhoto_whenEmptyOrAtLastIndex() {
+        assertTrue(isViewingLatestPhoto(currentIndex = 0, totalCount = 0))
+        assertTrue(isViewingLatestPhoto(currentIndex = 4, totalCount = 5))
+        assertFalse(isViewingLatestPhoto(currentIndex = 2, totalCount = 5))
+    }
 }

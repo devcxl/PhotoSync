@@ -223,6 +223,40 @@
             android:layout_weight="1"
             android:visibility="visible"/>
 
+        <!-- AutoFollow toggle -->
+        <LinearLayout
+            android:id="@+id/autoFollowToggleButton"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:layout_marginEnd="8dp"
+            android:background="@drawable/bg_toggle_pill_on"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center_vertical"
+            android:minWidth="48dp"
+            android:orientation="horizontal"
+            android:paddingStart="11dp"
+            android:paddingEnd="11dp">
+
+            <ImageView
+                android:id="@+id/autoFollowIcon"
+                android:layout_width="15dp"
+                android:layout_height="15dp"
+                android:layout_marginEnd="5dp"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_follow_24"
+                app:tint="@color/toggle_on_text"/>
+
+            <TextView
+                android:id="@+id/autoFollowLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/auto_follow_toggle"
+                android:textColor="@color/toggle_on_text"
+                android:textSize="12sp"
+                android:textStyle="bold"/>
+        </LinearLayout>
+
         <!-- Info drawer toggle -->
         <LinearLayout
             android:id="@+id/infoToggleButton"
@@ -475,6 +509,28 @@
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         tools:text="2.1x"
+        tools:visibility="visible"/>
+
+    <!-- Non-intrusive incoming photo pill -->
+    <TextView
+        android:id="@+id/newPhotoBanner"
+        android:layout_width="wrap_content"
+        android:layout_height="36dp"
+        android:layout_marginBottom="20dp"
+        android:background="@drawable/bg_new_photo_banner"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:textColor="#EFF6FF"
+        android:textSize="12sp"
+        android:textStyle="bold"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        tools:text="收到 1 张新照片 · 点击跳转"
         tools:visibility="visible"/>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

@@ -84,4 +84,10 @@
     <string name="info_handle_not_connected">#0x%1$x（未连接相机）</string>
     <string name="info_handle_missing">无句柄（仅可删本机）</string>
     <string name="dialog_delete_title_named">删除 %1$s</string>
+
+    <!-- Smart AutoFollow & new-photo banner (Issue #27) -->
+    <string name="auto_follow_toggle">自动跟随</string>
+    <string name="feedback_auto_follow_on">已开启：新照片自动跳转</string>
+    <string name="feedback_auto_follow_off">已关闭：新照片仅底部提示</string>
+    <string name="new_photo_banner_count">收到 %1$d 张新照片 · 点击跳转</string>
 </resources>

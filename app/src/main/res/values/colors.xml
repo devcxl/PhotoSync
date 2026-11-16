@@ -12,6 +12,7 @@
     <color name="accent_blue">#3B82F6</color>
     <color name="accent_blue_pill">#DB2563EB</color>
     <color name="accent_blue_border">#8093C5FD</color>
+    <color name="toggle_on_text">#BFDBFE</color>
 
     <color name="status_idle">#6B7280</color>
     <color name="status_ready">#3B82F6</color>

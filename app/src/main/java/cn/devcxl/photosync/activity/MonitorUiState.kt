@@ -321,4 +321,23 @@ internal fun resolveCameraHandleAvailability(
     return CameraHandleAvailability.AVAILABLE
 }
 
+/**
+ * Encodes the prototype's non-interruptive reveal rule for newly synced photos:
+ * advances automatically only when AutoFollow is enabled, the user is not zoomed in,
+ * and the user was already viewing the latest frame.
+ */
+internal fun shouldAutoAdvanceOnNewPhoto(
+    autoFollowEnabled: Boolean,
+    isZoomed: Boolean,
+    wasViewingLatestBeforeInsert: Boolean
+): Boolean = autoFollowEnabled && !isZoomed && wasViewingLatestBeforeInsert
+
+/**
+ * Returns true when the library was empty or the user was on the final frame.
+ */
+internal fun isViewingLatestPhoto(currentIndex: Int, totalCount: Int): Boolean {
+    return totalCount <= 0 || currentIndex >= totalCount - 1
+}
+
+
 
