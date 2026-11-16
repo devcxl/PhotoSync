@@ -126,7 +126,7 @@ internal fun shouldReconcile(cause: ReconcileCause): Boolean = when (cause) {
 internal const val EVENT_POLL_FAST_MS = 200L
 
 /** Slowest idle poll; polling faster than this forever is what drains a session. */
-internal const val EVENT_POLL_IDLE_MS = 1000L
+internal const val EVENT_POLL_IDLE_MS = 3000L
 
 /**
  * How long to wait before the next event poll.
@@ -134,7 +134,7 @@ internal const val EVENT_POLL_IDLE_MS = 1000L
  * A quiet camera is polled at a growing interval, so an idle session stops hammering the
  * USB link. Any event snaps the interval back to the fast one: a burst of activity — and a
  * shutter press always produces one — is followed at full speed, while a camera left on the
- * table costs one transaction per second instead of five.
+ * table costs one transaction every few seconds instead of five a second.
  *
  * @param currentIntervalMs The interval used for the poll that just finished.
  * @param eventsLastPoll How many events that poll returned.
