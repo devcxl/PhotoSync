@@ -91,9 +91,10 @@ open class EosInitiator @Throws(PTPException::class) constructor(
                 val event = parser.getNextEvent()
                 events.add(event)
             } catch (e: PTPUnsupportedException) {
-                //
-                // TODO: log this information?
-                //
+                // The parser already logged the code under the EventParser tag; repeat the
+                // fact here so one logcat filter is enough to tell "unmapped code" from
+                // "camera sent nothing".
+                Timber.tag("PTP_EVENT").d("跳过无法解析的 EOS 事件")
             }
         }
 
@@ -371,6 +372,8 @@ open class EosInitiator @Throws(PTPException::class) constructor(
     }
 
     override fun vendorEventChannelOpcodes(): Set<Int> = setOf(Command.EosGetEvent)
+
+    override fun vendorEventChannelDescription(): String = "EOS GetEvent 0x9116"
 
     override fun eventLoopSetUp() {
         Timber.tag("PTP_EVENT").v("开始event轮询")

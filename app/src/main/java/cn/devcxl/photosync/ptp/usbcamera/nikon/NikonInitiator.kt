@@ -126,6 +126,8 @@ class NikonInitiator(dev: UsbDevice, connection: UsbDeviceConnection) :
 
     override fun vendorEventChannelOpcodes(): Set<Int> = setOf(Command.NK_OC_CheckEvent)
 
+    override fun vendorEventChannelDescription(): String = "Nikon CheckEvent 0x90C7"
+
     override fun eventLoopSetUp() {
         Timber.tag("PTP_EVENT").v("开始 Nikon event 轮询")
     }

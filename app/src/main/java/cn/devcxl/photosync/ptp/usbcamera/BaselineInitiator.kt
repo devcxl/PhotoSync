@@ -1201,11 +1201,14 @@ open class BaselineInitiator : NameFactory, Runnable {
      */
     protected fun runVendorEventLoop() {
         var interrupted = false
+        var eventsReceived = 0
+        var objectsImported = 0
         // read() refuses to touch the bulk endpoint unless this is set, and EOS drives
         // focus/zoom through it, so the shared loop owns the flag rather than each vendor.
         pollThreadRunning = true
         eventLoopSetUp()
         val storages = initialiseHandledHandles()
+        Timber.tag(PTP_EVENT_TAG).i("事件通道开始轮询：%s", vendorEventChannelDescription())
         try {
             reconcileObjectList(ReconcileCause.SESSION_START, storages)
             var consecutiveFailures = 0
@@ -1224,7 +1227,8 @@ open class BaselineInitiator : NameFactory, Runnable {
                     }
                 }
 
-                dispatchVendorEvents(events, storages)
+                eventsReceived += events.size
+                objectsImported += dispatchVendorEvents(events, storages)
 
                 try {
                     Thread.sleep(EVENT_POLL_INTERVAL_MS)
@@ -1235,9 +1239,20 @@ open class BaselineInitiator : NameFactory, Runnable {
                 }
             }
         } finally {
+            // The summary is the diagnostic that separates "no events at all" (the camera
+            // never announced a capture) from "events we could not use".
+            Timber.tag(PTP_EVENT_TAG).i(
+                "事件通道结束：收到 %d 个事件，导入 %d 张，%s",
+                eventsReceived,
+                objectsImported,
+                vendorEventChannelDescription()
+            )
             eventLoopTearDown(interrupted)
         }
     }
+
+    /** Names the vendor event channel in the loop's begin/end log lines. */
+    protected open fun vendorEventChannelDescription(): String = "generic" 
 
     /**
      * Imports the objects [pollVendorEvents] reported, in the order the camera reported them.
@@ -1252,11 +1267,17 @@ open class BaselineInitiator : NameFactory, Runnable {
      *
      * @param storages storages this session enumerates, or null when it has no baseline.
      */
-    private fun dispatchVendorEvents(events: List<VendorEvent>, storages: IntArray?) {
+    /**
+     * Dispatches one poll's events.
+     *
+     * @return how many objects were imported, for the loop's end-of-session summary.
+     */
+    private fun dispatchVendorEvents(events: List<VendorEvent>, storages: IntArray?): Int {
         var reconcileRequested = false
+        var imported = 0
         for (event in events) {
             try {
-                Timber.tag(PTP_EVENT_TAG).v(event.describe())
+                Timber.tag(PTP_EVENT_TAG).d("%s", event.describe())
                 if (event.requestsReconcile) {
                     Timber.tag(PTP_EVENT_TAG).i("相机上报可能漏报事件（UnreportedStatus），执行一次对账")
                     reconcileRequested = true
@@ -1264,6 +1285,7 @@ open class BaselineInitiator : NameFactory, Runnable {
                 val handle = event.objectAddedHandle ?: continue
                 if (processFileAddEvent(handle, event.payload)) {
                     rememberImportedHandle(handle)
+                    imported++
                 }
             } catch (e: PTPException) {
                 Timber.w(e, "event dispatch failed")
@@ -1272,6 +1294,7 @@ open class BaselineInitiator : NameFactory, Runnable {
         if (reconcileRequested) {
             reconcileObjectList(ReconcileCause.UNREPORTED_EVENTS, storages)
         }
+        return imported
     }
 
     /**
