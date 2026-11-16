@@ -51,6 +51,12 @@ class EosEventParser(private val inputStream: InputStream) {
     private companion object {
         /** Bytes of the `ObjectAddedEx64` record before the file name, minus its header. */
         const val OBJECT_ADDED_EX64_NAME_OFFSET = 36
+
+        /** Record header: length + event code. */
+        const val PTP_EVENT_HEADER_BYTES = 8
+
+        /** The empty record an EOS body returns when it has nothing to report. */
+        const val PTP_EVENT_CODE_NOTHING_HAPPENED = 0x0000
     }
 
     init {
@@ -68,15 +74,30 @@ class EosEventParser(private val inputStream: InputStream) {
     }
 
     @Throws(PTPException::class)
-    fun getNextEvent(): EosEvent {
+    fun getNextEvent(): EosEvent? {
         val event = EosEvent()
 
         try {
-            val len = getNextS32() // len
+            var len = getNextS32() // len
             if (len < 0x8) {
                 throw PTPUnsupportedException("Unsupported event (size<8 ???)")
             }
-            val code = getNextS32()
+            var code = getNextS32()
+            // The body frames "nothing happened" as an empty record. Treating it as an
+            // unparsable event produced one log line and one throw per idle poll, which is
+            // pure noise on a channel polled several times a second.
+            while (code == PTP_EVENT_CODE_NOTHING_HAPPENED) {
+                inputStream.skip((len - PTP_EVENT_HEADER_BYTES).toLong())
+                if (!hasEvents()) {
+                    // The batch held nothing but the sentinel: there is no event to report.
+                    return null
+                }
+                len = getNextS32()
+                if (len < 0x8) {
+                    throw PTPUnsupportedException("Unsupported event (size<8 ???)")
+                }
+                code = getNextS32()
+            }
             event.code = code
             Timber.tag("EventParser").d(
                 "   Event len: %d, Code: 0x%04x %s",

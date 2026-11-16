@@ -5,6 +5,7 @@ import java.io.ByteArrayOutputStream
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class EosEventParserTest {
@@ -16,7 +17,7 @@ class EosEventParserTest {
 
         val event = parser.getNextEvent()
 
-        assertEquals(EosEventConstants.EosEventObjectAddedEx64, event.code)
+        assertEquals(EosEventConstants.EosEventObjectAddedEx64, event!!.code)
         assertEquals(handle, event.getIntParam(1))
     }
 
@@ -38,8 +39,26 @@ class EosEventParserTest {
 
         val event = parser.getNextEvent()
 
-        assertEquals(EosEventConstants.EosEventObjectAddedEx, event.code)
+        assertEquals(EosEventConstants.EosEventObjectAddedEx, event!!.code)
         assertEquals(handle, event.getIntParam(1))
+    }
+
+    @Test
+    fun shouldReportNoEvent_whenTheBatchOnlyHoldsTheEmptySentinel() {
+        val parser = EosEventParser(ByteArrayInputStream(RecordWriter().record(NOTHING_HAPPENED)))
+
+        assertNull(parser.getNextEvent())
+    }
+
+    @Test
+    fun shouldSkipTheSentinel_whenItPrecedesARealEvent() {
+        val handle = 0x42
+        val bytes = RecordWriter().record(NOTHING_HAPPENED) + objectAddedEx64(handle, "IMG_2.JPG")
+        val parser = EosEventParser(ByteArrayInputStream(bytes))
+
+        val event = parser.getNextEvent()
+
+        assertEquals(handle, event!!.getIntParam(1))
     }
 
     // ---------------------------------------------------------------- record builders
@@ -121,5 +140,6 @@ class EosEventParserTest {
     private companion object {
         const val RECORD_HEADER_BYTES = 8
         const val PADDING_TAIL = 4
+        const val NOTHING_HAPPENED = 0x0000
     }
 }

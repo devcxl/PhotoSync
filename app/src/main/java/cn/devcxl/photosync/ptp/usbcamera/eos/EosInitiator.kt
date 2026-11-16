@@ -88,7 +88,7 @@ open class EosInitiator @Throws(PTPException::class) constructor(
         val events = ArrayList<EosEvent>()
         while (parser.hasEvents()) {
             try {
-                val event = parser.getNextEvent()
+                val event = parser.getNextEvent() ?: break
                 events.add(event)
             } catch (e: PTPUnsupportedException) {
                 // The parser already logged the code under the EventParser tag; repeat the
