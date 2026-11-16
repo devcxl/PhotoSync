@@ -1,5 +1,7 @@
 package cn.devcxl.photosync.activity
 
+import java.util.Locale
+
 import androidx.annotation.StringRes
 
 import cn.devcxl.photosync.R
@@ -216,3 +218,47 @@ internal fun resolvePhotoFormatBadge(path: String): PhotoFormatBadge {
         else -> PhotoFormatBadge.OTHER
     }
 }
+
+/**
+ * Computes normalized zoom ratio (`>= 1.0f`) relative to a viewer's fit-screen minimum scale.
+ */
+internal fun resolveZoomRatio(scale: Float, minScale: Float): Float {
+    if (minScale <= 0f) return 1f
+    return (scale / minScale).coerceAtLeast(1f)
+}
+
+/**
+ * Returns true when the current scale exceeds the resting fit-screen scale beyond tolerance.
+ */
+internal fun isZoomedScale(scale: Float, minScale: Float): Boolean {
+    return minScale > 0f && scale > minScale * 1.02f
+}
+
+/**
+ * Formats the zoom multiplier badge (e.g. `"2.1x"`).
+ */
+internal fun formatZoomBadge(zoomRatio: Float): String {
+    return String.format(Locale.US, "%.1fx", zoomRatio.coerceAtLeast(1f))
+}
+
+/**
+ * Overlays remain visible when the library is empty; otherwise they hide while zoomed or
+ * while the user has toggled immersive mode.
+ */
+internal fun shouldShowOverlays(
+    hasPhotos: Boolean,
+    userImmersive: Boolean,
+    isZoomed: Boolean
+): Boolean {
+    if (!hasPhotos) return true
+    return !userImmersive && !isZoomed
+}
+
+/**
+ * Computes clamped `0..100` transfer percentage.
+ */
+internal fun resolveTransferPercent(transferredBytes: Int, totalBytes: Int): Int {
+    if (totalBytes <= 0) return 0
+    return ((transferredBytes.toLong() * 100L) / totalBytes.toLong()).toInt().coerceIn(0, 100)
+}
+

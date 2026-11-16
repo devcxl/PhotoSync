@@ -6,6 +6,7 @@ import cn.devcxl.photosync.adapter.PhotoViewerMode
 import cn.devcxl.photosync.adapter.JpegTiledSourceMode
 import cn.devcxl.photosync.adapter.resolveJpegTiledBindDecision
 import cn.devcxl.photosync.adapter.resolveJpegTiledSourceMode
+import cn.devcxl.photosync.adapter.resolveLoadingOverlayVisible
 import cn.devcxl.photosync.adapter.resolvePhotoViewerMode
 import cn.devcxl.photosync.adapter.resolvePhotoRenderDecision
 import org.junit.Test
@@ -182,5 +183,39 @@ class ExampleUnitTest {
     fun shouldReturnTrue_whenScaleAboveTolerance() {
         assertFalse(PhotoPagerAdapter.VH.testIsZoomed(scale = 1.005f, minScale = 1.0f))
         assertTrue(PhotoPagerAdapter.VH.testIsZoomed(scale = 1.05f, minScale = 1.0f))
+        assertFalse(PhotoPagerAdapter.VH.testIsZoomed(scale = 0.252f, minScale = 0.25f))
+        assertTrue(PhotoPagerAdapter.VH.testIsZoomed(scale = 0.30f, minScale = 0.25f))
+    }
+
+    @Test
+    fun shouldShowLoadingOverlay_whenStageIsEmptyAndViewerNotReady() {
+        assertTrue(
+            resolveLoadingOverlayVisible(
+                stage = PhotoRenderStage.EMPTY,
+                isJpeg = false,
+                isTiledViewerReady = false
+            )
+        )
+        assertFalse(
+            resolveLoadingOverlayVisible(
+                stage = PhotoRenderStage.THUMBNAIL,
+                isJpeg = false,
+                isTiledViewerReady = false
+            )
+        )
+        assertTrue(
+            resolveLoadingOverlayVisible(
+                stage = PhotoRenderStage.EMPTY,
+                isJpeg = true,
+                isTiledViewerReady = false
+            )
+        )
+        assertFalse(
+            resolveLoadingOverlayVisible(
+                stage = PhotoRenderStage.EMPTY,
+                isJpeg = true,
+                isTiledViewerReady = true
+            )
+        )
     }
 }

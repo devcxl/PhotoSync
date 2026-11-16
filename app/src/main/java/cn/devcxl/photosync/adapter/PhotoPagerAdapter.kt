@@ -1,10 +1,19 @@
 package cn.devcxl.photosync.adapter
 
+import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.PointF
 import android.os.Handler
 import android.os.Looper
+import android.util.TypedValue
+import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.ProgressBar
+import android.widget.TextView
+import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.RecyclerView
 
@@ -12,6 +21,7 @@ import com.davemorrissey.labs.subscaleview.ImageSource
 import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
 import com.github.chrisbanes.photoview.PhotoView
 
+import cn.devcxl.photosync.R
 import cn.devcxl.photosync.data.entity.PhotoEntity
 
 data class PhotoRenderState(
@@ -140,13 +150,26 @@ internal fun resolvePhotoViewerMode(isJpeg: Boolean): PhotoViewerMode {
     }
 }
 
+internal fun resolveLoadingOverlayVisible(
+    stage: PhotoRenderStage,
+    isJpeg: Boolean,
+    isTiledViewerReady: Boolean
+): Boolean {
+    return if (isJpeg) {
+        stage == PhotoRenderStage.EMPTY && !isTiledViewerReady
+    } else {
+        stage == PhotoRenderStage.EMPTY
+    }
+}
+
 class PhotoPagerAdapter(
     private val renderStateProvider: (String) -> PhotoRenderState,
     private val onBindRequest: (String, Int) -> Unit,
     private val jpegSourceInfoProvider: (String) -> JpegSourceInfo?,
     private val isCurrentPageProvider: (Int) -> Boolean,
     private val isJpegProvider: (String) -> Boolean,
-    private val onPhotoScaleChanged: (String, Int, Float, Float) -> Unit
+    private val onPhotoScaleChanged: (String, Int, Float, Float) -> Unit,
+    private val onPhotoTap: () -> Unit = {}
 ) : RecyclerView.Adapter<PhotoPagerAdapter.VH>() {
     companion object {
         private val PAYLOAD_IMAGE_STATE = Any()
@@ -177,11 +200,43 @@ class PhotoPagerAdapter(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
-            visibility = android.view.View.GONE
+            visibility = View.GONE
         }
+        val loadingTextView = TextView(parent.context).apply {
+            setTextColor(ContextCompat.getColor(context, R.color.darkroom_text_primary))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setText(R.string.decoding_raw_preview)
+        }
+        val loadingOverlay = createLoadingOverlay(parent.context, loadingTextView)
         container.addView(photoView)
         container.addView(jpegDetailView)
-        return VH(container, photoView, jpegDetailView)
+        container.addView(loadingOverlay)
+        return VH(container, photoView, jpegDetailView, loadingOverlay, loadingTextView)
+    }
+
+    private fun createLoadingOverlay(context: Context, labelView: TextView): LinearLayout {
+        val density = context.resources.displayMetrics.density
+        val dp = { value: Int -> (value * density).toInt() }
+        val spinner = ProgressBar(context).apply {
+            isIndeterminate = true
+            layoutParams = LinearLayout.LayoutParams(dp(18), dp(18)).apply {
+                marginEnd = dp(8)
+            }
+        }
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundResource(R.drawable.bg_glass_pill)
+            setPadding(dp(14), dp(8), dp(14), dp(8))
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER
+            )
+            visibility = View.GONE
+            addView(spinner)
+            addView(labelView)
+        }
     }
 
     override fun getItemCount(): Int = items.size
@@ -197,7 +252,8 @@ class PhotoPagerAdapter(
             ),
             isCurrentPage = isCurrentPage,
             jpegSourceInfo = jpegSourceInfoProvider(entity.path),
-            onPhotoScaleChanged = onPhotoScaleChanged
+            onPhotoScaleChanged = onPhotoScaleChanged,
+            onPhotoTap = onPhotoTap
         )
         onBindRequest(entity.path, position)
     }
@@ -214,7 +270,8 @@ class PhotoPagerAdapter(
                 ),
                 isCurrentPage = isCurrentPage,
                 jpegSourceInfo = jpegSourceInfoProvider(entity.path),
-                onPhotoScaleChanged = onPhotoScaleChanged
+                onPhotoScaleChanged = onPhotoScaleChanged,
+                onPhotoTap = onPhotoTap
             )
             return
         }
@@ -263,7 +320,9 @@ class PhotoPagerAdapter(
     class VH(
         container: FrameLayout,
         private val photoView: PhotoView,
-        private val jpegDetailView: SubsamplingScaleImageView
+        private val jpegDetailView: SubsamplingScaleImageView,
+        private val loadingOverlay: LinearLayout,
+        private val loadingTextView: TextView
     ) : RecyclerView.ViewHolder(container) {
         private var currentPath: String? = null
         private var currentStage: PhotoRenderStage = PhotoRenderStage.EMPTY
@@ -279,19 +338,28 @@ class PhotoPagerAdapter(
             viewerMode: PhotoViewerMode,
             isCurrentPage: Boolean,
             jpegSourceInfo: JpegSourceInfo?,
-            onPhotoScaleChanged: (String, Int, Float, Float) -> Unit
+            onPhotoScaleChanged: (String, Int, Float, Float) -> Unit,
+            onPhotoTap: () -> Unit
         ) {
             if (viewerMode == PhotoViewerMode.JPEG_TILED) {
-                bindJpegTiled(path, renderState, isCurrentPage, jpegSourceInfo)
+                bindJpegTiled(
+                    path = path,
+                    renderState = renderState,
+                    isCurrentPage = isCurrentPage,
+                    jpegSourceInfo = jpegSourceInfo,
+                    onPhotoScaleChanged = onPhotoScaleChanged,
+                    onPhotoTap = onPhotoTap
+                )
                 return
             }
-            bindPhotoView(path, renderState, onPhotoScaleChanged)
+            bindPhotoView(path, renderState, onPhotoScaleChanged, onPhotoTap)
         }
 
         private fun bindPhotoView(
             path: String,
             renderState: PhotoRenderState,
-            onPhotoScaleChanged: (String, Int, Float, Float) -> Unit
+            onPhotoScaleChanged: (String, Int, Float, Float) -> Unit,
+            onPhotoTap: () -> Unit
         ) {
             if (currentViewerMode == PhotoViewerMode.JPEG_TILED) {
                 jpegDetailView.recycle()
@@ -299,8 +367,10 @@ class PhotoPagerAdapter(
                 currentJpegSourceMode = null
             }
             currentViewerMode = PhotoViewerMode.PHOTO_VIEW
-            photoView.visibility = android.view.View.VISIBLE
-            jpegDetailView.visibility = android.view.View.GONE
+            photoView.visibility = View.VISIBLE
+            jpegDetailView.visibility = View.GONE
+            loadingTextView.setText(R.string.decoding_raw_preview)
+            photoView.setOnViewTapListener { _, _, _ -> onPhotoTap() }
             photoView.setOnScaleChangeListener { _, _, _ ->
                 applyPendingFullIfIdle()
                 val position = bindingAdapterPosition
@@ -330,6 +400,7 @@ class PhotoPagerAdapter(
                     pendingFullPath = path
                     pendingFullBitmap = renderState.full
                 }
+                updateLoadingOverlay(currentStage, isJpeg = false)
                 return
             }
 
@@ -353,13 +424,16 @@ class PhotoPagerAdapter(
                     photoView.scale = 1.0f
                 }
             }
+            updateLoadingOverlay(currentStage, isJpeg = false)
         }
 
         private fun bindJpegTiled(
             path: String,
             renderState: PhotoRenderState,
             isCurrentPage: Boolean,
-            jpegSourceInfo: JpegSourceInfo?
+            jpegSourceInfo: JpegSourceInfo?,
+            onPhotoScaleChanged: (String, Int, Float, Float) -> Unit,
+            onPhotoTap: () -> Unit
         ) {
             val previewBitmap = renderState.full ?: renderState.thumbnail
             val nextPreviewStage = resolveJpegPreviewStage(renderState)
@@ -377,16 +451,42 @@ class PhotoPagerAdapter(
                 isViewerReady = jpegDetailView.isReady
             )
             currentViewerMode = PhotoViewerMode.JPEG_TILED
-            photoView.visibility = android.view.View.GONE
-            jpegDetailView.visibility = android.view.View.VISIBLE
+            photoView.visibility = View.GONE
+            jpegDetailView.visibility = View.VISIBLE
+            loadingTextView.setText(R.string.loading_photo_preview)
             jpegDetailView.setPanEnabled(isCurrentPage)
             jpegDetailView.setZoomEnabled(isCurrentPage)
+            jpegDetailView.setOnClickListener { onPhotoTap() }
+            jpegDetailView.setOnStateChangedListener(object : SubsamplingScaleImageView.OnStateChangedListener {
+                override fun onScaleChanged(newScale: Float, origin: Int) {
+                    val position = bindingAdapterPosition
+                    if (position != RecyclerView.NO_POSITION) {
+                        onPhotoScaleChanged(path, position, newScale, jpegDetailView.minScale)
+                    }
+                }
+
+                override fun onCenterChanged(newCenter: PointF?, origin: Int) = Unit
+            })
+            jpegDetailView.setOnImageEventListener(object : SubsamplingScaleImageView.DefaultOnImageEventListener() {
+                override fun onReady() {
+                    updateLoadingOverlay(currentJpegPreviewStage, isJpeg = true)
+                    val position = bindingAdapterPosition
+                    if (position != RecyclerView.NO_POSITION) {
+                        onPhotoScaleChanged(path, position, jpegDetailView.scale, jpegDetailView.minScale)
+                    }
+                }
+
+                override fun onImageLoaded() {
+                    updateLoadingOverlay(currentJpegPreviewStage, isJpeg = true)
+                }
+            })
             pendingFullPath = null
             pendingFullBitmap = null
             currentPath = path
             currentStage = decision.stage
             currentJpegPreviewStage = decision.stage
             currentJpegSourceMode = nextSourceMode
+            updateLoadingOverlay(currentJpegPreviewStage, isJpeg = true)
             if (!decision.shouldSetImage) {
                 return
             }
@@ -429,6 +529,15 @@ class PhotoPagerAdapter(
             }
         }
 
+        private fun updateLoadingOverlay(stage: PhotoRenderStage, isJpeg: Boolean) {
+            val show = resolveLoadingOverlayVisible(
+                stage = stage,
+                isJpeg = isJpeg,
+                isTiledViewerReady = jpegDetailView.isReady
+            )
+            loadingOverlay.visibility = if (show) View.VISIBLE else View.GONE
+        }
+
         private fun applyPendingFullIfIdle() {
             val pendingPath = pendingFullPath ?: return
             val pendingBitmap = pendingFullBitmap ?: return
@@ -447,12 +556,12 @@ class PhotoPagerAdapter(
         }
 
         private fun isZoomed(): Boolean {
-            return photoView.scale > photoView.minimumScale + 0.01f
+            return testIsZoomed(photoView.scale, photoView.minimumScale)
         }
 
         companion object {
             fun testIsZoomed(scale: Float, minScale: Float): Boolean {
-                return scale > minScale + 0.01f
+                return minScale > 0f && scale > minScale * 1.02f
             }
         }
     }

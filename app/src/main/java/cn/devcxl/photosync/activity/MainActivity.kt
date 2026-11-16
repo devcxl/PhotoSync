@@ -22,12 +22,14 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.provider.MediaStore
 import android.util.LruCache
 import android.view.View
+import android.view.ViewGroup
 import android.widget.CheckBox
 import android.widget.TextView
-import android.widget.Toast
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.annotation.VisibleForTesting
@@ -36,7 +38,9 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.updatePadding
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -95,6 +99,10 @@ class MainActivity : AppCompatActivity() {
 
     private var connectionState: UsbPtpConnectionState = UsbPtpConnectionState.Idle
     private var cameraPresent: Boolean = false
+    private var userImmersive: Boolean = false
+    private var currentPageZoomed: Boolean = false
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val hideFeedbackRunnable = Runnable { hideInlineFeedback() }
 
     private val thumbnailCache: LruCache<String, Bitmap> by lazy { createBitmapCache(16) }
     private val fullBitmapCache: LruCache<String, Bitmap> by lazy { createBitmapCache(8) }
@@ -161,6 +169,31 @@ class MainActivity : AppCompatActivity() {
             )
             insets
         }
+
+        val zoomBaseStart = (binding.zoomBadge.layoutParams as ViewGroup.MarginLayoutParams).marginStart
+        val zoomBaseBottom = (binding.zoomBadge.layoutParams as ViewGroup.MarginLayoutParams).bottomMargin
+        ViewCompat.setOnApplyWindowInsetsListener(binding.zoomBadge) { view, insets ->
+            val safe = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            val lp = view.layoutParams as ViewGroup.MarginLayoutParams
+            lp.marginStart = zoomBaseStart + safe.left
+            lp.bottomMargin = zoomBaseBottom + safe.bottom
+            view.layoutParams = lp
+            insets
+        }
+
+        val transferBaseEnd =
+            (binding.transferStatusCard.layoutParams as ViewGroup.MarginLayoutParams).marginEnd
+        ViewCompat.setOnApplyWindowInsetsListener(binding.transferStatusCard) { view, insets ->
+            val safe = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            val lp = view.layoutParams as ViewGroup.MarginLayoutParams
+            lp.marginEnd = transferBaseEnd + safe.right
+            view.layoutParams = lp
+            insets
+        }
     }
 
     override fun onResume() {
@@ -188,7 +221,12 @@ class MainActivity : AppCompatActivity() {
             jpegSourceInfoProvider = { path -> getJpegSourceInfo(path) },
             isCurrentPageProvider = { position -> position == binding.viewPager.currentItem },
             isJpegProvider = { path -> isJpegPath(path) },
-            onPhotoScaleChanged = { _, _, _, _ -> }
+            onPhotoScaleChanged = { _, position, scale, minScale ->
+                onCurrentPhotoScaleChanged(position, scale, minScale)
+            },
+            onPhotoTap = {
+                onPhotoCanvasTap()
+            }
         )
     }
 
@@ -200,11 +238,107 @@ class MainActivity : AppCompatActivity() {
         }
         binding.viewPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
             override fun onPageSelected(position: Int) {
+                currentPageZoomed = false
+                binding.zoomBadge.visibility = View.GONE
                 adapter.updatePrimaryPosition(position)
                 prefetchAround(position)
                 renderPhotoChrome()
+                updateOverlaysVisibility()
             }
         })
+    }
+
+    private fun onPhotoCanvasTap() {
+        if (adapter.itemCount == 0) return
+        userImmersive = !userImmersive
+        updateOverlaysVisibility()
+    }
+
+    private fun onCurrentPhotoScaleChanged(position: Int, scale: Float, minScale: Float) {
+        if (position != binding.viewPager.currentItem) return
+        val zoomed = isZoomedScale(scale, minScale)
+        if (zoomed) {
+            val ratio = resolveZoomRatio(scale, minScale)
+            binding.zoomBadge.text = formatZoomBadge(ratio)
+            binding.zoomBadge.visibility = View.VISIBLE
+        } else {
+            binding.zoomBadge.visibility = View.GONE
+        }
+        if (currentPageZoomed != zoomed) {
+            currentPageZoomed = zoomed
+            updateOverlaysVisibility()
+        }
+    }
+
+    private fun updateOverlaysVisibility() {
+        val hasPhotos = adapter.itemCount > 0
+        if (!hasPhotos) {
+            userImmersive = false
+            currentPageZoomed = false
+            binding.zoomBadge.visibility = View.GONE
+        }
+        val show = shouldShowOverlays(
+            hasPhotos = hasPhotos,
+            userImmersive = userImmersive,
+            isZoomed = currentPageZoomed
+        )
+        animateTopOverlay(show)
+        val controller = WindowCompat.getInsetsController(window, binding.root)
+        controller.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        if (show) {
+            controller.show(WindowInsetsCompat.Type.systemBars())
+        } else {
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+
+    private fun animateTopOverlay(show: Boolean) {
+        val bar = binding.topOverlayBar
+        bar.animate().cancel()
+        if (show) {
+            if (bar.visibility != View.VISIBLE) {
+                bar.alpha = 0f
+                bar.translationY = -20f
+                bar.visibility = View.VISIBLE
+            }
+            bar.animate()
+                .alpha(1f)
+                .translationY(0f)
+                .setDuration(200)
+                .withEndAction(null)
+                .start()
+        } else if (bar.visibility == View.VISIBLE) {
+            bar.animate()
+                .alpha(0f)
+                .translationY(-20f)
+                .setDuration(180)
+                .withEndAction { bar.visibility = View.GONE }
+                .start()
+        }
+    }
+
+    private fun showInlineFeedback(message: String) {
+        mainHandler.removeCallbacks(hideFeedbackRunnable)
+        val pill = binding.inlineFeedbackPill
+        pill.animate().cancel()
+        pill.text = message
+        if (pill.visibility != View.VISIBLE) {
+            pill.alpha = 0f
+            pill.visibility = View.VISIBLE
+        }
+        pill.animate().alpha(1f).setDuration(160).withEndAction(null).start()
+        mainHandler.postDelayed(hideFeedbackRunnable, 2200L)
+    }
+
+    private fun hideInlineFeedback() {
+        val pill = binding.inlineFeedbackPill
+        if (pill.visibility != View.VISIBLE) return
+        pill.animate()
+            .alpha(0f)
+            .setDuration(180)
+            .withEndAction { pill.visibility = View.GONE }
+            .start()
     }
 
     private fun observeDatabase() {
@@ -311,7 +445,10 @@ class MainActivity : AppCompatActivity() {
         binding.deleteButton.alpha = if (hasPhotos) 1.0f else 0.35f
         renderEmptyState()
 
-        if (!hasPhotos) return
+        if (!hasPhotos) {
+            updateOverlaysVisibility()
+            return
+        }
 
         val index = binding.viewPager.currentItem.coerceIn(0, count - 1)
         val item = adapter.getItem(index) ?: return
@@ -370,6 +507,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        mainHandler.removeCallbacks(hideFeedbackRunnable)
         connectionController.setFileTransferListener(null)
         connectionController.setFileDownloadedListener(null)
         // The session belongs to the process, not to this activity (docs/adr/0001):
@@ -384,19 +522,21 @@ class MainActivity : AppCompatActivity() {
     private fun configureConnectionController() {
         connectionController.setFileDownloadPath(externalCacheDir?.absolutePath)
         connectionController.setFileTransferListener { _, _, totalByteLength, transterByteLength ->
-            val progressPercent = if (totalByteLength > 0) {
-                ((transterByteLength * 100L) / totalByteLength).toInt().coerceIn(0, 100)
-            } else 0
+            val progressPercent = resolveTransferPercent(transterByteLength, totalByteLength)
             lifecycleScope.launch(Dispatchers.Main) {
-                if (binding.progressBar.visibility != View.VISIBLE) {
-                    binding.progressBar.visibility = View.VISIBLE
+                if (binding.transferStatusCard.visibility != View.VISIBLE) {
+                    binding.transferStatusCard.visibility = View.VISIBLE
                 }
+                binding.transferPercentText.text =
+                    getString(R.string.sync_transfer_percent, progressPercent)
                 binding.progressBar.progress = progressPercent
             }
         }
         connectionController.setFileDownloadedListener { _, fileHandle, localFile, timeduring ->
             Timber.v("file downloaded at %s, time: %sms", localFile.absolutePath, timeduring)
-            lifecycleScope.launch(Dispatchers.Main) { binding.progressBar.visibility = View.GONE }
+            lifecycleScope.launch(Dispatchers.Main) {
+                binding.transferStatusCard.visibility = View.GONE
+            }
 
             val ext = localFile.extension.lowercase(Locale.ROOT)
             val isRaw = ExtensionUtils.isRawExtension(ext)
@@ -416,19 +556,25 @@ class MainActivity : AppCompatActivity() {
         when (state) {
             is UsbPtpConnectionState.Connected -> {
                 if (previousState !is UsbPtpConnectionState.Connected) {
-                    Toast.makeText(this, getString(R.string.toast_device_connected), Toast.LENGTH_LONG).show()
+                    showInlineFeedback(getString(R.string.toast_device_connected))
                 }
             }
             is UsbPtpConnectionState.Disconnected -> {
-                binding.progressBar.visibility = View.GONE
+                binding.transferStatusCard.visibility = View.GONE
                 if (state.reason == "no_device" && previousState !is UsbPtpConnectionState.Disconnected) {
-                    Toast.makeText(this, getString(R.string.toast_no_usb_device), Toast.LENGTH_LONG).show()
+                    showInlineFeedback(getString(R.string.toast_no_usb_device))
+                } else if (state.reason == "user_request" &&
+                    previousState !is UsbPtpConnectionState.Disconnected
+                ) {
+                    showInlineFeedback(getString(R.string.feedback_camera_disconnected))
                 }
             }
             is UsbPtpConnectionState.Error -> {
-                binding.progressBar.visibility = View.GONE
+                binding.transferStatusCard.visibility = View.GONE
                 if (state.reason == "permission_denied") {
-                    Toast.makeText(this, getString(R.string.usb_permission_denied), Toast.LENGTH_LONG).show()
+                    showInlineFeedback(getString(R.string.usb_permission_denied))
+                } else if (previousState !is UsbPtpConnectionState.Error) {
+                    showInlineFeedback(getString(resolveConnectionErrorLabel(state.reason)))
                 }
                 Timber.w("USB connection error: reason=%s detail=%s", state.reason, state.detail)
             }
@@ -620,7 +766,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun exportCurrent() {
         if (adapter.itemCount == 0) {
-            Toast.makeText(this, getString(R.string.toast_no_exportable_photos), Toast.LENGTH_SHORT).show()
+            showInlineFeedback(getString(R.string.toast_no_exportable_photos))
             return
         }
         val index = binding.viewPager.currentItem.coerceIn(0, adapter.itemCount - 1)
@@ -645,13 +791,13 @@ class MainActivity : AppCompatActivity() {
     private fun exportIndex(index: Int) {
         val entity = adapter.getItem(index) ?: return
         val displayEntityName = entity.name ?: getString(R.string.photo_default_name)
-        Toast.makeText(this, getString(R.string.toast_exporting, displayEntityName), Toast.LENGTH_SHORT).show()
+        showInlineFeedback(getString(R.string.toast_exporting, displayEntityName))
 
         lifecycleScope.launch(Dispatchers.IO) {
             val path = entity.path
             if (path.isEmpty()) {
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(this@MainActivity, getString(R.string.toast_export_failed_invalid_path), Toast.LENGTH_LONG).show()
+                    showInlineFeedback(getString(R.string.toast_export_failed_invalid_path))
                 }
                 return@launch
             }
@@ -681,9 +827,9 @@ class MainActivity : AppCompatActivity() {
 
             withContext(Dispatchers.Main) {
                 if (saved != null) {
-                    Toast.makeText(this@MainActivity, getString(R.string.toast_saved_to_gallery, displayName), Toast.LENGTH_LONG).show()
+                    showInlineFeedback(getString(R.string.toast_saved_to_gallery, displayName))
                 } else {
-                    Toast.makeText(this@MainActivity, getString(R.string.toast_save_failed), Toast.LENGTH_LONG).show()
+                    showInlineFeedback(getString(R.string.toast_save_failed))
                 }
             }
         }
@@ -699,7 +845,7 @@ class MainActivity : AppCompatActivity() {
             if (granted && idx != null) {
                 exportIndex(idx)
             } else if (!granted) {
-                Toast.makeText(this, getString(R.string.toast_storage_permission_denied), Toast.LENGTH_LONG).show()
+                showInlineFeedback(getString(R.string.toast_storage_permission_denied))
             }
         }
     }
@@ -801,7 +947,7 @@ class MainActivity : AppCompatActivity() {
      */
     private fun showDeleteConfirmDialog() {
         if (adapter.itemCount == 0) {
-            Toast.makeText(this, getString(R.string.toast_no_deletable_photos), Toast.LENGTH_SHORT).show()
+            showInlineFeedback(getString(R.string.toast_no_deletable_photos))
             return
         }
 
@@ -850,24 +996,20 @@ class MainActivity : AppCompatActivity() {
         val entity = adapter.getItem(index) ?: return
         val displayName = entity.name ?: getString(R.string.photo_default_name)
 
-        Toast.makeText(this, getString(R.string.toast_deleting, displayName), Toast.LENGTH_SHORT).show()
+        showInlineFeedback(getString(R.string.toast_deleting, displayName))
 
         lifecycleScope.launch {
             if (deleteOnCamera) {
                 val objectHandle = entity.objectHandle
                 if (objectHandle == null) {
-                    Toast.makeText(
-                        this@MainActivity,
-                        getString(R.string.camera_delete_failed_not_found),
-                        Toast.LENGTH_LONG
-                    ).show()
+                    showInlineFeedback(getString(R.string.camera_delete_failed_not_found))
                     return@launch
                 }
                 val result = connectionController.deleteOnCamera(objectHandle)
                 val failureMessage = cameraDeleteFailureMessage(result)
                 if (failureMessage != null) {
                     Timber.w("deleteOnCamera refused: %s", result)
-                    Toast.makeText(this@MainActivity, getString(failureMessage), Toast.LENGTH_LONG).show()
+                    showInlineFeedback(getString(failureMessage))
                     return@launch
                 }
             }
@@ -897,27 +1039,15 @@ class MainActivity : AppCompatActivity() {
 
                 withContext(Dispatchers.Main) {
                     if (fileDeleted) {
-                        Toast.makeText(
-                            this@MainActivity,
-                            getString(R.string.toast_deleted, displayName),
-                            Toast.LENGTH_SHORT
-                        ).show()
+                        showInlineFeedback(getString(R.string.toast_deleted, displayName))
                     } else {
-                        Toast.makeText(
-                            this@MainActivity,
-                            getString(R.string.toast_delete_failed),
-                            Toast.LENGTH_LONG
-                        ).show()
+                        showInlineFeedback(getString(R.string.toast_delete_failed))
                     }
                 }
             } catch (e: Exception) {
                 Timber.e(e, "deleteLocalCopy failed")
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(
-                        this@MainActivity,
-                        getString(R.string.toast_delete_failed),
-                        Toast.LENGTH_LONG
-                    ).show()
+                    showInlineFeedback(getString(R.string.toast_delete_failed))
                 }
             }
         }

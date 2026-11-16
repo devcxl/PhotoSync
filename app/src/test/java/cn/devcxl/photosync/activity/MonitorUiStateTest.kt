@@ -147,4 +147,27 @@ class MonitorUiStateTest {
         assertEquals(PhotoFormatBadge.JPEG, resolvePhotoFormatBadge("/cache/photo.jpeg"))
         assertEquals(PhotoFormatBadge.OTHER, resolvePhotoFormatBadge("/cache/readme.txt"))
     }
+
+    @Test
+    fun shouldNormalizeZoomRatioAndFormatBadge_whenViewerScaleChanges() {
+        assertFalse(isZoomedScale(scale = 0.252f, minScale = 0.25f))
+        assertTrue(isZoomedScale(scale = 0.525f, minScale = 0.25f))
+        assertEquals("2.1x", formatZoomBadge(resolveZoomRatio(scale = 0.525f, minScale = 0.25f)))
+        assertEquals("1.0x", formatZoomBadge(resolveZoomRatio(scale = 0.2f, minScale = 0f)))
+    }
+
+    @Test
+    fun shouldControlOverlayVisibility_basedOnEmptyAndImmersiveAndZoom() {
+        assertTrue(shouldShowOverlays(hasPhotos = false, userImmersive = true, isZoomed = true))
+        assertTrue(shouldShowOverlays(hasPhotos = true, userImmersive = false, isZoomed = false))
+        assertFalse(shouldShowOverlays(hasPhotos = true, userImmersive = true, isZoomed = false))
+        assertFalse(shouldShowOverlays(hasPhotos = true, userImmersive = false, isZoomed = true))
+    }
+
+    @Test
+    fun shouldClampTransferPercent_whenBytesReported() {
+        assertEquals(0, resolveTransferPercent(100, 0))
+        assertEquals(64, resolveTransferPercent(640, 1000))
+        assertEquals(100, resolveTransferPercent(1500, 1000))
+    }
 }
