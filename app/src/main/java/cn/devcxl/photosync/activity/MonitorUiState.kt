@@ -339,5 +339,14 @@ internal fun isViewingLatestPhoto(currentIndex: Int, totalCount: Int): Boolean {
     return totalCount <= 0 || currentIndex >= totalCount - 1
 }
 
+/**
+ * Filmstrip container is shown only when photos exist and overlays are not hidden by zoom or
+ * immersive mode.
+ */
+internal fun shouldShowFilmstrip(hasPhotos: Boolean, overlaysVisible: Boolean): Boolean {
+    return hasPhotos && overlaysVisible
+}
+
+
 
 

@@ -516,7 +516,7 @@
         android:id="@+id/newPhotoBanner"
         android:layout_width="wrap_content"
         android:layout_height="36dp"
-        android:layout_marginBottom="20dp"
+        android:layout_marginBottom="@dimen/banner_margin_default"
         android:background="@drawable/bg_new_photo_banner"
         android:clickable="true"
         android:focusable="true"
@@ -527,10 +527,58 @@
         android:textSize="12sp"
         android:textStyle="bold"
         android:visibility="gone"
+        app:layout_constraintBottom_toTopOf="@id/bottomFilmstripContainer"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_goneMarginBottom="20dp"
+        tools:text="收到 1 张新照片 · 点击跳转"
+        tools:visibility="visible"/>
+
+    <!-- Collapsible bottom thumbnail filmstrip -->
+    <LinearLayout
+        android:id="@+id/bottomFilmstripContainer"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:background="@drawable/bg_bottom_scrim"
+        android:gravity="center_horizontal"
+        android:orientation="vertical"
+        android:paddingStart="16dp"
+        android:paddingTop="14dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="12dp"
+        android:visibility="gone"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        tools:text="收到 1 张新照片 · 点击跳转"
-        tools:visibility="visible"/>
+        tools:visibility="visible">
+
+        <TextView
+            android:id="@+id/filmstripToggleHandle"
+            android:layout_width="wrap_content"
+            android:layout_height="26dp"
+            android:layout_marginBottom="6dp"
+            android:background="@drawable/bg_filmstrip_handle"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:text="@string/filmstrip_collapse"
+            android:textColor="@color/darkroom_text_secondary"
+            android:textSize="11sp"
+            android:textStyle="bold"/>
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/filmstripRecyclerView"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_filmstrip_tray"
+            android:clipToPadding="false"
+            android:overScrollMode="never"
+            android:paddingStart="6dp"
+            android:paddingTop="6dp"
+            android:paddingEnd="0dp"
+            android:paddingBottom="6dp"/>
+    </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

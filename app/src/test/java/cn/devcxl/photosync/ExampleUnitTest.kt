@@ -9,6 +9,7 @@ import cn.devcxl.photosync.adapter.resolveJpegTiledSourceMode
 import cn.devcxl.photosync.adapter.resolveLoadingOverlayVisible
 import cn.devcxl.photosync.adapter.resolvePhotoViewerMode
 import cn.devcxl.photosync.adapter.resolvePhotoRenderDecision
+import cn.devcxl.photosync.adapter.shouldRequestFilmstripThumbnail
 import org.junit.Test
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -217,5 +218,11 @@ class ExampleUnitTest {
                 isTiledViewerReady = true
             )
         )
+    }
+
+    @Test
+    fun shouldRequestFilmstripThumbnail_onlyForNonRawItems() {
+        assertTrue(shouldRequestFilmstripThumbnail(isRaw = false))
+        assertFalse(shouldRequestFilmstripThumbnail(isRaw = true))
     }
 }

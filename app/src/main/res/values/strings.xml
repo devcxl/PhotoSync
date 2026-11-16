@@ -90,4 +90,9 @@
     <string name="feedback_auto_follow_on">已开启：新照片自动跳转</string>
     <string name="feedback_auto_follow_off">已关闭：新照片仅底部提示</string>
     <string name="new_photo_banner_count">收到 %1$d 张新照片 · 点击跳转</string>
+
+    <!-- Collapsible bottom filmstrip (Issue #28) -->
+    <string name="filmstrip_collapse">▾ 收起胶片条</string>
+    <string name="filmstrip_expand">▴ 展开胶片条</string>
+    <string name="filmstrip_exported_mark">✓</string>
 </resources>

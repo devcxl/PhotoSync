@@ -45,6 +45,7 @@ import androidx.core.view.updatePadding
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.recyclerview.widget.SimpleItemAnimator
 import androidx.viewpager2.widget.ViewPager2
@@ -57,6 +58,7 @@ import timber.log.Timber
 
 import cn.devcxl.photosync.App
 import cn.devcxl.photosync.R
+import cn.devcxl.photosync.adapter.FilmstripAdapter
 import cn.devcxl.photosync.adapter.JpegSourceInfo
 import cn.devcxl.photosync.adapter.PhotoPagerAdapter
 import cn.devcxl.photosync.adapter.PhotoRenderState
@@ -90,6 +92,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private lateinit var adapter: PhotoPagerAdapter
+    private lateinit var filmstripAdapter: FilmstripAdapter
     private var pendingExportIndex: Int? = null
 
     private lateinit var binding: ActivityMainBinding
@@ -105,6 +108,8 @@ class MainActivity : AppCompatActivity() {
     private var infoTargetPath: String? = null
     private var autoFollowEnabled: Boolean = true
     private var pendingNewPhotoCount: Int = 0
+    private var filmstripCollapsed: Boolean = false
+    private var lastBottomInsetPx: Int = 0
     private val mainHandler = Handler(Looper.getMainLooper())
     private val hideFeedbackRunnable = Runnable { hideInlineFeedback() }
 
@@ -133,6 +138,7 @@ class MainActivity : AppCompatActivity() {
         setupDao()
         setupAdapter()
         setupViewPager()
+        setupFilmstrip()
         observeDatabase()
         observeConnectionState()
         setupButtons()
@@ -217,11 +223,34 @@ class MainActivity : AppCompatActivity() {
             val safe = insets.getInsets(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
             )
-            val lp = view.layoutParams as ViewGroup.MarginLayoutParams
-            lp.bottomMargin = bannerBaseBottom + safe.bottom
-            view.layoutParams = lp
+            lastBottomInsetPx = safe.bottom
+            updateNewPhotoBannerMargin(bannerBaseBottom)
             insets
         }
+
+        val filmBaseLeft = binding.bottomFilmstripContainer.paddingLeft
+        val filmBaseTop = binding.bottomFilmstripContainer.paddingTop
+        val filmBaseRight = binding.bottomFilmstripContainer.paddingRight
+        val filmBaseBottom = binding.bottomFilmstripContainer.paddingBottom
+        ViewCompat.setOnApplyWindowInsetsListener(binding.bottomFilmstripContainer) { view, insets ->
+            val safe = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            view.updatePadding(
+                left = filmBaseLeft + safe.left,
+                top = filmBaseTop,
+                right = filmBaseRight + safe.right,
+                bottom = filmBaseBottom + safe.bottom
+            )
+            insets
+        }
+    }
+
+    private fun updateNewPhotoBannerMargin(baseMarginPx: Int = resources.getDimensionPixelSize(R.dimen.banner_margin_default)) {
+        val lp = binding.newPhotoBanner.layoutParams as ViewGroup.MarginLayoutParams
+        val bottomVisible = binding.bottomFilmstripContainer.visibility == View.VISIBLE
+        lp.bottomMargin = if (bottomVisible) baseMarginPx else baseMarginPx + lastBottomInsetPx
+        binding.newPhotoBanner.layoutParams = lp
     }
 
     override fun onResume() {
@@ -272,12 +301,33 @@ class MainActivity : AppCompatActivity() {
                     pendingNewPhotoCount = 0
                 }
                 adapter.updatePrimaryPosition(position)
+                filmstripAdapter.updateSelectedPosition(position)
+                if (position in 0 until filmstripAdapter.itemCount) {
+                    binding.filmstripRecyclerView.smoothScrollToPosition(position)
+                }
                 prefetchAround(position)
                 renderPhotoChrome()
                 renderNewPhotoBanner()
                 updateOverlaysVisibility()
             }
         })
+    }
+
+    private fun setupFilmstrip() {
+        filmstripAdapter = FilmstripAdapter(
+            thumbnailProvider = { path -> thumbnailCache.get(path) },
+            onThumbnailRequest = { path -> ensureThumbnail(path) },
+            onItemClick = { position ->
+                if (position in 0 until adapter.itemCount) {
+                    binding.viewPager.setCurrentItem(position, true)
+                }
+            }
+        )
+        binding.filmstripRecyclerView.apply {
+            layoutManager = LinearLayoutManager(this@MainActivity, RecyclerView.HORIZONTAL, false)
+            adapter = filmstripAdapter
+            (itemAnimator as? SimpleItemAnimator)?.supportsChangeAnimations = false
+        }
     }
 
     private fun onPhotoCanvasTap() {
@@ -315,6 +365,7 @@ class MainActivity : AppCompatActivity() {
             isZoomed = currentPageZoomed
         )
         animateTopOverlay(show)
+        animateBottomFilmstrip(shouldShowFilmstrip(hasPhotos, show))
         val hasDrawer = show && infoDrawerOpen && hasPhotos
         binding.infoDrawerPanel.visibility = if (hasDrawer) View.VISIBLE else View.GONE
         renderNewPhotoBanner()
@@ -326,6 +377,44 @@ class MainActivity : AppCompatActivity() {
         } else {
             controller.hide(WindowInsetsCompat.Type.systemBars())
         }
+    }
+
+    private fun animateBottomFilmstrip(show: Boolean) {
+        val bar = binding.bottomFilmstripContainer
+        bar.animate().cancel()
+        if (show) {
+            updateFilmstripCollapseState()
+            if (bar.visibility != View.VISIBLE) {
+                bar.alpha = 0f
+                bar.translationY = 24f
+                bar.visibility = View.VISIBLE
+            }
+            bar.animate()
+                .alpha(1f)
+                .translationY(0f)
+                .setDuration(200)
+                .withEndAction(null)
+                .start()
+        } else if (bar.visibility == View.VISIBLE) {
+            bar.animate()
+                .alpha(0f)
+                .translationY(24f)
+                .setDuration(180)
+                .withEndAction {
+                    bar.visibility = View.GONE
+                    updateNewPhotoBannerMargin()
+                }
+                .start()
+        }
+        updateNewPhotoBannerMargin()
+    }
+
+    private fun updateFilmstripCollapseState() {
+        binding.filmstripRecyclerView.visibility =
+            if (filmstripCollapsed) View.GONE else View.VISIBLE
+        binding.filmstripToggleHandle.setText(
+            if (filmstripCollapsed) R.string.filmstrip_expand else R.string.filmstrip_collapse
+        )
     }
 
     private fun animateTopOverlay(show: Boolean) {
@@ -382,7 +471,9 @@ class MainActivity : AppCompatActivity() {
                 dao.getAllFlow().collect { list ->
                     val previousCount = adapter.itemCount
                     val previousIndex = binding.viewPager.currentItem
-                    adapter.updateItems(list.toList())
+                    val itemsCopy = list.toList()
+                    adapter.updateItems(itemsCopy)
+                    filmstripAdapter.updateItems(itemsCopy)
                     evictCachesForRemovedItems(list)
                     pendingRevealPath?.let { target ->
                         val idx = list.indexOfFirst { it.path == target }
@@ -400,12 +491,19 @@ class MainActivity : AppCompatActivity() {
                     if (list.isNotEmpty()) {
                         val currentIndex = binding.viewPager.currentItem.coerceIn(0, list.size - 1)
                         adapter.updatePrimaryPosition(currentIndex)
+                        filmstripAdapter.updateSelectedPosition(currentIndex)
+                        if (previousCount == 0) {
+                            binding.filmstripRecyclerView.scrollToPosition(currentIndex)
+                        } else {
+                            binding.filmstripRecyclerView.smoothScrollToPosition(currentIndex)
+                        }
                         prefetchAround(currentIndex)
                     } else {
                         pendingNewPhotoCount = 0
                     }
                     renderPhotoChrome()
                     renderNewPhotoBanner()
+                    updateOverlaysVisibility()
                 }
             }
         }
@@ -416,6 +514,7 @@ class MainActivity : AppCompatActivity() {
         if (visible) {
             binding.newPhotoBanner.text =
                 getString(R.string.new_photo_banner_count, pendingNewPhotoCount)
+            updateNewPhotoBannerMargin()
             binding.newPhotoBanner.visibility = View.VISIBLE
         } else {
             binding.newPhotoBanner.visibility = View.GONE
@@ -663,6 +762,10 @@ class MainActivity : AppCompatActivity() {
             pendingNewPhotoCount = 0
             renderNewPhotoBanner()
         }
+        binding.filmstripToggleHandle.setOnClickListener {
+            filmstripCollapsed = !filmstripCollapsed
+            updateFilmstripCollapseState()
+        }
         updateAutoFollowAppearance()
     }
 
@@ -859,6 +962,7 @@ class MainActivity : AppCompatActivity() {
                 withContext(Dispatchers.Main) {
                     thumbnailCache.put(path, bitmap)
                     adapter.notifyPathChanged(path)
+                    filmstripAdapter.notifyPathChanged(path)
                     if (infoDrawerOpen && infoTargetPath == path) {
                         renderInfoDrawer()
                     }

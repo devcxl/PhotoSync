@@ -258,4 +258,11 @@ class MonitorUiStateTest {
         assertTrue(isViewingLatestPhoto(currentIndex = 4, totalCount = 5))
         assertFalse(isViewingLatestPhoto(currentIndex = 2, totalCount = 5))
     }
+
+    @Test
+    fun shouldShowFilmstripOnly_whenPhotosExistAndOverlaysVisible() {
+        assertTrue(shouldShowFilmstrip(hasPhotos = true, overlaysVisible = true))
+        assertFalse(shouldShowFilmstrip(hasPhotos = false, overlaysVisible = true))
+        assertFalse(shouldShowFilmstrip(hasPhotos = true, overlaysVisible = false))
+    }
 }
