@@ -71,4 +71,17 @@
     <string name="sync_transfer_in_progress">正在同步照片</string>
     <string name="sync_transfer_percent">%1$d%%</string>
     <string name="feedback_camera_disconnected">相机连接已断开</string>
+
+    <!-- Exported status, info drawer, and darkroom delete dialog (Issue #26) -->
+    <string name="exported_badge">✓ 已导出</string>
+    <string name="photo_info_toggle">信息</string>
+    <string name="info_label_resolution">分辨率</string>
+    <string name="info_label_format_size">格式 / 大小</string>
+    <string name="info_label_camera_handle">相机句柄</string>
+    <string name="info_unknown_value">—</string>
+    <string name="info_handle_available">#0x%1$x（支持删原件）</string>
+    <string name="info_handle_no_camera_support">#0x%1$x（相机不支持远删）</string>
+    <string name="info_handle_not_connected">#0x%1$x（未连接相机）</string>
+    <string name="info_handle_missing">无句柄（仅可删本机）</string>
+    <string name="dialog_delete_title_named">删除 %1$s</string>
 </resources>

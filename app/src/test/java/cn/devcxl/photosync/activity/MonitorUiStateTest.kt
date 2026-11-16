@@ -170,4 +170,46 @@ class MonitorUiStateTest {
         assertEquals(64, resolveTransferPercent(640, 1000))
         assertEquals(100, resolveTransferPercent(1500, 1000))
     }
+
+    @Test
+    fun shouldDetectExportedStatus_whenUriStringIsPresent() {
+        assertFalse(isPhotoExported(null))
+        assertFalse(isPhotoExported(""))
+        assertFalse(isPhotoExported("   "))
+        assertTrue(isPhotoExported("content://media/external/images/media/42"))
+    }
+
+    @Test
+    fun shouldFormatFileMetaAndDimensions_whenValuesProvided() {
+        assertEquals("—", formatFileSize(0L))
+        assertEquals("512 B", formatFileSize(512L))
+        assertEquals("2.0 KB", formatFileSize(2048L))
+        assertEquals("48.6 MB", formatFileSize((48.6 * 1024 * 1024).toLong()))
+        assertEquals("6000 × 4000", formatPhotoDimensions(6000, 4000))
+        assertEquals("—", formatPhotoDimensions(null, 4000))
+        assertEquals(
+            "RAW · 10.0 MB",
+            formatPhotoFormatAndSize(PhotoFormatBadge.RAW, 10L * 1024L * 1024L)
+        )
+    }
+
+    @Test
+    fun shouldResolveCameraHandleAvailability_acrossConnectionAndSupportStates() {
+        assertEquals(
+            CameraHandleAvailability.MISSING,
+            resolveCameraHandleAvailability(null, isConnected = true, cameraSupportsDelete = true)
+        )
+        assertEquals(
+            CameraHandleAvailability.NOT_CONNECTED,
+            resolveCameraHandleAvailability(100, isConnected = false, cameraSupportsDelete = true)
+        )
+        assertEquals(
+            CameraHandleAvailability.NOT_SUPPORTED,
+            resolveCameraHandleAvailability(100, isConnected = true, cameraSupportsDelete = false)
+        )
+        assertEquals(
+            CameraHandleAvailability.AVAILABLE,
+            resolveCameraHandleAvailability(100, isConnected = true, cameraSupportsDelete = true)
+        )
+    }
 }

@@ -19,6 +19,9 @@ interface PhotoDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(entity: PhotoEntity): Long
 
+    @Query("UPDATE photos SET uri_string = :uriString WHERE id = :id")
+    suspend fun updateUriString(id: Long, uriString: String)
+
     /**
      * Deletes a photo entity from database.
      *

@@ -101,6 +101,8 @@ class MainActivity : AppCompatActivity() {
     private var cameraPresent: Boolean = false
     private var userImmersive: Boolean = false
     private var currentPageZoomed: Boolean = false
+    private var infoDrawerOpen: Boolean = false
+    private var infoTargetPath: String? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private val hideFeedbackRunnable = Runnable { hideInlineFeedback() }
 
@@ -194,6 +196,18 @@ class MainActivity : AppCompatActivity() {
             view.layoutParams = lp
             insets
         }
+
+        val infoBaseStart =
+            (binding.infoDrawerPanel.layoutParams as ViewGroup.MarginLayoutParams).marginStart
+        ViewCompat.setOnApplyWindowInsetsListener(binding.infoDrawerPanel) { view, insets ->
+            val safe = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            val lp = view.layoutParams as ViewGroup.MarginLayoutParams
+            lp.marginStart = infoBaseStart + safe.left
+            view.layoutParams = lp
+            insets
+        }
     }
 
     override fun onResume() {
@@ -283,6 +297,8 @@ class MainActivity : AppCompatActivity() {
             isZoomed = currentPageZoomed
         )
         animateTopOverlay(show)
+        val hasDrawer = show && infoDrawerOpen && hasPhotos
+        binding.infoDrawerPanel.visibility = if (hasDrawer) View.VISIBLE else View.GONE
         val controller = WindowCompat.getInsetsController(window, binding.root)
         controller.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
@@ -376,6 +392,7 @@ class MainActivity : AppCompatActivity() {
                         lastState = state
                         renderConnectButton()
                         renderEmptyState()
+                        renderInfoDrawer()
                     }
                 }
                 launch {
@@ -438,6 +455,7 @@ class MainActivity : AppCompatActivity() {
         val count = adapter.itemCount
         val hasPhotos = count > 0
         binding.photoMetaPill.visibility = if (hasPhotos) View.VISIBLE else View.GONE
+        binding.infoToggleButton.visibility = if (hasPhotos) View.VISIBLE else View.GONE
         binding.topBarSpacer.visibility = if (hasPhotos) View.GONE else View.VISIBLE
         binding.exportButton.isEnabled = hasPhotos
         binding.exportButton.alpha = if (hasPhotos) 1.0f else 0.35f
@@ -446,6 +464,8 @@ class MainActivity : AppCompatActivity() {
         renderEmptyState()
 
         if (!hasPhotos) {
+            infoDrawerOpen = false
+            updateInfoToggleAppearance()
             updateOverlaysVisibility()
             return
         }
@@ -454,6 +474,16 @@ class MainActivity : AppCompatActivity() {
         val item = adapter.getItem(index) ?: return
         binding.photoCounterText.text = formatPhotoCounter(index, count)
         binding.photoNameText.text = item.name ?: getString(R.string.photo_default_name)
+
+        val exported = isPhotoExported(item.uriString)
+        binding.photoExportedBadge.visibility = if (exported) View.VISIBLE else View.GONE
+        if (exported) {
+            binding.exportButton.setBackgroundResource(R.drawable.bg_glass_icon_btn_exported)
+            binding.exportButton.setImageResource(R.drawable.ic_check_24)
+        } else {
+            binding.exportButton.setBackgroundResource(R.drawable.bg_glass_icon_btn)
+            binding.exportButton.setImageResource(R.drawable.ic_export_24)
+        }
 
         when (resolvePhotoFormatBadge(item.path)) {
             PhotoFormatBadge.RAW -> {
@@ -476,6 +506,79 @@ class MainActivity : AppCompatActivity() {
                 binding.photoFormatBadge.visibility = View.GONE
             }
         }
+        updateInfoToggleAppearance()
+        renderInfoDrawer()
+    }
+
+    private fun updateInfoToggleAppearance() {
+        binding.infoToggleButton.setBackgroundResource(
+            if (infoDrawerOpen) R.drawable.bg_toggle_pill_on else R.drawable.bg_toggle_pill
+        )
+        val colorRes = if (infoDrawerOpen) {
+            R.color.darkroom_text_primary
+        } else {
+            R.color.darkroom_text_secondary
+        }
+        binding.infoToggleLabel.setTextColor(ContextCompat.getColor(this, colorRes))
+    }
+
+    private fun renderInfoDrawer() {
+        val count = adapter.itemCount
+        if (count == 0 || !infoDrawerOpen) {
+            binding.infoDrawerPanel.visibility = View.GONE
+            return
+        }
+        val showOverlays = shouldShowOverlays(
+            hasPhotos = true,
+            userImmersive = userImmersive,
+            isZoomed = currentPageZoomed
+        )
+        binding.infoDrawerPanel.visibility = if (showOverlays) View.VISIBLE else View.GONE
+        val index = binding.viewPager.currentItem.coerceIn(0, count - 1)
+        val item = adapter.getItem(index) ?: return
+        infoTargetPath = item.path
+
+        val handleText = when (
+            resolveCameraHandleAvailability(
+                objectHandle = item.objectHandle,
+                isConnected = connectionState is UsbPtpConnectionState.Connected,
+                cameraSupportsDelete = connectionController.canDeleteOnCamera()
+            )
+        ) {
+            CameraHandleAvailability.AVAILABLE ->
+                getString(R.string.info_handle_available, item.objectHandle)
+            CameraHandleAvailability.NOT_CONNECTED ->
+                getString(R.string.info_handle_not_connected, item.objectHandle)
+            CameraHandleAvailability.NOT_SUPPORTED ->
+                getString(R.string.info_handle_no_camera_support, item.objectHandle)
+            CameraHandleAvailability.MISSING ->
+                getString(R.string.info_handle_missing)
+        }
+        binding.infoHandleText.text = handleText
+
+        val formatBadge = resolvePhotoFormatBadge(item.path)
+        binding.infoResolutionText.text = getString(R.string.info_unknown_value)
+        binding.infoFormatSizeText.text = formatPhotoFormatAndSize(formatBadge, 0L)
+
+        val targetPath = item.path
+        lifecycleScope.launch(Dispatchers.IO) {
+            val sizeBytes = File(targetPath).let { if (it.exists()) it.length() else 0L }
+            val jpegBounds = getJpegSourceInfo(targetPath)
+            val fallbackBmp = if (jpegBounds == null) {
+                fullBitmapCache.get(targetPath) ?: thumbnailCache.get(targetPath)
+            } else null
+            val resText = formatPhotoDimensions(
+                width = jpegBounds?.width ?: fallbackBmp?.width,
+                height = jpegBounds?.height ?: fallbackBmp?.height
+            )
+            val sizeText = formatPhotoFormatAndSize(formatBadge, sizeBytes)
+            withContext(Dispatchers.Main) {
+                if (infoTargetPath == targetPath) {
+                    binding.infoResolutionText.text = resText
+                    binding.infoFormatSizeText.text = sizeText
+                }
+            }
+        }
     }
 
     private fun setupButtons() {
@@ -484,6 +587,11 @@ class MainActivity : AppCompatActivity() {
         binding.connectButton.setOnClickListener { onConnectButtonClick() }
         binding.emptyActionButton.setOnClickListener {
             connectionController.connectToAvailableCamera()
+        }
+        binding.infoToggleButton.setOnClickListener {
+            infoDrawerOpen = !infoDrawerOpen
+            updateInfoToggleAppearance()
+            renderInfoDrawer()
         }
     }
 
@@ -680,6 +788,9 @@ class MainActivity : AppCompatActivity() {
                 withContext(Dispatchers.Main) {
                     thumbnailCache.put(path, bitmap)
                     adapter.notifyPathChanged(path)
+                    if (infoDrawerOpen && infoTargetPath == path) {
+                        renderInfoDrawer()
+                    }
                 }
             } finally {
                 inFlightThumbnailPaths.remove(path)
@@ -825,6 +936,14 @@ class MainActivity : AppCompatActivity() {
                 null
             }
 
+            if (saved != null) {
+                try {
+                    dao.updateUriString(entity.id, saved.toString())
+                } catch (e: Exception) {
+                    Timber.w(e, "Failed to persist exported uriString for photo id=%d", entity.id)
+                }
+            }
+
             withContext(Dispatchers.Main) {
                 if (saved != null) {
                     showInlineFeedback(getString(R.string.toast_saved_to_gallery, displayName))
@@ -959,21 +1078,28 @@ class MainActivity : AppCompatActivity() {
             cameraSupportsDelete = connectionController.canDeleteOnCamera(),
             hasObjectHandle = entity.objectHandle != null
         )
+        val displayName = entity.name ?: getString(R.string.photo_default_name)
         val dialogView = layoutInflater.inflate(R.layout.dialog_delete_photo, null)
+        val cameraDeleteBox = dialogView.findViewById<View>(R.id.cameraDeleteBox)
         val deleteOnCameraCheck = dialogView.findViewById<CheckBox>(R.id.deleteOnCameraCheck)
         val blockerHint = dialogView.findViewById<TextView>(R.id.cameraDeleteHint)
         deleteOnCameraCheck.isChecked = false
         deleteOnCameraCheck.isEnabled = blocker == null
         if (blocker == null) {
+            cameraDeleteBox.setBackgroundResource(R.drawable.bg_camera_delete_box)
+            deleteOnCameraCheck.setTextColor(ContextCompat.getColor(this, R.color.danger_text))
             blockerHint.visibility = View.GONE
         } else {
+            cameraDeleteBox.setBackgroundResource(R.drawable.bg_camera_delete_box_disabled)
+            deleteOnCameraCheck.setTextColor(
+                ContextCompat.getColor(this, R.color.darkroom_text_muted)
+            )
             blockerHint.setText(cameraDeleteBlockerMessage(blocker))
             blockerHint.visibility = View.VISIBLE
         }
 
         AlertDialog.Builder(this)
-            .setTitle(getString(R.string.dialog_delete_title))
-            .setMessage(getString(R.string.dialog_delete_message))
+            .setTitle(getString(R.string.dialog_delete_title_named, displayName))
             .setView(dialogView)
             .setPositiveButton(getString(R.string.dialog_delete_confirm)) { _, _ ->
                 deleteCurrent(index, deleteOnCameraCheck.isChecked)

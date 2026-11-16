@@ -262,3 +262,63 @@ internal fun resolveTransferPercent(transferredBytes: Int, totalBytes: Int): Int
     return ((transferredBytes.toLong() * 100L) / totalBytes.toLong()).toInt().coerceIn(0, 100)
 }
 
+/**
+ * Returns true when an exported gallery URI has been persisted for the photo.
+ */
+internal fun isPhotoExported(uriString: String?): Boolean = !uriString.isNullOrBlank()
+
+/**
+ * Formats byte count into human-readable file size (`B`, `KB`, `MB`).
+ */
+internal fun formatFileSize(bytes: Long): String {
+    if (bytes <= 0L) return "—"
+    return when {
+        bytes < 1024L -> "$bytes B"
+        bytes < 1024L * 1024L -> String.format(Locale.US, "%.1f KB", bytes / 1024.0)
+        else -> String.format(Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0))
+    }
+}
+
+/**
+ * Formats pixel dimensions as `"6000 × 4000"` or `"—"` when unavailable.
+ */
+internal fun formatPhotoDimensions(width: Int?, height: Int?): String {
+    if (width == null || height == null || width <= 0 || height <= 0) return "—"
+    return "$width × $height"
+}
+
+/**
+ * Formats format + size string for the info drawer (e.g. `"RAW · 48.6 MB"`).
+ */
+internal fun formatPhotoFormatAndSize(formatBadge: PhotoFormatBadge, sizeBytes: Long): String {
+    val sizeText = formatFileSize(sizeBytes)
+    val formatText = when (formatBadge) {
+        PhotoFormatBadge.RAW -> "RAW"
+        PhotoFormatBadge.JPEG -> "JPEG"
+        PhotoFormatBadge.OTHER -> "FILE"
+    }
+    return if (sizeText == "—") formatText else "$formatText · $sizeText"
+}
+
+/**
+ * Classification for the camera object handle row in the info drawer.
+ */
+internal enum class CameraHandleAvailability {
+    AVAILABLE,
+    NOT_CONNECTED,
+    NOT_SUPPORTED,
+    MISSING
+}
+
+internal fun resolveCameraHandleAvailability(
+    objectHandle: Int?,
+    isConnected: Boolean,
+    cameraSupportsDelete: Boolean
+): CameraHandleAvailability {
+    if (objectHandle == null) return CameraHandleAvailability.MISSING
+    if (!isConnected) return CameraHandleAvailability.NOT_CONNECTED
+    if (!cameraSupportsDelete) return CameraHandleAvailability.NOT_SUPPORTED
+    return CameraHandleAvailability.AVAILABLE
+}
+
+
