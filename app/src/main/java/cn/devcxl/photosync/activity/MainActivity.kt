@@ -42,6 +42,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.updatePadding
+import androidx.core.widget.ImageViewCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -143,19 +144,33 @@ class MainActivity : AppCompatActivity() {
         observeConnectionState()
         setupButtons()
         configureConnectionController()
+        applySystemBarVisibility(showOverlays = true)
         connectionController.refreshAvailableCameras()
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            val show = shouldShowOverlays(
+                hasPhotos = adapter.itemCount > 0,
+                userImmersive = userImmersive,
+                isZoomed = currentPageZoomed
+            )
+            applySystemBarVisibility(showOverlays = show)
+        }
+    }
+
     private fun setupWindowInsets() {
+        val safeChromeType =
+            WindowInsetsCompat.Type.displayCutout() or WindowInsetsCompat.Type.navigationBars()
+
         val topBaseLeft = binding.topOverlayBar.paddingLeft
         val topBaseTop = binding.topOverlayBar.paddingTop
         val topBaseRight = binding.topOverlayBar.paddingRight
         val topBaseBottom = binding.topOverlayBar.paddingBottom
 
         ViewCompat.setOnApplyWindowInsetsListener(binding.topOverlayBar) { view, insets ->
-            val safe = insets.getInsets(
-                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
-            )
+            val safe = insets.getInsets(safeChromeType)
             view.updatePadding(
                 left = topBaseLeft + safe.left,
                 top = topBaseTop + safe.top,
@@ -168,9 +183,7 @@ class MainActivity : AppCompatActivity() {
         val emptyBaseLeft = binding.emptyStateContainer.paddingLeft
         val emptyBaseRight = binding.emptyStateContainer.paddingRight
         ViewCompat.setOnApplyWindowInsetsListener(binding.emptyStateContainer) { view, insets ->
-            val safe = insets.getInsets(
-                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
-            )
+            val safe = insets.getInsets(safeChromeType)
             view.updatePadding(
                 left = emptyBaseLeft + safe.left,
                 top = safe.top,
@@ -183,9 +196,7 @@ class MainActivity : AppCompatActivity() {
         val zoomBaseStart = (binding.zoomBadge.layoutParams as ViewGroup.MarginLayoutParams).marginStart
         val zoomBaseBottom = (binding.zoomBadge.layoutParams as ViewGroup.MarginLayoutParams).bottomMargin
         ViewCompat.setOnApplyWindowInsetsListener(binding.zoomBadge) { view, insets ->
-            val safe = insets.getInsets(
-                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
-            )
+            val safe = insets.getInsets(safeChromeType)
             val lp = view.layoutParams as ViewGroup.MarginLayoutParams
             lp.marginStart = zoomBaseStart + safe.left
             lp.bottomMargin = zoomBaseBottom + safe.bottom
@@ -196,9 +207,7 @@ class MainActivity : AppCompatActivity() {
         val transferBaseEnd =
             (binding.transferStatusCard.layoutParams as ViewGroup.MarginLayoutParams).marginEnd
         ViewCompat.setOnApplyWindowInsetsListener(binding.transferStatusCard) { view, insets ->
-            val safe = insets.getInsets(
-                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
-            )
+            val safe = insets.getInsets(safeChromeType)
             val lp = view.layoutParams as ViewGroup.MarginLayoutParams
             lp.marginEnd = transferBaseEnd + safe.right
             view.layoutParams = lp
@@ -208,9 +217,7 @@ class MainActivity : AppCompatActivity() {
         val infoBaseStart =
             (binding.infoDrawerPanel.layoutParams as ViewGroup.MarginLayoutParams).marginStart
         ViewCompat.setOnApplyWindowInsetsListener(binding.infoDrawerPanel) { view, insets ->
-            val safe = insets.getInsets(
-                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
-            )
+            val safe = insets.getInsets(safeChromeType)
             val lp = view.layoutParams as ViewGroup.MarginLayoutParams
             lp.marginStart = infoBaseStart + safe.left
             view.layoutParams = lp
@@ -219,10 +226,8 @@ class MainActivity : AppCompatActivity() {
 
         val bannerBaseBottom =
             (binding.newPhotoBanner.layoutParams as ViewGroup.MarginLayoutParams).bottomMargin
-        ViewCompat.setOnApplyWindowInsetsListener(binding.newPhotoBanner) { view, insets ->
-            val safe = insets.getInsets(
-                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
-            )
+        ViewCompat.setOnApplyWindowInsetsListener(binding.newPhotoBanner) { _, insets ->
+            val safe = insets.getInsets(safeChromeType)
             lastBottomInsetPx = safe.bottom
             updateNewPhotoBannerMargin(bannerBaseBottom)
             insets
@@ -233,9 +238,7 @@ class MainActivity : AppCompatActivity() {
         val filmBaseRight = binding.bottomFilmstripContainer.paddingRight
         val filmBaseBottom = binding.bottomFilmstripContainer.paddingBottom
         ViewCompat.setOnApplyWindowInsetsListener(binding.bottomFilmstripContainer) { view, insets ->
-            val safe = insets.getInsets(
-                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
-            )
+            val safe = insets.getInsets(safeChromeType)
             view.updatePadding(
                 left = filmBaseLeft + safe.left,
                 top = filmBaseTop,
@@ -369,13 +372,18 @@ class MainActivity : AppCompatActivity() {
         val hasDrawer = show && infoDrawerOpen && hasPhotos
         binding.infoDrawerPanel.visibility = if (hasDrawer) View.VISIBLE else View.GONE
         renderNewPhotoBanner()
+        applySystemBarVisibility(showOverlays = show)
+    }
+
+    private fun applySystemBarVisibility(showOverlays: Boolean) {
         val controller = WindowCompat.getInsetsController(window, binding.root)
         controller.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        if (show) {
-            controller.show(WindowInsetsCompat.Type.systemBars())
+        controller.hide(WindowInsetsCompat.Type.statusBars())
+        if (showOverlays) {
+            controller.show(WindowInsetsCompat.Type.navigationBars())
         } else {
-            controller.hide(WindowInsetsCompat.Type.systemBars())
+            controller.hide(WindowInsetsCompat.Type.navigationBars())
         }
     }
 
@@ -632,9 +640,17 @@ class MainActivity : AppCompatActivity() {
         if (exported) {
             binding.exportButton.setBackgroundResource(R.drawable.bg_glass_icon_btn_exported)
             binding.exportButton.setImageResource(R.drawable.ic_check_24)
+            ImageViewCompat.setImageTintList(
+                binding.exportButton,
+                ColorStateList.valueOf(ContextCompat.getColor(this, R.color.exported_text))
+            )
         } else {
             binding.exportButton.setBackgroundResource(R.drawable.bg_glass_icon_btn)
             binding.exportButton.setImageResource(R.drawable.ic_export_24)
+            ImageViewCompat.setImageTintList(
+                binding.exportButton,
+                ColorStateList.valueOf(ContextCompat.getColor(this, R.color.darkroom_text_primary))
+            )
         }
 
         when (resolvePhotoFormatBadge(item.path)) {
