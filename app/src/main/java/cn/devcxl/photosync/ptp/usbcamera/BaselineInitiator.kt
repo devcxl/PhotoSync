@@ -1212,6 +1212,7 @@ open class BaselineInitiator : NameFactory, Runnable {
         try {
             reconcileObjectList(ReconcileCause.SESSION_START, storages)
             var consecutiveFailures = 0
+            var pollIntervalMs = EVENT_POLL_INTERVAL_MS
             while (isSessionActive() && keepEventLoopRunning()) {
                 var events: List<VendorEvent> = emptyList()
                 try {
@@ -1229,9 +1230,10 @@ open class BaselineInitiator : NameFactory, Runnable {
 
                 eventsReceived += events.size
                 objectsImported += dispatchVendorEvents(events, storages)
+                pollIntervalMs = nextEventPollIntervalMs(pollIntervalMs, events.size)
 
                 try {
-                    Thread.sleep(EVENT_POLL_INTERVAL_MS)
+                    Thread.sleep(pollIntervalMs)
                 } catch (e: InterruptedException) {
                     interrupted = true
                     onEventPollInterrupted(e)
@@ -1277,7 +1279,7 @@ open class BaselineInitiator : NameFactory, Runnable {
         var imported = 0
         for (event in events) {
             try {
-                Timber.tag(PTP_EVENT_TAG).d("%s", event.describe())
+                Timber.tag(PTP_EVENT_TAG).v("%s", event.describe())
                 if (event.requestsReconcile) {
                     Timber.tag(PTP_EVENT_TAG).i("相机上报可能漏报事件（UnreportedStatus），执行一次对账")
                     reconcileRequested = true

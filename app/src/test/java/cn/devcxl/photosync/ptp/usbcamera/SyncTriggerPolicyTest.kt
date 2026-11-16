@@ -94,4 +94,33 @@ class SyncTriggerPolicyTest {
         // The pass shares the session with the 200 ms event poll, so no timer starts one.
         assertFalse(shouldReconcile(ReconcileCause.PERIODIC_TICK))
     }
+
+    @Test
+    fun shouldPollFast_whenTheLastPollReportedSomething() {
+        val interval = nextEventPollIntervalMs(currentIntervalMs = EVENT_POLL_IDLE_MS, eventsLastPoll = 3)
+
+        assertEquals(EVENT_POLL_FAST_MS, interval)
+    }
+
+    @Test
+    fun shouldBackOff_whenTheCameraIsQuiet() {
+        val interval = nextEventPollIntervalMs(currentIntervalMs = EVENT_POLL_FAST_MS, eventsLastPoll = 0)
+
+        assertEquals(EVENT_POLL_FAST_MS * 2, interval)
+    }
+
+    @Test
+    fun shouldStopBackingOff_whenTheIdleIntervalIsReached() {
+        val interval = nextEventPollIntervalMs(currentIntervalMs = EVENT_POLL_IDLE_MS, eventsLastPoll = 0)
+
+        assertEquals(EVENT_POLL_IDLE_MS, interval)
+    }
+
+    @Test
+    fun shouldReachTheIdleInterval_whenQuietForSeveralPolls() {
+        var interval = EVENT_POLL_FAST_MS
+        repeat(10) { interval = nextEventPollIntervalMs(interval, eventsLastPoll = 0) }
+
+        assertEquals(EVENT_POLL_IDLE_MS, interval)
+    }
 }
