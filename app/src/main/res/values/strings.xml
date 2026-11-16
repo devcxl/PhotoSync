@@ -40,4 +40,28 @@
     <string name="camera_delete_failed_read_only">相机的存储卡为只读，无法删除</string>
     <string name="dialog_delete_confirm">删除</string>
     <string name="dialog_cancel">取消</string>
+
+    <!-- Tethered monitor UI (Issue #24) -->
+    <string name="camera_connected_label">已连接</string>
+    <string name="camera_error_permission_denied">未授权访问 · 点击重试</string>
+    <string name="camera_error_missing_device">未找到相机 · 点击重试</string>
+    <string name="camera_error_connect_failed">连接失败 · 点击重试</string>
+    <string name="dialog_disconnect_title">断开相机连接？</string>
+    <string name="dialog_disconnect_message">断开当前 PTP 会话后，相机将恢复独立拍照；需要继续同步时可随时重连。</string>
+    <string name="dialog_disconnect_confirm">断开连接</string>
+    <string name="empty_no_camera_title">未检测到相机</string>
+    <string name="empty_no_camera_desc">请通过 USB 数据线连接相机，并确认相机处于 PTP / 电脑遥控模式</string>
+    <string name="empty_ready_title">已检测到相机</string>
+    <string name="empty_ready_desc">点击下方按钮授予 USB 权限并开始联机同步</string>
+    <string name="empty_connecting_title">正在建立相机连接…</string>
+    <string name="empty_connecting_desc">请在系统弹窗中允许 USB 访问，会话建立后即可自动同步照片</string>
+    <string name="empty_connected_title">相机已就绪，等待快门</string>
+    <string name="empty_connected_desc">按下相机快门后，JPEG 与 RAW 照片将自动同步到此处供放大审片</string>
+    <string name="empty_error_title">无法建立 USB 会话</string>
+    <string name="empty_error_desc_permission">未获得 USB 访问授权，请点击下方按钮重试并在弹窗中允许访问</string>
+    <string name="empty_error_desc_generic">相机可能正忙或线缆连接不稳定，请检查后重试连接</string>
+    <string name="empty_action_connect">立即连接相机</string>
+    <string name="empty_action_retry">重试连接</string>
+    <string name="format_raw">RAW</string>
+    <string name="format_jpeg">JPEG</string>
 </resources>

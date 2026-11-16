@@ -12,11 +12,12 @@ import java.util.Date
 import java.util.Locale
 
 import android.Manifest
-import android.app.AlertDialog
 import android.content.ContentValues
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -27,11 +28,16 @@ import android.view.View
 import android.widget.CheckBox
 import android.widget.TextView
 import android.widget.Toast
-import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.annotation.VisibleForTesting
+import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updatePadding
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -59,7 +65,7 @@ import cn.devcxl.photosync.ptp.manager.cameraDeleteBlockedBy
 import cn.devcxl.photosync.utils.ExtensionUtils
 import cn.devcxl.photosync.wrapper.RawWrapper
 
-class MainActivity : ComponentActivity() {
+class MainActivity : AppCompatActivity() {
 
     private val connectionController by lazy {
         (application as App).usbPtpConnectionController
@@ -104,18 +110,57 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT)
+        )
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        setupWindowInsets()
         setupDao()
         setupAdapter()
         setupViewPager()
         observeDatabase()
         observeConnectionState()
         setupButtons()
-        enableEdgeToEdge()
         configureConnectionController()
         connectionController.refreshAvailableCameras()
+    }
+
+    private fun setupWindowInsets() {
+        val topBaseLeft = binding.topOverlayBar.paddingLeft
+        val topBaseTop = binding.topOverlayBar.paddingTop
+        val topBaseRight = binding.topOverlayBar.paddingRight
+        val topBaseBottom = binding.topOverlayBar.paddingBottom
+
+        ViewCompat.setOnApplyWindowInsetsListener(binding.topOverlayBar) { view, insets ->
+            val safe = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            view.updatePadding(
+                left = topBaseLeft + safe.left,
+                top = topBaseTop + safe.top,
+                right = topBaseRight + safe.right,
+                bottom = topBaseBottom
+            )
+            insets
+        }
+
+        val emptyBaseLeft = binding.emptyStateContainer.paddingLeft
+        val emptyBaseRight = binding.emptyStateContainer.paddingRight
+        ViewCompat.setOnApplyWindowInsetsListener(binding.emptyStateContainer) { view, insets ->
+            val safe = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            view.updatePadding(
+                left = emptyBaseLeft + safe.left,
+                top = safe.top,
+                right = emptyBaseRight + safe.right,
+                bottom = safe.bottom
+            )
+            insets
+        }
     }
 
     override fun onResume() {
@@ -157,6 +202,7 @@ class MainActivity : ComponentActivity() {
             override fun onPageSelected(position: Int) {
                 adapter.updatePrimaryPosition(position)
                 prefetchAround(position)
+                renderPhotoChrome()
             }
         })
     }
@@ -179,6 +225,7 @@ class MainActivity : ComponentActivity() {
                         adapter.updatePrimaryPosition(currentIndex)
                         prefetchAround(currentIndex)
                     }
+                    renderPhotoChrome()
                 }
             }
         }
@@ -194,12 +241,14 @@ class MainActivity : ComponentActivity() {
                         renderUsbConnectionState(state, lastState)
                         lastState = state
                         renderConnectButton()
+                        renderEmptyState()
                     }
                 }
                 launch {
                     connectionController.availableCameras.collect { cameras ->
                         cameraPresent = cameras.isNotEmpty()
                         renderConnectButton()
+                        renderEmptyState()
                     }
                 }
             }
@@ -207,23 +256,117 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun renderConnectButton() {
-        val ui = connectButtonUi(connectionState, cameraPresent)
-        binding.connectButton.setText(ui.label)
+        val ui = resolveConnectPillUi(connectionState, cameraPresent)
+        binding.connectButtonLabel.setText(ui.label)
         binding.connectButton.isEnabled = ui.enabled
+
+        val bgRes = when (ui.visualState) {
+            ConnectPillVisualState.READY -> R.drawable.bg_glass_pill_cta
+            ConnectPillVisualState.ERROR -> R.drawable.bg_glass_pill_error
+            else -> R.drawable.bg_glass_pill
+        }
+        binding.connectButton.setBackgroundResource(bgRes)
+        binding.connectButton.alpha = if (ui.enabled || ui.visualState == ConnectPillVisualState.BUSY) {
+            1.0f
+        } else {
+            0.78f
+        }
+
+        val dotColorRes = when (ui.visualState) {
+            ConnectPillVisualState.IDLE -> R.color.status_idle
+            ConnectPillVisualState.READY -> R.color.status_ready
+            ConnectPillVisualState.BUSY -> R.color.status_busy
+            ConnectPillVisualState.CONNECTED -> R.color.status_connected
+            ConnectPillVisualState.ERROR -> R.color.status_error
+        }
+        binding.connectStatusDot.backgroundTintList =
+            ColorStateList.valueOf(ContextCompat.getColor(this, dotColorRes))
+    }
+
+    private fun renderEmptyState() {
+        val isEmpty = adapter.itemCount == 0
+        binding.emptyStateContainer.visibility = if (isEmpty) View.VISIBLE else View.GONE
+        if (!isEmpty) return
+
+        val ui = resolveEmptyStateUi(connectionState, cameraPresent)
+        binding.emptyTitleText.setText(ui.title)
+        binding.emptyDescText.setText(ui.description)
+        if (ui.actionLabel != null) {
+            binding.emptyActionButton.setText(ui.actionLabel)
+            binding.emptyActionButton.isEnabled = ui.actionEnabled
+            binding.emptyActionButton.visibility = View.VISIBLE
+        } else {
+            binding.emptyActionButton.visibility = View.GONE
+        }
+    }
+
+    private fun renderPhotoChrome() {
+        val count = adapter.itemCount
+        val hasPhotos = count > 0
+        binding.photoMetaPill.visibility = if (hasPhotos) View.VISIBLE else View.GONE
+        binding.topBarSpacer.visibility = if (hasPhotos) View.GONE else View.VISIBLE
+        binding.exportButton.isEnabled = hasPhotos
+        binding.exportButton.alpha = if (hasPhotos) 1.0f else 0.35f
+        binding.deleteButton.isEnabled = hasPhotos
+        binding.deleteButton.alpha = if (hasPhotos) 1.0f else 0.35f
+        renderEmptyState()
+
+        if (!hasPhotos) return
+
+        val index = binding.viewPager.currentItem.coerceIn(0, count - 1)
+        val item = adapter.getItem(index) ?: return
+        binding.photoCounterText.text = formatPhotoCounter(index, count)
+        binding.photoNameText.text = item.name ?: getString(R.string.photo_default_name)
+
+        when (resolvePhotoFormatBadge(item.path)) {
+            PhotoFormatBadge.RAW -> {
+                binding.photoFormatBadge.visibility = View.VISIBLE
+                binding.photoFormatBadge.setText(R.string.format_raw)
+                binding.photoFormatBadge.setBackgroundResource(R.drawable.bg_badge_raw)
+                binding.photoFormatBadge.setTextColor(
+                    ContextCompat.getColor(this, R.color.badge_raw_text)
+                )
+            }
+            PhotoFormatBadge.JPEG -> {
+                binding.photoFormatBadge.visibility = View.VISIBLE
+                binding.photoFormatBadge.setText(R.string.format_jpeg)
+                binding.photoFormatBadge.setBackgroundResource(R.drawable.bg_badge_jpg)
+                binding.photoFormatBadge.setTextColor(
+                    ContextCompat.getColor(this, R.color.badge_jpg_text)
+                )
+            }
+            PhotoFormatBadge.OTHER -> {
+                binding.photoFormatBadge.visibility = View.GONE
+            }
+        }
     }
 
     private fun setupButtons() {
         binding.exportButton.setOnClickListener { exportCurrent() }
         binding.deleteButton.setOnClickListener { showDeleteConfirmDialog() }
         binding.connectButton.setOnClickListener { onConnectButtonClick() }
+        binding.emptyActionButton.setOnClickListener {
+            connectionController.connectToAvailableCamera()
+        }
     }
 
     private fun onConnectButtonClick() {
-        if (connectionState is UsbPtpConnectionState.Connected) {
-            connectionController.disconnect("user_request")
-        } else {
-            connectionController.connectToAvailableCamera()
+        when (resolveConnectPillAction(connectionState, cameraPresent)) {
+            ConnectPillAction.CONFIRM_DISCONNECT -> showDisconnectConfirmDialog()
+            ConnectPillAction.CONNECT -> connectionController.connectToAvailableCamera()
+            ConnectPillAction.NONE -> Unit
         }
+    }
+
+    private fun showDisconnectConfirmDialog() {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.dialog_disconnect_title)
+            .setMessage(R.string.dialog_disconnect_message)
+            .setPositiveButton(R.string.dialog_disconnect_confirm) { _, _ ->
+                connectionController.disconnect("user_request")
+            }
+            .setNegativeButton(R.string.dialog_cancel, null)
+            .show()
     }
 
     override fun onDestroy() {

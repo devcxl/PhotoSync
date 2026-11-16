@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="darkroom_bg">#000000</color>
+    <color name="darkroom_surface">#14161C</color>
+    <color name="darkroom_surface_elevated">#1B1E26</color>
+    <color name="darkroom_glass_bg">#B80E1014</color>
+    <color name="darkroom_glass_border">#26FFFFFF</color>
+    <color name="darkroom_text_primary">#F4F5F7</color>
+    <color name="darkroom_text_secondary">#A1A7B3</color>
+    <color name="darkroom_text_muted">#6C7382</color>
+
+    <color name="accent_blue">#3B82F6</color>
+    <color name="accent_blue_pill">#DB2563EB</color>
+    <color name="accent_blue_border">#8093C5FD</color>
+
+    <color name="status_idle">#6B7280</color>
+    <color name="status_ready">#3B82F6</color>
+    <color name="status_busy">#F59E0B</color>
+    <color name="status_connected">#22C55E</color>
+    <color name="status_error">#EF4444</color>
+    <color name="status_error_bg">#D17F1D1D</color>
+    <color name="status_error_border">#73F87171</color>
+
+    <color name="badge_raw_bg">#38F59E0B</color>
+    <color name="badge_raw_border">#59F59E0B</color>
+    <color name="badge_raw_text">#FCD34D</color>
+    <color name="badge_jpg_bg">#24FFFFFF</color>
+    <color name="badge_jpg_text">#E5E7EB</color>
+
+    <color name="exported_bg">#B814532D</color>
+    <color name="exported_border">#8C22C55E</color>
+    <color name="exported_text">#86EFAC</color>
+
+    <color name="danger_bg">#B87F1D1D</color>
+    <color name="danger_border">#8CEF4444</color>
+    <color name="danger_text">#FCA5A5</color>
+</resources>
