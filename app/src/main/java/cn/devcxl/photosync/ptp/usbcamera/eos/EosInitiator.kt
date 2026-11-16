@@ -410,8 +410,13 @@ open class EosInitiator @Throws(PTPException::class) constructor(
             } else {
                 VendorEvent(
                     payload = event,
-                    objectAddedHandle =
-                        if (event.code == EosEventConstants.EosEventObjectAddedEx) event.getIntParam(1) else null,
+                    objectAddedHandle = when (event.code) {
+                        // Bodies announce a new file with either variant depending on firmware
+                        // and file-name rules; missing 0xC1A7 made such a body look silent.
+                        EosEventConstants.EosEventObjectAddedEx,
+                        EosEventConstants.EosEventObjectAddedEx64 -> event.getIntParam(1)
+                        else -> null
+                    },
                     describe = { runCatching { event.toString() }.getOrElse { "event 0x%04x".format(event.code) } },
                 )
             }

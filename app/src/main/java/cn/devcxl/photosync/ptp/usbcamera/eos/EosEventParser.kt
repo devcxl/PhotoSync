@@ -22,6 +22,7 @@ import cn.devcxl.photosync.ptp.usbcamera.PTPException
 import cn.devcxl.photosync.ptp.usbcamera.PTPUnsupportedException
 import cn.devcxl.photosync.ptp.usbcamera.eos.EosEventConstants.EosEventCameraStatusChanged
 import cn.devcxl.photosync.ptp.usbcamera.eos.EosEventConstants.EosEventObjectAddedEx
+import cn.devcxl.photosync.ptp.usbcamera.eos.EosEventConstants.EosEventObjectAddedEx64
 import cn.devcxl.photosync.ptp.usbcamera.eos.EosEventConstants.EosEventPropValueChanged
 import cn.devcxl.photosync.ptp.usbcamera.eos.EosEventConstants.EosEventShutdownTimerUpdated
 import cn.devcxl.photosync.ptp.usbcamera.eos.EosEventConstants.EosPropPictureStyleMonochrome
@@ -46,6 +47,11 @@ import timber.log.Timber
  * @author devcxl
  */
 class EosEventParser(private val inputStream: InputStream) {
+
+    private companion object {
+        /** Bytes of the `ObjectAddedEx64` record before the file name, minus its header. */
+        const val OBJECT_ADDED_EX64_NAME_OFFSET = 36
+    }
 
     init {
         if (inputStream == null) {
@@ -108,6 +114,7 @@ class EosEventParser(private val inputStream: InputStream) {
             }
             EosEventCameraStatusChanged -> event.setParam(1, getNextS32())
             EosEventObjectAddedEx -> parseEosEventObjectAddedEx(event)
+            EosEventObjectAddedEx64 -> parseEosEventObjectAddedEx64(event, len)
             Event.UnreportedStatus -> {
                 //
                 // The standard "I may have missed events" signal. It is not an EOS event,
@@ -164,6 +171,33 @@ class EosEventParser(private val inputStream: InputStream) {
     }
 
     @Throws(IOException::class)
+    /**
+     * `ObjectAddedEx64`: the same announcement as [parseEosEventObjectAddedEx], laid out
+     * with a 64-bit object-id slot. Offsets follow libgphoto2's `PTP_cee_OA64_*` table.
+     *
+     * Cameras send this instead of `0xC181` depending on firmware and file-name rules; a
+     * body that only ever sends this code used to look like it never announced a capture.
+     */
+    private fun parseEosEventObjectAddedEx64(event: EosEvent, payloadLength: Int) {
+        event.setParam(1, getNextS32()) // object handle    (0x08)
+        event.setParam(2, getNextS32()) // storage id       (0x0c)
+        event.setParam(4, getNextS16()) // object format    (0x10)
+        inputStream.skip(10)            //                  (0x12..0x1b)
+        event.setParam(5, getNextS32()) // object size      (0x1c)
+        inputStream.skip(4)             //                  (0x20..0x23)
+        event.setParam(3, getNextS32()) // parent handle    (0x24)
+        inputStream.skip(4)             // second object id (0x28)
+        val name = getNextString()      // file name        (0x2c)
+        event.setParam(6, name)
+        // The tail pads the record to its declared length; deriving it keeps the stream
+        // aligned for the next event instead of assuming a fixed four bytes.
+        val paddedNameBytes = ((name.toByteArray(Charsets.UTF_8).size + 1 + 3) / 4) * 4
+        val remainder = payloadLength - (OBJECT_ADDED_EX64_NAME_OFFSET + paddedNameBytes)
+        if (remainder > 0) {
+            inputStream.skip(remainder.toLong())
+        }
+    }
+
     private fun parseEosEventObjectAddedEx(event: EosEvent) {
         event.setParam(1, getNextS32()) // object id
         event.setParam(2, getNextS32()) // storage id

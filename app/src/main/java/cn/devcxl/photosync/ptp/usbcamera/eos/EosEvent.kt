@@ -22,6 +22,7 @@ import cn.devcxl.photosync.ptp.usbcamera.eos.EosEventConstants.EosEventAvailList
 import cn.devcxl.photosync.ptp.usbcamera.eos.EosEventConstants.EosEventBulbExposureTime
 import cn.devcxl.photosync.ptp.usbcamera.eos.EosEventConstants.EosEventCameraStatusChanged
 import cn.devcxl.photosync.ptp.usbcamera.eos.EosEventConstants.EosEventObjectAddedEx
+import cn.devcxl.photosync.ptp.usbcamera.eos.EosEventConstants.EosEventObjectAddedEx64
 import cn.devcxl.photosync.ptp.usbcamera.eos.EosEventConstants.EosEventObjectContentChanged
 import cn.devcxl.photosync.ptp.usbcamera.eos.EosEventConstants.EosEventObjectInfoChangedEx
 import cn.devcxl.photosync.ptp.usbcamera.eos.EosEventConstants.EosEventObjectRemoved
@@ -93,6 +94,7 @@ class EosEvent {
         fun getEventName(code: Int): String = when (code) {
             EosEventRequestGetEvent -> "EosEventRequestGetEvent"
             EosEventObjectAddedEx -> "EosEventObjectAddedEx"
+            EosEventObjectAddedEx64 -> "EosEventObjectAddedEx64"
             EosEventObjectRemoved -> "EosEventObjectRemoved"
             EosEventRequestGetObjectInfoEx -> "EosEventRequestGetObjectInfoEx"
             EosEventStorageStatusChanged -> "EosEventStorageStatusChanged"

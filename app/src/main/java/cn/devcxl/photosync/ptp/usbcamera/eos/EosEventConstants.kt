@@ -28,6 +28,8 @@ object EosEventConstants {
      */
     const val EosEventRequestGetEvent: Int = 0xC101
     const val EosEventObjectAddedEx: Int = 0xC181
+    /** Same as [EosEventObjectAddedEx] with a 64-bit object-id slot (long file names). */
+    const val EosEventObjectAddedEx64: Int = 0xC1A7
     const val EosEventObjectRemoved: Int = 0xC182
     const val EosEventRequestGetObjectInfoEx: Int = 0xC183
     const val EosEventStorageStatusChanged: Int = 0xC184
