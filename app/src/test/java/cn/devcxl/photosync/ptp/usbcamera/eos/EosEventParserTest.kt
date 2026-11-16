@@ -3,9 +3,11 @@ package cn.devcxl.photosync.ptp.usbcamera.eos
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 
+import cn.devcxl.photosync.ptp.usbcamera.PTPUnsupportedException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.fail
 import org.junit.Test
 
 class EosEventParserTest {
@@ -59,6 +61,79 @@ class EosEventParserTest {
         val event = parser.getNextEvent()
 
         assertEquals(handle, event!!.getIntParam(1))
+    }
+
+    @Test
+    fun shouldKeepStreamAligned_whenVariableLengthPropChangePrecedesObjectAddedEx64() {
+        val propChange = RecordWriter().apply {
+            u32(EosEventConstants.EosPropImageFormat) // 0xD120
+            u32(2)
+            u32(0x10)
+            u32(0x20)
+        }.record(EosEventConstants.EosEventPropValueChanged)
+        val handle = 0x77112233
+        val bytes = propChange + objectAddedEx64(handle, "IMG_0544.JPG")
+        val parser = EosEventParser(ByteArrayInputStream(bytes))
+
+        val first = parser.getNextEvent()
+        val second = parser.getNextEvent()
+
+        assertEquals(EosEventConstants.EosEventPropValueChanged, first!!.code)
+        assertEquals(EosEventConstants.EosEventObjectAddedEx64, second!!.code)
+        assertEquals(handle, second.getIntParam(1))
+        assertFalse(parser.hasEvents())
+    }
+
+    @Test
+    fun shouldKeepStreamAligned_whenUnsupportedAvailListEventPrecedesObjectAddedEx64() {
+        val availList = RecordWriter().apply {
+            u32(EosEventConstants.EosPropAperture)
+            u32(3)
+            u32(28)
+            u32(40)
+            u32(56)
+        }.record(EosEventConstants.EosEventAvailListChanged)
+        val handle = 0x55667788
+        val bytes = availList + objectAddedEx64(handle, "IMG_0545.JPG")
+        val parser = EosEventParser(ByteArrayInputStream(bytes))
+
+        try {
+            parser.getNextEvent()
+            fail("Expected PTPUnsupportedException for AvailListChanged")
+        } catch (_: PTPUnsupportedException) {
+            // Expected; outer stream must remain aligned at the next record.
+        }
+        val second = parser.getNextEvent()
+
+        assertEquals(EosEventConstants.EosEventObjectAddedEx64, second!!.code)
+        assertEquals(handle, second.getIntParam(1))
+        assertFalse(parser.hasEvents())
+    }
+
+    @Test
+    fun shouldParseBackToBackObjectAddedEx64_whenNamesHaveDifferentLengths() {
+        val bytes = objectAddedEx64(101, "A.JPG") + objectAddedEx64(102, "IMG_0551.JPG")
+        val parser = EosEventParser(ByteArrayInputStream(bytes))
+
+        val first = parser.getNextEvent()
+        val second = parser.getNextEvent()
+
+        assertEquals(101, first!!.getIntParam(1))
+        assertEquals(102, second!!.getIntParam(1))
+        assertFalse(parser.hasEvents())
+    }
+
+    @Test
+    fun shouldParseBackToBackObjectAddedEx_whenMultiplePhotosArriveInOneBatch() {
+        val bytes = objectAddedEx(201, "A.JPG") + objectAddedEx(202, "IMG_0002.JPG")
+        val parser = EosEventParser(ByteArrayInputStream(bytes))
+
+        val first = parser.getNextEvent()
+        val second = parser.getNextEvent()
+
+        assertEquals(201, first!!.getIntParam(1))
+        assertEquals(202, second!!.getIntParam(1))
+        assertFalse(parser.hasEvents())
     }
 
     // ---------------------------------------------------------------- record builders

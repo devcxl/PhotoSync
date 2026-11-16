@@ -495,15 +495,27 @@ open class BaselineInitiator : NameFactory, Runnable {
 
             } else {
                 val readBuffer = ByteArray(inMaxPS)
-                var readLen = 0
-                readLen = mConnection!!.bulkTransfer(epIn!!, readBuffer, inMaxPS,
-                    DEFAULT_TIMEOUT)
+                var readLen = mConnection!!.bulkTransfer(
+                    epIn!!,
+                    readBuffer,
+                    inMaxPS,
+                    DEFAULT_TIMEOUT
+                )
                 if (readLen == 0) {
                     Timber.d("rainx note: 有的时候，端点会返回空包，这个时候需要再次发送请求 ")
                     readLen = mConnection!!.bulkTransfer(epIn!!, readBuffer, inMaxPS, DEFAULT_TIMEOUT)
                 }
+                if (readLen < Container.HDR_LEN) {
+                    throw PTPException("bulkTransfer data header failed: $readLen")
+                }
                 data.data = readBuffer
                 data.length = readLen
+                if (data.blockType == Container.BLOCK_TYPE_RESPONSE) {
+                    val directResponse = Response(readBuffer.copyOf(readLen), readLen, this)
+                    data.data = ByteArray(0)
+                    data.length = 0
+                    return directResponse
+                }
                 if ("data" != Container.getBlockTypeName(data.blockType)
                     || data.getCode() != command.getCode()
                     || data.getXID() != command.getXID()) {
@@ -521,22 +533,37 @@ open class BaselineInitiator : NameFactory, Runnable {
 
                 val totalLen = data.getLength()
                 if (totalLen > readLen) {
-                    val dataStream = ByteArrayOutputStream(
-                        totalLen)
+                    val dataStream = ByteArrayOutputStream(totalLen)
 
                     dataStream.write(readBuffer, 0, readLen)
 
                     var remaining = totalLen - readLen
                     while (remaining > 0) {
                         val toRead = if (remaining > inMaxPS) inMaxPS else remaining
-                        readLen = mConnection!!.bulkTransfer(epIn!!, readBuffer, toRead,
-                            DEFAULT_TIMEOUT)
+                        readLen = mConnection!!.bulkTransfer(
+                            epIn!!,
+                            readBuffer,
+                            toRead,
+                            DEFAULT_TIMEOUT
+                        )
+                        if (readLen == 0) {
+                            readLen = mConnection!!.bulkTransfer(
+                                epIn!!,
+                                readBuffer,
+                                toRead,
+                                DEFAULT_TIMEOUT
+                            )
+                        }
+                        if (readLen <= 0) {
+                            throw PTPException("bulkTransfer data continuation failed: $readLen")
+                        }
                         dataStream.write(readBuffer, 0, readLen)
                         remaining -= readLen
                     }
 
-                    data.data = dataStream.toByteArray()
-                    data.length = data.length
+                    val fullBytes = dataStream.toByteArray()
+                    data.data = fullBytes
+                    data.length = fullBytes.size
                 }
                 data.parse()
             }
@@ -1213,7 +1240,9 @@ open class BaselineInitiator : NameFactory, Runnable {
             reconcileObjectList(ReconcileCause.SESSION_START, storages)
             var consecutiveFailures = 0
             var pollIntervalMs = EVENT_POLL_INTERVAL_MS
+            val retryTracker = EventHandleRetryTracker()
             while (isSessionActive() && keepEventLoopRunning()) {
+                objectsImported += retryPendingEventHandles(retryTracker)
                 var events: List<VendorEvent> = emptyList()
                 try {
                     // Null means the vendor left the event channel; it owns the fallback.
@@ -1229,8 +1258,13 @@ open class BaselineInitiator : NameFactory, Runnable {
                 }
 
                 eventsReceived += events.size
-                objectsImported += dispatchVendorEvents(events, storages)
-                pollIntervalMs = nextEventPollIntervalMs(pollIntervalMs, events.size)
+                objectsImported += dispatchVendorEvents(events, storages, retryTracker)
+                val pollSignalCount = if (retryTracker.hasPending()) {
+                    events.size.coerceAtLeast(1)
+                } else {
+                    events.size
+                }
+                pollIntervalMs = nextEventPollIntervalMs(pollIntervalMs, pollSignalCount)
 
                 try {
                     Thread.sleep(pollIntervalMs)
@@ -1274,7 +1308,35 @@ open class BaselineInitiator : NameFactory, Runnable {
      *
      * @return how many objects were imported, for the loop's end-of-session summary.
      */
-    private fun dispatchVendorEvents(events: List<VendorEvent>, storages: IntArray?): Int {
+    private fun retryPendingEventHandles(retryTracker: EventHandleRetryTracker): Int {
+        var imported = 0
+        for (handle in retryTracker.pendingHandles()) {
+            if (handle in syncedObjectHandles) {
+                retryTracker.markSucceeded(handle)
+                continue
+            }
+            val succeeded = try {
+                processFileAddEvent(handle, null)
+            } catch (e: PTPException) {
+                Timber.w(e, "retry event handle %d failed", handle)
+                false
+            }
+            if (succeeded) {
+                rememberImportedHandle(handle)
+                retryTracker.markSucceeded(handle)
+                imported++
+            } else {
+                retryTracker.markFailedAttempt(handle)
+            }
+        }
+        return imported
+    }
+
+    private fun dispatchVendorEvents(
+        events: List<VendorEvent>,
+        storages: IntArray?,
+        retryTracker: EventHandleRetryTracker
+    ): Int {
         var reconcileRequested = false
         var imported = 0
         for (event in events) {
@@ -1287,10 +1349,19 @@ open class BaselineInitiator : NameFactory, Runnable {
                 val handle = event.objectAddedHandle ?: continue
                 if (processFileAddEvent(handle, event.payload)) {
                     rememberImportedHandle(handle)
+                    retryTracker.markSucceeded(handle)
                     imported++
+                } else if (handle !in syncedObjectHandles) {
+                    Timber.tag(PTP_EVENT_TAG).w("事件导入 handle=%d 暂未就绪，加入重试队列", handle)
+                    retryTracker.enqueue(handle)
                 }
             } catch (e: PTPException) {
                 Timber.w(e, "event dispatch failed")
+                event.objectAddedHandle?.let { handle ->
+                    if (handle !in syncedObjectHandles) {
+                        retryTracker.enqueue(handle)
+                    }
+                }
             }
         }
         if (reconcileRequested) {

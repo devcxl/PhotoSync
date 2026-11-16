@@ -91,4 +91,28 @@ class ObjectSyncPolicyTest {
 
         assertEquals(listOf(1, 2), next)
     }
+
+    @Test
+    fun shouldRetryFailedHandleUpToMaxAttempts_whenTransientImportErrorOccurs() {
+        val tracker = EventHandleRetryTracker(maxAttempts = 3)
+        tracker.enqueue(42)
+        tracker.enqueue(42)
+        assertEquals(listOf(42), tracker.pendingHandles())
+
+        tracker.markFailedAttempt(42)
+        assertEquals(listOf(42), tracker.pendingHandles())
+        tracker.markFailedAttempt(42)
+        assertEquals(listOf(42), tracker.pendingHandles())
+        tracker.markFailedAttempt(42)
+        assertEquals(emptyList<Int>(), tracker.pendingHandles())
+    }
+
+    @Test
+    fun shouldClearRetryHandle_whenRetrySucceeds() {
+        val tracker = EventHandleRetryTracker(maxAttempts = 3)
+        tracker.enqueue(99)
+        tracker.markSucceeded(99)
+
+        assertEquals(emptyList<Int>(), tracker.pendingHandles())
+    }
 }

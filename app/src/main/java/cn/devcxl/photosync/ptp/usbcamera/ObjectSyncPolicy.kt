@@ -55,3 +55,40 @@ internal fun withImportedHandle(handled: List<Int>, imported: Int): List<Int> {
     }
     return handled + imported
 }
+
+/**
+ * Pure retry policy for event-mode object handles whose initial `GetObjectInfo`/`GetObject`
+ * failed transiently (e.g., while the camera was busy committing a parameter change or
+ * flushing a new capture to storage).
+ */
+internal class EventHandleRetryTracker(private val maxAttempts: Int = DEFAULT_MAX_ATTEMPTS) {
+    private val attemptsByHandle = LinkedHashMap<Int, Int>()
+
+    fun enqueue(handle: Int) {
+        if (handle !in attemptsByHandle) {
+            attemptsByHandle[handle] = 0
+        }
+    }
+
+    fun pendingHandles(): List<Int> = attemptsByHandle.keys.toList()
+
+    fun hasPending(): Boolean = attemptsByHandle.isNotEmpty()
+
+    fun markSucceeded(handle: Int) {
+        attemptsByHandle.remove(handle)
+    }
+
+    fun markFailedAttempt(handle: Int) {
+        val next = (attemptsByHandle[handle] ?: 0) + 1
+        if (next >= maxAttempts) {
+            attemptsByHandle.remove(handle)
+        } else {
+            attemptsByHandle[handle] = next
+        }
+    }
+
+    companion object {
+        const val DEFAULT_MAX_ATTEMPTS = 10
+    }
+}
+

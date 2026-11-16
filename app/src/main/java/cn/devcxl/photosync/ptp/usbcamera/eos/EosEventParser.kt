@@ -29,6 +29,8 @@ import cn.devcxl.photosync.ptp.usbcamera.eos.EosEventConstants.EosPropPictureSty
 import cn.devcxl.photosync.ptp.usbcamera.eos.EosEventConstants.EosPropPictureStyleStandard
 import cn.devcxl.photosync.ptp.usbcamera.eos.EosEventConstants.EosPropPictureStyleUserSet3
 import cn.devcxl.photosync.ptp.usbcamera.eos.EosEventConstants.EosPropPictureStyleUserTypeMonochrome
+import java.io.ByteArrayInputStream
+import java.io.EOFException
 import java.io.IOException
 import java.io.InputStream
 import timber.log.Timber
@@ -37,32 +39,23 @@ import timber.log.Timber
  * This class parses a stream of bytes as a sequence of events accordingly
  * to how Canon EOS returns events.
  *
- * The event information is returned in a standard PTP data packet as a number
- * of records followed by an empty record at the end of the packet. Each record
- * consists of multiple four-byte fields and always starts with record length
- * field. Further structure of the record depends on the device property code
- * which always goes in the third field. The empty record consists of the size
- * field and four byte empty field, which is always zero.
+ * Each record in the batch is framed by its declared 4-byte length; reading each record's
+ * payload slice up front ensures variable-length property changes or unsupported event
+ * codes never desynchronize subsequent events in the same `EosGetEvent` response.
  *
  * @author devcxl
  */
 class EosEventParser(private val inputStream: InputStream) {
 
     private companion object {
-        /** Bytes of the `ObjectAddedEx64` record before the file name, minus its header. */
-        const val OBJECT_ADDED_EX64_NAME_OFFSET = 36
-
         /** Record header: length + event code. */
         const val PTP_EVENT_HEADER_BYTES = 8
 
+        /** Defensive cap on a single event record payload. */
+        const val MAX_EVENT_PAYLOAD_BYTES = 1024 * 1024
+
         /** The empty record an EOS body returns when it has nothing to report. */
         const val PTP_EVENT_CODE_NOTHING_HAPPENED = 0x0000
-    }
-
-    init {
-        if (inputStream == null) {
-            throw IllegalArgumentException("The input stream cannot be null")
-        }
     }
 
     fun hasEvents(): Boolean {
@@ -78,32 +71,41 @@ class EosEventParser(private val inputStream: InputStream) {
         val event = EosEvent()
 
         try {
-            var len = getNextS32() // len
-            if (len < 0x8) {
+            var len = getNextS32(inputStream)
+            if (len < PTP_EVENT_HEADER_BYTES) {
                 throw PTPUnsupportedException("Unsupported event (size<8 ???)")
             }
-            var code = getNextS32()
+            var code = getNextS32(inputStream)
             // The body frames "nothing happened" as an empty record. Treating it as an
             // unparsable event produced one log line and one throw per idle poll, which is
             // pure noise on a channel polled several times a second.
             while (code == PTP_EVENT_CODE_NOTHING_HAPPENED) {
-                inputStream.skip((len - PTP_EVENT_HEADER_BYTES).toLong())
+                skipExact(inputStream, (len - PTP_EVENT_HEADER_BYTES).toLong())
                 if (!hasEvents()) {
                     // The batch held nothing but the sentinel: there is no event to report.
                     return null
                 }
-                len = getNextS32()
-                if (len < 0x8) {
+                len = getNextS32(inputStream)
+                if (len < PTP_EVENT_HEADER_BYTES) {
                     throw PTPUnsupportedException("Unsupported event (size<8 ???)")
                 }
-                code = getNextS32()
+                code = getNextS32(inputStream)
             }
+            val payloadLength = len - PTP_EVENT_HEADER_BYTES
+            if (payloadLength > MAX_EVENT_PAYLOAD_BYTES) {
+                throw PTPException("EOS event payload too large: $payloadLength")
+            }
+            // Slice exact record payload before parsing so variable-length or unsupported
+            // events can never shift the outer stream away from the next record boundary.
+            val recordBytes = readExactBytes(inputStream, payloadLength)
+            val recordStream = ByteArrayInputStream(recordBytes)
+
             event.code = code
             Timber.tag("EventParser").d(
                 "   Event len: %d, Code: 0x%04x %s",
                 len, code, EosEvent.getEventName(code)
             )
-            parseParameters(event, len - 8)
+            parseParameters(event, recordStream)
             for (i in 1..event.paramCount) {
                 val p = event.getParam(i)
                 when (p) {
@@ -119,155 +121,147 @@ class EosEventParser(private val inputStream: InputStream) {
         return event
     }
 
-
     // --------------------------------------------------------- Private methods
 
     @Throws(PTPException::class, IOException::class)
-    private fun parseParameters(event: EosEvent, len: Int) {
-        val code = event.code
-
-        when (code) {
-            EosEventPropValueChanged -> parsePropValueChangedParameters(event)
-            EosEventShutdownTimerUpdated -> {
-                //
-                // No parameters
-                //
+    private fun parseParameters(event: EosEvent, stream: InputStream) {
+        when (event.code) {
+            EosEventPropValueChanged -> parsePropValueChangedParameters(event, stream)
+            EosEventShutdownTimerUpdated -> Unit
+            EosEventCameraStatusChanged -> {
+                if (stream.available() >= 4) {
+                    event.setParam(1, getNextS32(stream))
+                }
             }
-            EosEventCameraStatusChanged -> event.setParam(1, getNextS32())
-            EosEventObjectAddedEx -> parseEosEventObjectAddedEx(event)
-            EosEventObjectAddedEx64 -> parseEosEventObjectAddedEx64(event, len)
-            Event.UnreportedStatus -> {
-                //
-                // The standard "I may have missed events" signal. It is not an EOS event,
-                // but a body can put a standard code in its batch. Skip its payload and
-                // let it through instead of throwing: the caller turns it into a
-                // reconcile, while a throw here would look like a channel failure.
-                //
-                inputStream.skip(len.toLong())
-            }
-            else -> {
-                inputStream.skip(len.toLong())
-                throw PTPUnsupportedException("Unsupported event")
-            }
+            EosEventObjectAddedEx -> parseEosEventObjectAddedEx(event, stream)
+            EosEventObjectAddedEx64 -> parseEosEventObjectAddedEx64(event, stream)
+            Event.UnreportedStatus -> Unit
+            else -> throw PTPUnsupportedException("Unsupported event")
         }
     }
 
     @Throws(IOException::class)
-    private fun parsePropValueChangedParameters(event: EosEvent) {
-        val property = getNextS32()
-        event.setParam(1, property) // property changed
+    private fun parsePropValueChangedParameters(event: EosEvent, stream: InputStream) {
+        if (stream.available() < 4) return
+        val property = getNextS32(stream)
+        event.setParam(1, property)
 
-        if ((property >= EosPropPictureStyleStandard) &&
-            (property <= EosPropPictureStyleUserSet3)
-        ) {
-            var monochrome = (property == EosPropPictureStyleMonochrome)
-            val size = getNextS32()
-            if (size > 0x1C) {
-                //
-                // It is a EosPropPictureStyleUserXXX, let's read the type (then
-                // we do not use it)
-                //
-                monochrome = (getNextS32() == EosPropPictureStyleUserTypeMonochrome)
+        if (property in EosPropPictureStyleStandard..EosPropPictureStyleUserSet3) {
+            if (stream.available() < 4) return
+            var monochrome = property == EosPropPictureStyleMonochrome
+            val size = getNextS32(stream)
+            if (size > 0x1C && stream.available() >= 4) {
+                monochrome = getNextS32(stream) == EosPropPictureStyleUserTypeMonochrome
             }
             event.setParam(2, if (monochrome) java.lang.Boolean.TRUE else java.lang.Boolean.FALSE)
-            event.setParam(3, getNextS32()) // contrast
-            event.setParam(4, getNextS32()) // sharpness
+            if (stream.available() >= 4) event.setParam(3, getNextS32(stream)) // contrast
+            if (stream.available() >= 4) event.setParam(4, getNextS32(stream)) // sharpness
             if (monochrome) {
-                getNextS32()
-                getNextS32()
-                event.setParam(5, getNextS32()) // filter effect
-                event.setParam(6, getNextS32()) // toning effect
+                if (stream.available() >= 8) {
+                    skipExact(stream, 8)
+                }
+                if (stream.available() >= 4) event.setParam(5, getNextS32(stream)) // filter effect
+                if (stream.available() >= 4) event.setParam(6, getNextS32(stream)) // toning effect
             } else {
-                event.setParam(5, getNextS32()) // saturation
-                event.setParam(6, getNextS32()) // color tone
-                getNextS32()
-                getNextS32()
+                if (stream.available() >= 4) event.setParam(5, getNextS32(stream)) // saturation
+                if (stream.available() >= 4) event.setParam(6, getNextS32(stream)) // color tone
             }
-        } else {
-            //
-            // default
-            //
-            event.setParam(2, getNextS32())
+        } else if (stream.available() >= 4) {
+            event.setParam(2, getNextS32(stream))
         }
     }
 
-    @Throws(IOException::class)
     /**
      * `ObjectAddedEx64`: the same announcement as [parseEosEventObjectAddedEx], laid out
      * with a 64-bit object-id slot. Offsets follow libgphoto2's `PTP_cee_OA64_*` table.
-     *
-     * Cameras send this instead of `0xC181` depending on firmware and file-name rules; a
-     * body that only ever sends this code used to look like it never announced a capture.
      */
-    private fun parseEosEventObjectAddedEx64(event: EosEvent, payloadLength: Int) {
-        event.setParam(1, getNextS32()) // object handle    (0x08)
-        event.setParam(2, getNextS32()) // storage id       (0x0c)
-        event.setParam(4, getNextS16()) // object format    (0x10)
-        inputStream.skip(10)            //                  (0x12..0x1b)
-        event.setParam(5, getNextS32()) // object size      (0x1c)
-        inputStream.skip(4)             //                  (0x20..0x23)
-        event.setParam(3, getNextS32()) // parent handle    (0x24)
-        inputStream.skip(4)             // second object id (0x28)
-        val name = getNextString()      // file name        (0x2c)
-        event.setParam(6, name)
-        // The tail pads the record to its declared length; deriving it keeps the stream
-        // aligned for the next event instead of assuming a fixed four bytes.
-        val paddedNameBytes = ((name.toByteArray(Charsets.UTF_8).size + 1 + 3) / 4) * 4
-        val remainder = payloadLength - (OBJECT_ADDED_EX64_NAME_OFFSET + paddedNameBytes)
-        if (remainder > 0) {
-            inputStream.skip(remainder.toLong())
+    @Throws(IOException::class)
+    private fun parseEosEventObjectAddedEx64(event: EosEvent, stream: InputStream) {
+        event.setParam(1, getNextS32(stream)) // object handle    (0x08)
+        event.setParam(2, getNextS32(stream)) // storage id       (0x0c)
+        event.setParam(4, getNextS16(stream)) // object format    (0x10)
+        skipExact(stream, 10)                 //                  (0x12..0x1b)
+        event.setParam(5, getNextS32(stream)) // object size      (0x1c)
+        skipExact(stream, 4)                  //                  (0x20..0x23)
+        event.setParam(3, getNextS32(stream)) // parent handle    (0x24)
+        skipExact(stream, 4)                  // second object id (0x28)
+        event.setParam(6, getNextString(stream)) // file name     (0x2c)
+    }
+
+    @Throws(IOException::class)
+    private fun parseEosEventObjectAddedEx(event: EosEvent, stream: InputStream) {
+        event.setParam(1, getNextS32(stream)) // object id
+        event.setParam(2, getNextS32(stream)) // storage id
+        event.setParam(4, getNextS16(stream)) // format
+        skipExact(stream, 10)
+        event.setParam(5, getNextS32(stream)) // size
+        event.setParam(3, getNextS32(stream)) // parent object id
+        skipExact(stream, 4)                  // unknown
+        event.setParam(6, getNextString(stream)) // file name
+    }
+
+    @Throws(IOException::class)
+    private fun readExactBytes(stream: InputStream, count: Int): ByteArray {
+        val buf = ByteArray(count)
+        var offset = 0
+        while (offset < count) {
+            val read = stream.read(buf, offset, count - offset)
+            if (read < 0) {
+                throw EOFException("Unexpected EOF reading $count event bytes (got $offset)")
+            }
+            offset += read
+        }
+        return buf
+    }
+
+    @Throws(IOException::class)
+    private fun skipExact(stream: InputStream, count: Long) {
+        var remaining = count
+        while (remaining > 0) {
+            val skipped = stream.skip(remaining)
+            if (skipped > 0) {
+                remaining -= skipped
+            } else {
+                if (stream.read() < 0) {
+                    throw EOFException("Unexpected EOF skipping $count bytes")
+                }
+                remaining--
+            }
         }
     }
 
-    private fun parseEosEventObjectAddedEx(event: EosEvent) {
-        event.setParam(1, getNextS32()) // object id
-        event.setParam(2, getNextS32()) // storage id
-        event.setParam(4, getNextS16()) // format
-        inputStream.skip(10)
-        event.setParam(5, getNextS32()) // size
-        event.setParam(3, getNextS32()) // parent object id
-        inputStream.skip(4) // unknown
-        event.setParam(6, getNextString()) // file name
-        inputStream.skip(4)
+    @Throws(IOException::class)
+    private fun getNextS32(stream: InputStream): Int {
+        val b0 = stream.read()
+        val b1 = stream.read()
+        val b2 = stream.read()
+        val b3 = stream.read()
+        if ((b0 or b1 or b2 or b3) < 0) {
+            throw EOFException("Unexpected EOF reading S32")
+        }
+        return (b0 and 0xff) or
+            ((b1 and 0xff) shl 8) or
+            ((b2 and 0xff) shl 16) or
+            ((b3 and 0xff) shl 24)
     }
 
     @Throws(IOException::class)
-    private fun getNextS32(): Int {
-        var retval: Int
-
-        retval = (0xff and inputStream.read())
-        retval = retval or ((0xff and inputStream.read()) shl 8)
-        retval = retval or ((0xff and inputStream.read()) shl 16)
-        retval = retval or (inputStream.read() shl 24)
-
-        return retval
+    private fun getNextS16(stream: InputStream): Int {
+        val b0 = stream.read()
+        val b1 = stream.read()
+        if ((b0 or b1) < 0) {
+            throw EOFException("Unexpected EOF reading S16")
+        }
+        return (b0 and 0xff) or ((b1 and 0xff) shl 8)
     }
 
     @Throws(IOException::class)
-    private fun getNextS16(): Int {
-        var retval: Int
-
-        retval = (0xff and inputStream.read())
-        retval = retval or ((0xff and inputStream.read()) shl 8)
-
-        return retval
-    }
-
-    @Throws(IOException::class)
-    private fun getNextString(): String {
+    private fun getNextString(stream: InputStream): String {
         val retval = StringBuilder()
-
         var c: Int
-        while (inputStream.read().also { c = it } != 0) {
+        while (stream.read().also { c = it } > 0) {
             retval.append(c.toChar())
         }
-
-        //
-        // At this point we read the string and one zero. We need to read the
-        // remaining 3 zeros
-        //
-        inputStream.skip(3)
-
         return retval.toString()
     }
 }
