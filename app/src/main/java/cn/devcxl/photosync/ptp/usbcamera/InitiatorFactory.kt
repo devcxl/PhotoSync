@@ -15,27 +15,27 @@ class InitiatorFactory {
         @JvmStatic
         @Throws(PTPException::class)
         fun produceInitiator(device: UsbDevice, usbManager: UsbManager): BaselineInitiator {
-            val bi: BaselineInitiator
+            val connection = usbManager.openDevice(device)
+                ?: throw PTPException("Unable to open USB device: ${device.deviceName}")
             val cd = CameraDetector(device)
-            when (cd.getSupportedVendorId()) {
+            return when (cd.getSupportedVendorId()) {
                 CameraDetector.VENDOR_ID_CANON -> {
                     Timber.tag(TAG).d("Device is CANON, open EOSInitiator")
-                    bi = EosInitiator(device, usbManager.openDevice(device))
+                    EosInitiator(device, connection)
                 }
                 CameraDetector.VENDOR_ID_NIKON -> {
                     Timber.tag(TAG).d("Device is Nikon, open NikonInitiator")
-                    bi = NikonInitiator(device, usbManager.openDevice(device))
+                    NikonInitiator(device, connection)
                 }
                 CameraDetector.VENDOR_ID_SONY -> {
                     Timber.tag(TAG).d("Device is Sony, open SonyInitiator")
-                    bi = SonyInitiator(device, usbManager.openDevice(device))
+                    SonyInitiator(device, connection)
                 }
                 else -> {
                     Timber.tag(TAG).d("Unknown device, open BaselineInitiator")
-                    bi = BaselineInitiator(device, usbManager.openDevice(device))
+                    BaselineInitiator(device, connection)
                 }
             }
-            return bi
         }
     }
 }

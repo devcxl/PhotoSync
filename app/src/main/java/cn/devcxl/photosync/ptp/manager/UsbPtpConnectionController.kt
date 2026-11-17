@@ -277,18 +277,22 @@ class UsbPtpConnectionController(
         }
         _connectionState.value = UsbPtpConnectionState.Connecting(deviceId)
 
+        var produced: BaselineInitiator? = null
         val initiator = try {
-            val produced = InitiatorFactory.produceInitiator(device, usbManager)
-            produced.getClearStatus()
-            val triggerDecision = produced.triggerDecision()
-            produced.setSyncTriggerMode(triggerDecision.toSyncTriggerMode())
+            val created = InitiatorFactory.produceInitiator(device, usbManager)
+            produced = created
+            created.getClearStatus()
+            val triggerDecision = created.triggerDecision()
+            created.setSyncTriggerMode(triggerDecision.toSyncTriggerMode())
             Timber.i("同步触发方式: %s, device=%s", triggerDecision, deviceId.deviceName)
-            fileDownloadPath?.let(produced::setFileDownloadPath)
-            transferListener?.let(produced::setFileTransferListener)
-            downloadedListener?.let(produced::setFileDownloadedListener)
-            produced.openSession()
-            produced
+            fileDownloadPath?.let(created::setFileDownloadPath)
+            transferListener?.let(created::setFileTransferListener)
+            downloadedListener?.let(created::setFileDownloadedListener)
+            created.openSession()
+            created
         } catch (e: Exception) {
+            runCatching { produced?.close() }
+                .onFailure { closeErr -> Timber.w(closeErr, "Failed to close initiator after connect failure") }
             stateMutex.withLock {
                 currentDeviceId = null
             }

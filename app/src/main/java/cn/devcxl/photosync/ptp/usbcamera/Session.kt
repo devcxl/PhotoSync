@@ -33,5 +33,14 @@ open class Session {
         active = false
     }
 
+    /**
+     * Resets session counters and inactive state while preserving the [NameFactory] binding.
+     */
+    fun reset() {
+        sessionId = 0
+        xid = 0
+        active = false
+    }
+
     fun getSessionId(): Int = sessionId
 }

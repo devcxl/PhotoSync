@@ -90,13 +90,6 @@ class SonyInitiator(dev: UsbDevice, connection: UsbDeviceConnection) : BaselineI
     }
 
     @Throws(PTPException::class)
-    override fun openSession() {
-        Timber.d("claimInterface")
-        mConnection!!.claimInterface(intf!!, false)
-        super.openSession()
-    }
-
-    @Throws(PTPException::class)
     override fun close() {
         super.close()
     }

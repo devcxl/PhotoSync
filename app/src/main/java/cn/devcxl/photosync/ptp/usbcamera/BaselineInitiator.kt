@@ -102,6 +102,8 @@ open class BaselineInitiator : NameFactory, Runnable {
     @JvmField var fileNameRule: Int = SyncParams.FILE_NAME_RULE_HANDLE_ID
 
     protected constructor() {
+        session = Session()
+        session.setFactory(this as NameFactory)
     }
 
     /**
@@ -121,12 +123,12 @@ open class BaselineInitiator : NameFactory, Runnable {
         if (dev == null) {
             throw PTPException("dev = null")
         }
-        session = Session()
-        session.setFactory(this as NameFactory)
         this.device = dev
         intf = findUsbInterface(dev)
 
         if (intf == null) {
+            runCatching { connection.close() }
+            this.mConnection = null
             throw PTPException("No PTP interfaces associated to the device")
         }
 
@@ -143,21 +145,40 @@ open class BaselineInitiator : NameFactory, Runnable {
                 epEv = ep
             }
         }
-        endpointSanityCheck()
+        try {
+            endpointSanityCheck()
+        } catch (t: Throwable) {
+            runCatching { connection.close() }
+            this.mConnection = null
+            throw t
+        }
         inMaxPS = epIn?.maxPacketSize ?: 0
         intrMaxPS = epEv?.maxPacketSize ?: 0
 
-        reset()
-        if (getClearStatus() != Response.OK
-            && getDeviceStatus(null) != Response.OK) {
-            throw PTPException("can't init")
+        if (!connection.claimInterface(intf!!, true)) {
+            runCatching { connection.close() }
+            this.mConnection = null
+            throw PTPException("Unable to claim PTP interface")
         }
 
-        Timber.d("trying getDeviceInfoUncached")
-        info = getDeviceInfoUncached()
+        try {
+            reset()
+            if (getClearStatus() != Response.OK
+                && getDeviceStatus(null) != Response.OK) {
+                throw PTPException("can't init")
+            }
 
-        if (info!!.vendorExtensionId != 0) {
-            info!!.factory = updateFactory(info!!.vendorExtensionId)
+            Timber.d("trying getDeviceInfoUncached")
+            info = getDeviceInfoUncached()
+
+            if (info!!.vendorExtensionId != 0) {
+                info!!.factory = updateFactory(info!!.vendorExtensionId)
+            }
+        } catch (t: Throwable) {
+            runCatching { connection.releaseInterface(intf!!) }
+            runCatching { connection.close() }
+            this.mConnection = null
+            throw t
         }
     }
 
@@ -205,34 +226,78 @@ open class BaselineInitiator : NameFactory, Runnable {
 
     @Throws(PTPException::class)
     open fun openSession() {
-        var command: Command
-        var response: Response
-
         synchronized(session) {
-            command = Command(Command.OpenSession, session,
-                session.nextSessionID)
-            response = transactUnsync(command, null)
-            when (response.getCode()) {
+            val initialCommand = Command(Command.OpenSession, session, session.nextSessionID)
+            val initialResponse = transactInternal(initialCommand, null)
+            when (initialResponse.getCode()) {
                 Response.OK -> {
-                    session.open()
-                    pollingThread = Thread(this)
-                    pollingThread!!.start()
+                    activateSession()
                     return
                 }
                 Response.SessionAlreadyOpen -> {
-                    closeSession()
-                    session = Session()
-                    command = Command(Command.OpenSession, session,
-                        session.nextSessionID)
-                    response = transactUnsync(command, null)
-                    if (response.getCode() == Response.OK) {
-                        session.open()
-                        pollingThread = Thread(this)
-                        pollingThread!!.start()
-                    }
+                    handleSessionAlreadyOpen()
+                    return
                 }
+                else -> throw PTPOpenSessionException(initialResponse.toString(), initialResponse.getCode())
             }
-            throw PTPOpenSessionException(response.toString(), response.getCode())
+        }
+    }
+
+    private fun activateSession() {
+        session.open()
+        startPolling()
+    }
+
+    protected open fun startPolling() {
+        pollingThread = Thread(this)
+        pollingThread!!.start()
+    }
+
+    /**
+     * Recovers when `OpenSession` returns `SessionAlreadyOpen` (`0x201E`).
+     *
+     * Android's built-in MTP host or certain camera firmware (e.g. Panasonic in tether mode)
+     * may hold an active PTP session when the app takes over the interface. We try a single
+     * `CloseSession` + fresh `OpenSession` first so transaction IDs resynchronize from 1; if
+     * closing is unsupported or rejected, or reopening still reports `SessionAlreadyOpen`, we
+     * adopt the existing camera session and proceed.
+     */
+    @Throws(PTPException::class)
+    private fun handleSessionAlreadyOpen() {
+        Timber.w("OpenSession returned SessionAlreadyOpen (0x201E), attempting CloseSession before retry")
+        val supportsClose = info?.supportsOperation(Command.CloseSession) ?: true
+        if (!supportsClose) {
+            Timber.i("Camera does not advertise CloseSession; adopting existing PTP session")
+            activateSession()
+            return
+        }
+
+        val closeCommand = Command(Command.CloseSession, session)
+        val closeResponse = transactInternal(closeCommand, null, allowInactiveSession = true)
+        val closeCode = closeResponse.getCode()
+        if (closeCode != Response.OK && closeCode != Response.SessionNotOpen) {
+            Timber.w(
+                "CloseSession during 0x201E recovery returned 0x%s; adopting existing PTP session",
+                Integer.toHexString(closeCode)
+            )
+            activateSession()
+            return
+        }
+
+        session.reset()
+        val retryCommand = Command(Command.OpenSession, session, session.nextSessionID)
+        val retryResponse = transactInternal(retryCommand, null)
+        when (retryResponse.getCode()) {
+            Response.OK -> {
+                activateSession()
+                return
+            }
+            Response.SessionAlreadyOpen -> {
+                Timber.i("Retry OpenSession still returned SessionAlreadyOpen; adopting existing PTP session")
+                activateSession()
+                return
+            }
+            else -> throw PTPOpenSessionException(retryResponse.toString(), retryResponse.getCode())
         }
     }
 
@@ -276,6 +341,7 @@ open class BaselineInitiator : NameFactory, Runnable {
         try {
             if (mConnection != null && intf != null) mConnection!!.releaseInterface(intf!!)
             if (mConnection != null) mConnection!!.close()
+            mConnection = null
             device = null
             info = null
         } catch (ignore: Exception) {
@@ -436,6 +502,15 @@ open class BaselineInitiator : NameFactory, Runnable {
 
     @Throws(PTPException::class)
     fun transactUnsync(command: Command, data: Data?): Response {
+        return transactInternal(command, data, allowInactiveSession = false)
+    }
+
+    @Throws(PTPException::class)
+    private fun transactInternal(
+        command: Command,
+        data: Data?,
+        allowInactiveSession: Boolean = false
+    ): Response {
         if ("command" != Container.getBlockTypeName(command.blockType)) {
             throw IllegalArgumentException(command.toString())
         }
@@ -446,7 +521,7 @@ open class BaselineInitiator : NameFactory, Runnable {
             if (Command.OpenSession == opcode) {
                 throw IllegalStateException("session already open")
             }
-        } else {
+        } else if (!allowInactiveSession) {
             if (Command.GetDeviceInfo != opcode
                 && Command.OpenSession != opcode) {
                 throw IllegalStateException("no session")
@@ -456,6 +531,13 @@ open class BaselineInitiator : NameFactory, Runnable {
         if (info != null && !info!!.supportsOperation(opcode)) {
             throw UnsupportedOperationException(command.getCodeName(opcode))
         }
+
+        return executeBulkTransaction(command, data)
+    }
+
+    @Throws(PTPException::class)
+    internal open fun executeBulkTransaction(command: Command, data: Data?): Response {
+        val opcode = command.getCode()
 
         var response: Response
         var abort = true
