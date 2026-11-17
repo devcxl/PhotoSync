@@ -126,6 +126,8 @@ class MainActivity : AppCompatActivity() {
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private val rawThumbnailDispatcher = Dispatchers.Default.limitedParallelism(1)
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val rawExportDispatcher = Dispatchers.IO.limitedParallelism(1)
     private val previewLongEdgePx: Int by lazy {
         maxOf(resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
             .coerceAtLeast(1)
@@ -1126,11 +1128,13 @@ class MainActivity : AppCompatActivity() {
                 } else if (ExtensionUtils.isRawExtension(ext)) {
                     // RAW：优先使用缓存Bitmap，否则直接原生解码为 ARGB_8888 Bitmap
                     val cachedBmp = fullBitmapCache.get(path)
-                    val bmp = cachedBmp ?: try {
-                        RawWrapper.decodeToBitmap(path)
-                    } catch (e: Exception) {
-                        Timber.w(e, "RAW decode failed for path=%s, falling back to null", path)
-                        null
+                    val bmp = cachedBmp ?: withContext(rawExportDispatcher) {
+                        try {
+                            RawWrapper.decodeToBitmap(path)
+                        } catch (e: Exception) {
+                            Timber.w(e, "RAW decode failed for path=%s, falling back to null", path)
+                            null
+                        }
                     }
                     try {
                         if (bmp != null) saveBitmapToGallery(bmp, displayName) else null
