@@ -3,6 +3,9 @@
 #include <android/bitmap.h>
 #include <android/log.h>
 #include "libraw.h"
+#include "raw_postprocess.h"
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <ctime>
 #include <memory>
@@ -146,14 +149,68 @@ static int64_t monotonicMillis() {
 }
 
 /**
- * Configures LibRaw output parameters, unpacks, and runs dcraw_process() into an
- * 8-bit sRGB in-memory bitmap image. Caller owns the returned pointer (usually via ImageGuard).
+ * Caps LibRaw's histogram auto-brightening gain so low-key / night photos do not get
+ * pushed past +2.0 EV (4.0x) into heavy shadow noise, and returns the effective gain.
  */
-static libraw_processed_image_t* processRawToMemImage(LibRaw& proc, const char* cpath) {
+static float clampAutoBrightGain(LibRaw& proc, libraw_output_params_t& params) {
+    libraw_internal_data_t* internal = proc.get_internal_data_pointer();
+    if (!internal || !internal->output_data.histogram) {
+        return 1.0f;
+    }
+
+    const int width = proc.imgdata.sizes.width;
+    const int height = proc.imgdata.sizes.height;
+    const int colors = proc.imgdata.idata.colors;
+    int perc = static_cast<int>(static_cast<double>(width) * static_cast<double>(height) * params.auto_bright_thr);
+    if (internal->internal_output_params.fuji_width) {
+        perc /= 2;
+    }
+
+    int t_white = 0;
+    for (int c = 0; c < colors && c < 4; ++c) {
+        int val = 0x2000;
+        int total = 0;
+        while (--val > 32) {
+            if ((total += internal->output_data.histogram[c][val]) > perc) {
+                break;
+            }
+        }
+        if (t_white < val) {
+            t_white = val;
+        }
+    }
+
+    constexpr int kMinAutoBrightWhite = 2048; // 8192 / 2048 = 4.0x (+2.0 EV cap)
+    constexpr float kMaxAutoBrightGain = 4.0f;
+    if (t_white > 0 && t_white < kMinAutoBrightWhite) {
+        params.no_auto_bright = 1;
+        params.bright = kMaxAutoBrightGain;
+        ALOGI("Auto-bright capped: t_white=%d -> bright=%.2fx (+2.0 EV max)", t_white, params.bright);
+        return kMaxAutoBrightGain;
+    }
+    if (t_white > 0) {
+        const float gain = std::max(1.0f, 8192.0f / static_cast<float>(t_white));
+        ALOGI("Auto-bright active: t_white=%d (gain=%.2fx)", t_white, gain);
+        return gain;
+    }
+    return 1.0f;
+}
+
+/**
+ * Configures LibRaw output parameters, unpacks, and runs dcraw_process() into a
+ * 16-bit sRGB in-memory bitmap image for high-precision tone mapping.
+ * Caller owns the returned pointer (usually via ImageGuard).
+ */
+static libraw_processed_image_t* processRawToMemImage(
+    LibRaw& proc,
+    const char* cpath,
+    float& outEffectiveIso
+) {
+    outEffectiveIso = 0.0f;
     libraw_output_params_t& params = proc.imgdata.params;
 
-    // Output format
-    params.output_bps   = 8;   // 8-bit output
+    // Output format: 16-bit sRGB so post-process tone curve & vibrance avoid 8-bit banding
+    params.output_bps   = 16;  // 16-bit output
     params.output_color = 1;   // sRGB color space
     params.output_tiff  = 0;   // PPM/BITMAP output (in-memory)
 
@@ -165,10 +222,9 @@ static libraw_processed_image_t* processRawToMemImage(LibRaw& proc, const char* 
     params.use_camera_wb = 1;  // Use camera WB
     params.use_auto_wb   = 0;  // Disable auto WB
 
-    // Demosaicing quality: PPG (2) is 2-3x faster than AHD (3) with crisp edges on high-MP sensors
-    params.user_qual = 2;
-
-    // Skip extra full-frame median filter pass and FBDD denoising for export speed
+    // Demosaicing quality: PPG (2) is OpenMP-parallel and 2.5-3x faster than AHD (3);
+    // chroma/luma denoising is handled in the fast OpenMP YCbCr post-process pass.
+    params.user_qual     = 2;
     params.med_passes    = 0;
     params.fbdd_noiserd  = 0;
     params.threshold     = 0.0;
@@ -181,9 +237,10 @@ static libraw_processed_image_t* processRawToMemImage(LibRaw& proc, const char* 
     params.aber[1] = 1.0;
     params.aber[2] = 1.0;
 
-    // Brightness – no exposure shift; disable auto-bright for consistent output
-    params.no_auto_bright = 1;
-    params.bright         = 1.0;
+    // Adaptive brightness – recover RAW highlight headroom with conservative 0.2% clip threshold
+    params.no_auto_bright  = 0;
+    params.auto_bright_thr = 0.002f;
+    params.bright          = 1.0f;
 
     int ret = proc.open_file(cpath);
     if (ret != LIBRAW_SUCCESS) {
@@ -208,6 +265,10 @@ static libraw_processed_image_t* processRawToMemImage(LibRaw& proc, const char* 
         return nullptr;
     }
 
+    const float brightGain = clampAutoBrightGain(proc, params);
+    const float baseIso = proc.imgdata.other.iso_speed > 0.0f ? proc.imgdata.other.iso_speed : 100.0f;
+    outEffectiveIso = baseIso * brightGain;
+
     int imgRet = LIBRAW_SUCCESS;
     libraw_processed_image_t* img = proc.dcraw_make_mem_image(&imgRet);
     if (!img || imgRet != LIBRAW_SUCCESS) {
@@ -217,7 +278,8 @@ static libraw_processed_image_t* processRawToMemImage(LibRaw& proc, const char* 
         return nullptr;
     }
 
-    if (img->type != LIBRAW_IMAGE_BITMAP || img->bits != 8 || (img->colors != 1 && img->colors < 3)) {
+    if (img->type != LIBRAW_IMAGE_BITMAP || (img->bits != 8 && img->bits != 16) ||
+        (img->colors != 1 && img->colors < 3)) {
         ALOGE("Unexpected processed image type=%d bits=%d colors=%d for %s",
               img->type, img->bits, img->colors, cpath);
         LibRaw::dcraw_clear_mem(img);
@@ -277,7 +339,8 @@ Java_cn_devcxl_photosync_wrapper_RawWrapper_decodeToRGB(JNIEnv* env, jobject /*t
     LibRaw proc;
     LibRawGuard procGuard(&proc);
 
-    libraw_processed_image_t* img = processRawToMemImage(proc, cpath);
+    float effectiveIso = 0.0f;
+    libraw_processed_image_t* img = processRawToMemImage(proc, cpath, effectiveIso);
     if (!img) return nullptr;
     ImageGuard imgGuard(img);
 
@@ -311,29 +374,12 @@ Java_cn_devcxl_photosync_wrapper_RawWrapper_decodeToRGB(JNIEnv* env, jobject /*t
     buffer[6] = static_cast<unsigned char>((height >> 16) & 0xFF);
     buffer[7] = static_cast<unsigned char>((height >> 24) & 0xFF);
 
-    if (img->colors == 3) {
-        std::memcpy(buffer.get() + 8, img->data, pixelBytes);
-    } else if (img->colors == 1) {
-        const size_t pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
-        unsigned char* dst = buffer.get() + 8;
-        for (size_t i = 0; i < pixelCount; ++i) {
-            const unsigned char v = img->data[i];
-            *dst++ = v;
-            *dst++ = v;
-            *dst++ = v;
-        }
-    } else {
-        const unsigned bytesPerPixel = (img->bits / 8) * static_cast<unsigned>(img->colors);
-        unsigned char* dst = buffer.get() + 8;
-        for (uint32_t y = 0; y < height; ++y) {
-            const unsigned char* srcRow = img->data + static_cast<size_t>(y) * width * bytesPerPixel;
-            for (uint32_t x = 0; x < width; ++x) {
-                const unsigned char* srcPx = srcRow + x * bytesPerPixel;
-                *dst++ = srcPx[0];
-                *dst++ = srcPx[1];
-                *dst++ = srcPx[2];
-            }
-        }
+    photosync::raw::ToneCurveParams toneParams{};
+    toneParams.effectiveIso = effectiveIso;
+    if (!photosync::raw::writeProcessedToRgb888(
+            img->data, width, height, img->bits, img->colors, buffer.get() + 8, toneParams)) {
+        ALOGE("writeProcessedToRgb888 failed for %s", cpath);
+        return nullptr;
     }
 
     env->SetByteArrayRegion(out, 0, static_cast<jsize>(totalBytes),
@@ -363,7 +409,8 @@ Java_cn_devcxl_photosync_wrapper_RawWrapper_decodeToBitmapNative(JNIEnv* env, jo
     LibRaw proc;
     LibRawGuard procGuard(&proc);
 
-    libraw_processed_image_t* img = processRawToMemImage(proc, cpath);
+    float effectiveIso = 0.0f;
+    libraw_processed_image_t* img = processRawToMemImage(proc, cpath, effectiveIso);
     if (!img) return nullptr;
     ImageGuard imgGuard(img);
 
@@ -413,35 +460,20 @@ Java_cn_devcxl_photosync_wrapper_RawWrapper_decodeToBitmapNative(JNIEnv* env, jo
         return nullptr;
     }
 
-    const unsigned srcChannels = static_cast<unsigned>(img->colors);
-    const size_t srcStride = static_cast<size_t>(width) * srcChannels;
-    for (uint32_t y = 0; y < height; ++y) {
-        const unsigned char* srcRow = img->data + static_cast<size_t>(y) * srcStride;
-        uint8_t* dstRow = static_cast<uint8_t*>(pixels) + static_cast<size_t>(y) * info.stride;
-        if (srcChannels == 1) {
-            for (uint32_t x = 0; x < width; ++x) {
-                const uint8_t v = srcRow[x];
-                uint8_t* d = dstRow + x * 4;
-                d[0] = v;
-                d[1] = v;
-                d[2] = v;
-                d[3] = 0xFF;
-            }
-        } else {
-            for (uint32_t x = 0; x < width; ++x) {
-                const unsigned char* s = srcRow + x * srcChannels;
-                uint8_t* d = dstRow + x * 4;
-                d[0] = s[0]; // R
-                d[1] = s[1]; // G
-                d[2] = s[2]; // B
-                d[3] = 0xFF; // A
-            }
-        }
-    }
+    photosync::raw::ToneCurveParams toneParams{};
+    toneParams.effectiveIso = effectiveIso;
+    const bool ok = photosync::raw::writeProcessedToRgba8888(
+        img->data, width, height, img->bits, img->colors,
+        static_cast<uint8_t*>(pixels), info.stride, toneParams
+    );
 
     AndroidBitmap_unlockPixels(env, bitmap);
+    if (!ok) {
+        ALOGE("writeProcessedToRgba8888 failed for %s", cpath);
+        return nullptr;
+    }
 
-    ALOGI("Successfully decoded RAW Bitmap %ux%u in %" PRId64 " ms from %s",
-          width, height, monotonicMillis() - tStart, cpath);
+    ALOGI("Successfully decoded RAW Bitmap %ux%u (effectiveISO=%.0f) in %" PRId64 " ms from %s",
+          width, height, effectiveIso, monotonicMillis() - tStart, cpath);
     return bitmap;
 }
