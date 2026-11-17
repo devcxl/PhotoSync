@@ -89,6 +89,8 @@ class MainActivity : AppCompatActivity() {
         private const val JPEG_MIME = "image/jpeg"
         private const val JPEG_EXPORT_QUALITY = 100
         private const val GALLERY_DIR_NAME = "PhotoSync"
+        private const val PREFS_NAME = "photosync_prefs"
+        private const val PREF_DELETE_ON_CAMERA = "delete_on_camera"
         private val exportDateFormat = ThreadLocal.withInitial {
             SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
         }
@@ -1285,9 +1287,15 @@ class MainActivity : AppCompatActivity() {
         val cameraDeleteBox = dialogView.findViewById<View>(R.id.cameraDeleteBox)
         val deleteOnCameraCheck = dialogView.findViewById<CheckBox>(R.id.deleteOnCameraCheck)
         val blockerHint = dialogView.findViewById<TextView>(R.id.cameraDeleteHint)
-        deleteOnCameraCheck.isChecked = false
-        deleteOnCameraCheck.isEnabled = blocker == null
-        if (blocker == null) {
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        val canDeleteOnCamera = blocker == null
+        val rememberedDeleteOnCamera = prefs.getBoolean(PREF_DELETE_ON_CAMERA, false)
+        deleteOnCameraCheck.isChecked = initialDeleteOnCameraChecked(
+            canDeleteOnCamera = canDeleteOnCamera,
+            rememberedDeleteOnCamera = rememberedDeleteOnCamera
+        )
+        deleteOnCameraCheck.isEnabled = canDeleteOnCamera
+        if (canDeleteOnCamera) {
             cameraDeleteBox.setBackgroundResource(R.drawable.bg_camera_delete_box)
             deleteOnCameraCheck.setTextColor(ContextCompat.getColor(this, R.color.danger_text))
             blockerHint.visibility = View.GONE
@@ -1304,6 +1312,11 @@ class MainActivity : AppCompatActivity() {
             .setTitle(getString(R.string.dialog_delete_title_named, displayName))
             .setView(dialogView)
             .setPositiveButton(getString(R.string.dialog_delete_confirm)) { _, _ ->
+                if (canDeleteOnCamera) {
+                    prefs.edit()
+                        .putBoolean(PREF_DELETE_ON_CAMERA, deleteOnCameraCheck.isChecked)
+                        .apply()
+                }
                 deleteCurrent(index, deleteOnCameraCheck.isChecked)
             }
             .setNegativeButton(getString(R.string.dialog_cancel), null)

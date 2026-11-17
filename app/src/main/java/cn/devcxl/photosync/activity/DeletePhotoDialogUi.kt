@@ -19,6 +19,17 @@ internal fun cameraDeleteBlockerMessage(blocker: CameraDeleteBlocker): Int {
 }
 
 /**
+ * Resolves the initial checked state of the "delete on camera" checkbox.
+ *
+ * Only pre-checks when camera deletion is actually available ([canDeleteOnCamera]);
+ * otherwise stays unchecked so a disabled checkbox never displays a misleading check.
+ */
+internal fun initialDeleteOnCameraChecked(
+    canDeleteOnCamera: Boolean,
+    rememberedDeleteOnCamera: Boolean
+): Boolean = canDeleteOnCamera && rememberedDeleteOnCamera
+
+/**
  * Turns a camera delete outcome into the message to show.
  *
  * @return the message to show, or null when the camera really deleted the object.

@@ -5,7 +5,9 @@ import cn.devcxl.photosync.ptp.manager.CameraDeleteBlocker
 import cn.devcxl.photosync.ptp.manager.CameraDeleteResult
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DeletePhotoDialogUiTest {
@@ -84,6 +86,28 @@ class DeletePhotoDialogUiTest {
         assertEquals(
             R.string.camera_delete_failed_not_supported,
             cameraDeleteFailureMessage(CameraDeleteResult.NotSupported)
+        )
+    }
+
+    @Test
+    fun shouldPrecheckDeleteOnCamera_whenRememberedAndAvailable() {
+        assertTrue(
+            initialDeleteOnCameraChecked(
+                canDeleteOnCamera = true,
+                rememberedDeleteOnCamera = true
+            )
+        )
+        assertFalse(
+            initialDeleteOnCameraChecked(
+                canDeleteOnCamera = true,
+                rememberedDeleteOnCamera = false
+            )
+        )
+        assertFalse(
+            initialDeleteOnCameraChecked(
+                canDeleteOnCamera = false,
+                rememberedDeleteOnCamera = true
+            )
         )
     }
 }
