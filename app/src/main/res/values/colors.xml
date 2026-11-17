@@ -15,8 +15,13 @@
     <color name="toggle_on_text">#BFDBFE</color>
 
     <color name="status_idle">#6B7280</color>
-    <color name="status_ready">#3B82F6</color>
+    <color name="status_ready">#F59E0B</color>
+    <color name="status_ready_bg">#CC14171E</color>
+    <color name="status_ready_border">#59FFFFFF</color>
     <color name="status_busy">#F59E0B</color>
+    <color name="status_busy_bg">#CC261A08</color>
+    <color name="status_busy_border">#80F59E0B</color>
+    <color name="status_busy_text">#FDE68A</color>
     <color name="status_connected">#22C55E</color>
     <color name="status_error">#EF4444</color>
     <color name="status_error_bg">#D17F1D1D</color>

@@ -109,7 +109,7 @@
         <LinearLayout
             android:id="@+id/connectButton"
             android:layout_width="wrap_content"
-            android:layout_height="40dp"
+            android:layout_height="@dimen/top_bar_control_height"
             android:background="@drawable/bg_glass_pill"
             android:clickable="true"
             android:focusable="true"
@@ -132,7 +132,7 @@
                 android:ellipsize="end"
                 android:maxLines="1"
                 android:text="@string/camera_not_detected"
-                android:textColor="@color/darkroom_text_primary"
+                android:textColor="@color/darkroom_text_secondary"
                 android:textSize="13sp"
                 android:textStyle="bold"/>
         </LinearLayout>
@@ -141,7 +141,7 @@
         <LinearLayout
             android:id="@+id/photoMetaPill"
             android:layout_width="0dp"
-            android:layout_height="40dp"
+            android:layout_height="@dimen/top_bar_control_height"
             android:layout_marginStart="10dp"
             android:layout_marginEnd="10dp"
             android:layout_weight="1"
@@ -152,7 +152,7 @@
 
             <LinearLayout
                 android:layout_width="wrap_content"
-                android:layout_height="36dp"
+                android:layout_height="match_parent"
                 android:background="@drawable/bg_glass_pill"
                 android:gravity="center_vertical"
                 android:orientation="horizontal"
@@ -227,7 +227,7 @@
         <LinearLayout
             android:id="@+id/autoFollowToggleButton"
             android:layout_width="wrap_content"
-            android:layout_height="40dp"
+            android:layout_height="@dimen/top_bar_control_height"
             android:layout_marginEnd="8dp"
             android:background="@drawable/bg_toggle_pill_on"
             android:clickable="true"
@@ -261,7 +261,7 @@
         <LinearLayout
             android:id="@+id/infoToggleButton"
             android:layout_width="wrap_content"
-            android:layout_height="40dp"
+            android:layout_height="@dimen/top_bar_control_height"
             android:layout_marginEnd="8dp"
             android:background="@drawable/bg_toggle_pill"
             android:clickable="true"
@@ -292,26 +292,26 @@
                 android:textStyle="bold"/>
         </LinearLayout>
 
-        <!-- Action buttons (48dp touch targets) -->
+        <!-- Action buttons (circle diameter unified with top bar height) -->
         <ImageButton
             android:id="@+id/exportButton"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
+            android:layout_width="@dimen/top_bar_control_height"
+            android:layout_height="@dimen/top_bar_control_height"
             android:layout_marginEnd="8dp"
             android:background="@drawable/bg_glass_icon_btn"
             android:contentDescription="@string/export_to_gallery"
-            android:padding="12dp"
+            android:padding="10dp"
             android:scaleType="centerInside"
             android:src="@drawable/ic_export_24"
             app:tint="@color/darkroom_text_primary"/>
 
         <ImageButton
             android:id="@+id/deleteButton"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
+            android:layout_width="@dimen/top_bar_control_height"
+            android:layout_height="@dimen/top_bar_control_height"
             android:background="@drawable/bg_glass_icon_btn_danger"
             android:contentDescription="@string/delete_photo"
-            android:padding="12dp"
+            android:padding="10dp"
             android:scaleType="centerInside"
             android:src="@drawable/ic_delete_24"
             app:tint="@color/darkroom_text_primary"/>
@@ -497,7 +497,7 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginStart="16dp"
-        android:layout_marginBottom="18dp"
+        android:layout_marginBottom="10dp"
         android:background="@drawable/bg_zoom_badge"
         android:fontFamily="monospace"
         android:paddingStart="10dp"
@@ -532,7 +532,7 @@
         app:layout_constraintBottom_toTopOf="@id/bottomFilmstripContainer"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_goneMarginBottom="20dp"
+        app:layout_goneMarginBottom="12dp"
         tools:text="收到 1 张新照片 · 点击跳转"
         tools:visibility="visible"/>
 
@@ -545,9 +545,9 @@
         android:gravity="center_horizontal"
         android:orientation="vertical"
         android:paddingStart="16dp"
-        android:paddingTop="14dp"
+        android:paddingTop="8dp"
         android:paddingEnd="16dp"
-        android:paddingBottom="12dp"
+        android:paddingBottom="2dp"
         android:visibility="gone"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
@@ -558,7 +558,7 @@
             android:id="@+id/filmstripToggleHandle"
             android:layout_width="wrap_content"
             android:layout_height="26dp"
-            android:layout_marginBottom="6dp"
+            android:layout_marginBottom="4dp"
             android:background="@drawable/bg_filmstrip_handle"
             android:clickable="true"
             android:focusable="true"
@@ -577,10 +577,10 @@
             android:background="@drawable/bg_filmstrip_tray"
             android:clipToPadding="false"
             android:overScrollMode="never"
-            android:paddingStart="6dp"
-            android:paddingTop="6dp"
+            android:paddingStart="4dp"
+            android:paddingTop="4dp"
             android:paddingEnd="0dp"
-            android:paddingBottom="6dp"/>
+            android:paddingBottom="4dp"/>
     </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

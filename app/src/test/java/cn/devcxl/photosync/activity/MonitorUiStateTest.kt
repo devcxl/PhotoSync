@@ -5,6 +5,7 @@ import cn.devcxl.photosync.ptp.manager.UsbPtpConnectionState
 import cn.devcxl.photosync.ptp.manager.UsbPtpDeviceId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -32,8 +33,27 @@ class MonitorUiStateTest {
         val ui = resolveConnectPillUi(UsbPtpConnectionState.Idle, cameraPresent = true)
 
         assertTrue(ui.enabled)
-        assertEquals(R.string.connect_camera, ui.label)
+        assertEquals(R.string.camera_ready_to_connect, ui.label)
         assertEquals(ConnectPillVisualState.READY, ui.visualState)
+    }
+
+    @Test
+    fun shouldUseDistinctNonConnectedStyles_whenNotConnected() {
+        val idle = resolveConnectPillStyle(ConnectPillVisualState.IDLE)
+        val ready = resolveConnectPillStyle(ConnectPillVisualState.READY)
+        val busy = resolveConnectPillStyle(ConnectPillVisualState.BUSY)
+        val connected = resolveConnectPillStyle(ConnectPillVisualState.CONNECTED)
+        val error = resolveConnectPillStyle(ConnectPillVisualState.ERROR)
+
+        assertEquals(R.drawable.bg_glass_pill_connected, connected.backgroundRes)
+        assertEquals(R.color.status_connected, connected.dotColorRes)
+        assertNotEquals(connected.backgroundRes, idle.backgroundRes)
+        assertNotEquals(connected.backgroundRes, ready.backgroundRes)
+        assertNotEquals(connected.backgroundRes, busy.backgroundRes)
+        assertNotEquals(connected.backgroundRes, error.backgroundRes)
+        assertNotEquals(connected.dotColorRes, ready.dotColorRes)
+        assertNotEquals(connected.dotColorRes, busy.dotColorRes)
+        assertNotEquals(R.drawable.bg_glass_pill_cta, ready.backgroundRes)
     }
 
     @Test

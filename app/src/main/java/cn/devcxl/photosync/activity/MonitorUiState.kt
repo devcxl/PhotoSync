@@ -2,6 +2,8 @@ package cn.devcxl.photosync.activity
 
 import java.util.Locale
 
+import androidx.annotation.ColorRes
+import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
 
 import cn.devcxl.photosync.R
@@ -38,6 +40,49 @@ internal data class ConnectPillUi(
 )
 
 /**
+ * Color and surface styling for each [ConnectPillVisualState], kept distinct so
+ * pre-connection states are never mistaken for an active session.
+ */
+internal data class ConnectPillStyle(
+    @DrawableRes val backgroundRes: Int,
+    @ColorRes val dotColorRes: Int,
+    @ColorRes val textColorRes: Int
+)
+
+/**
+ * Resolves the background, status dot color, and text color for the top-left connection pill.
+ */
+internal fun resolveConnectPillStyle(visualState: ConnectPillVisualState): ConnectPillStyle {
+    return when (visualState) {
+        ConnectPillVisualState.IDLE -> ConnectPillStyle(
+            backgroundRes = R.drawable.bg_glass_pill,
+            dotColorRes = R.color.status_idle,
+            textColorRes = R.color.darkroom_text_secondary
+        )
+        ConnectPillVisualState.READY -> ConnectPillStyle(
+            backgroundRes = R.drawable.bg_glass_pill_ready,
+            dotColorRes = R.color.status_ready,
+            textColorRes = R.color.darkroom_text_primary
+        )
+        ConnectPillVisualState.BUSY -> ConnectPillStyle(
+            backgroundRes = R.drawable.bg_glass_pill_busy,
+            dotColorRes = R.color.status_busy,
+            textColorRes = R.color.status_busy_text
+        )
+        ConnectPillVisualState.CONNECTED -> ConnectPillStyle(
+            backgroundRes = R.drawable.bg_glass_pill_connected,
+            dotColorRes = R.color.status_connected,
+            textColorRes = R.color.exported_text
+        )
+        ConnectPillVisualState.ERROR -> ConnectPillStyle(
+            backgroundRes = R.drawable.bg_glass_pill_error,
+            dotColorRes = R.color.status_error,
+            textColorRes = R.color.danger_text
+        )
+    }
+}
+
+/**
  * Presentation model for the center empty-library guidance view.
  */
 internal data class EmptyStateUi(
@@ -71,7 +116,7 @@ internal fun resolveConnectPillUi(
         UsbPtpConnectionState.Idle,
         is UsbPtpConnectionState.Disconnected -> {
             if (cameraPresent) {
-                ConnectPillUi(R.string.connect_camera, true, ConnectPillVisualState.READY)
+                ConnectPillUi(R.string.camera_ready_to_connect, true, ConnectPillVisualState.READY)
             } else {
                 ConnectPillUi(R.string.camera_not_detected, false, ConnectPillVisualState.IDLE)
             }

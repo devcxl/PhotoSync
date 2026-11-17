@@ -10,13 +10,14 @@
     <string name="toast_saved_to_gallery">已导出到相册: %1$s</string>
     <string name="toast_save_failed">导出失败</string>
     <string name="toast_storage_permission_denied">未授予存储权限，无法导出</string>
-    <string name="usb_inserted">相机已接入，点击「连接相机」开始同步</string>
+    <string name="usb_inserted">已检测到相机，点击左上角「未连接 · 点击连接」开始同步</string>
     <string name="usb_removed">相机已断开</string>
     <string name="usb_permission_denied">未授权访问相机</string>
     <string name="photo_default_name">照片</string>
     <string name="export_to_gallery">导出到相册</string>
     <string name="delete_photo">删除照片</string>
     <string name="connect_camera">连接相机</string>
+    <string name="camera_ready_to_connect">未连接 · 点击连接</string>
     <string name="disconnect_camera">断开相机</string>
     <string name="camera_not_detected">未检测到相机</string>
     <string name="camera_connecting">正在连接…</string>
@@ -51,8 +52,8 @@
     <string name="dialog_disconnect_confirm">断开连接</string>
     <string name="empty_no_camera_title">未检测到相机</string>
     <string name="empty_no_camera_desc">请通过 USB 数据线连接相机，并确认相机处于 PTP / 电脑遥控模式</string>
-    <string name="empty_ready_title">已检测到相机</string>
-    <string name="empty_ready_desc">点击下方按钮授予 USB 权限并开始联机同步</string>
+    <string name="empty_ready_title">已检测到相机（未连接）</string>
+    <string name="empty_ready_desc">相机尚未建立联机，点击下方按钮授予 USB 权限后即可开始同步</string>
     <string name="empty_connecting_title">正在建立相机连接…</string>
     <string name="empty_connecting_desc">请在系统弹窗中允许 USB 访问，会话建立后即可自动同步照片</string>
     <string name="empty_connected_title">相机已就绪，等待快门</string>

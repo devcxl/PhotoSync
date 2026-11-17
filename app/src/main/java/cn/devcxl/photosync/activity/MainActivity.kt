@@ -578,30 +578,18 @@ class MainActivity : AppCompatActivity() {
 
     private fun renderConnectButton() {
         val ui = resolveConnectPillUi(connectionState, cameraPresent)
+        val style = resolveConnectPillStyle(ui.visualState)
         binding.connectButtonLabel.setText(ui.label)
+        binding.connectButtonLabel.setTextColor(ContextCompat.getColor(this, style.textColorRes))
         binding.connectButton.isEnabled = ui.enabled
-
-        val bgRes = when (ui.visualState) {
-            ConnectPillVisualState.READY -> R.drawable.bg_glass_pill_cta
-            ConnectPillVisualState.ERROR -> R.drawable.bg_glass_pill_error
-            else -> R.drawable.bg_glass_pill
-        }
-        binding.connectButton.setBackgroundResource(bgRes)
+        binding.connectButton.setBackgroundResource(style.backgroundRes)
         binding.connectButton.alpha = if (ui.enabled || ui.visualState == ConnectPillVisualState.BUSY) {
             1.0f
         } else {
             0.78f
         }
-
-        val dotColorRes = when (ui.visualState) {
-            ConnectPillVisualState.IDLE -> R.color.status_idle
-            ConnectPillVisualState.READY -> R.color.status_ready
-            ConnectPillVisualState.BUSY -> R.color.status_busy
-            ConnectPillVisualState.CONNECTED -> R.color.status_connected
-            ConnectPillVisualState.ERROR -> R.color.status_error
-        }
         binding.connectStatusDot.backgroundTintList =
-            ColorStateList.valueOf(ContextCompat.getColor(this, dotColorRes))
+            ColorStateList.valueOf(ContextCompat.getColor(this, style.dotColorRes))
     }
 
     private fun renderEmptyState() {
