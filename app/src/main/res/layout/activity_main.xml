@@ -115,14 +115,14 @@
             android:focusable="true"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:paddingStart="14dp"
-            android:paddingEnd="14dp">
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp">
 
             <View
                 android:id="@+id/connectStatusDot"
-                android:layout_width="8dp"
-                android:layout_height="8dp"
-                android:layout_marginEnd="8dp"
+                android:layout_width="7dp"
+                android:layout_height="7dp"
+                android:layout_marginEnd="7dp"
                 android:background="@drawable/bg_status_dot"/>
 
             <TextView
@@ -133,7 +133,7 @@
                 android:maxLines="1"
                 android:text="@string/camera_not_detected"
                 android:textColor="@color/darkroom_text_secondary"
-                android:textSize="13sp"
+                android:textSize="12sp"
                 android:textStyle="bold"/>
         </LinearLayout>
 
@@ -300,7 +300,7 @@
             android:layout_marginEnd="8dp"
             android:background="@drawable/bg_glass_icon_btn"
             android:contentDescription="@string/export_to_gallery"
-            android:padding="10dp"
+            android:padding="9dp"
             android:scaleType="centerInside"
             android:src="@drawable/ic_export_24"
             app:tint="@color/darkroom_text_primary"/>
@@ -311,7 +311,7 @@
             android:layout_height="@dimen/top_bar_control_height"
             android:background="@drawable/bg_glass_icon_btn_danger"
             android:contentDescription="@string/delete_photo"
-            android:padding="10dp"
+            android:padding="9dp"
             android:scaleType="centerInside"
             android:src="@drawable/ic_delete_24"
             app:tint="@color/darkroom_text_primary"/>
