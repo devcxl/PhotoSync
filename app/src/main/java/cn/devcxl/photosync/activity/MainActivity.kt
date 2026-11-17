@@ -13,11 +13,13 @@ import java.util.Locale
 
 import android.Manifest
 import android.content.ContentValues
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.hardware.usb.UsbManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -254,6 +256,14 @@ class MainActivity : AppCompatActivity() {
         val bottomVisible = binding.bottomFilmstripContainer.visibility == View.VISIBLE
         lp.bottomMargin = if (bottomVisible) baseMarginPx else baseMarginPx + lastBottomInsetPx
         binding.newPhotoBanner.layoutParams = lp
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) {
+            connectionController.refreshAvailableCameras()
+        }
     }
 
     override fun onResume() {

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Standard USB Still Image / PTP cameras -->
+    <usb-device class="6" />
+    <!-- Vendor-specific PTP/tether modes for Canon, Nikon, and Sony cameras -->
+    <usb-device vendor-id="1193" class="255" />
+    <usb-device vendor-id="1200" class="255" />
+    <usb-device vendor-id="1356" class="255" />
+</resources>
