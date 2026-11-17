@@ -13,6 +13,7 @@ object RawWrapper {
     external fun version(): String
     external fun decodeThumbnail(path: String): ByteArray?
     external fun decodeToRGB(path: String): ByteArray?
+    external fun decodeToBitmapNative(path: String): Bitmap?
 
     /**
      * 解码缩略图为 Bitmap。先尝试嵌入式 JPEG，失败则尝试 BITMAP 格式。
@@ -52,6 +53,9 @@ object RawWrapper {
      * 完整解码 RAW -> 8bit RGB Bitmap。失败返回 null。
      */
     fun decodeToBitmap(path: String, reuse: Bitmap? = null): Bitmap? {
+        if (reuse == null) {
+            decodeToBitmapNative(path)?.let { return it }
+        }
         val data = decodeToRGB(path) ?: return null
         return rgbResultToBitmap(data, reuse)
     }

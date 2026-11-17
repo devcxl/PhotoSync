@@ -87,7 +87,7 @@ class MainActivity : AppCompatActivity() {
         private const val FULL_PREVIEW_SCALE_FACTOR = 2
         private const val FULL_PREVIEW_MAX_EDGE_PX = 4096
         private const val JPEG_MIME = "image/jpeg"
-        private const val JPEG_EXPORT_QUALITY = 100
+        private const val JPEG_EXPORT_QUALITY = 95
         private const val GALLERY_DIR_NAME = "PhotoSync"
         private const val PREFS_NAME = "photosync_prefs"
         private const val PREF_DELETE_ON_CAMERA = "delete_on_camera"
@@ -1124,14 +1124,21 @@ class MainActivity : AppCompatActivity() {
                     // JPEG：直接复制原文件到相册，避免解码与重压缩
                     saveFileToGalleryByCopying(File(path), displayName)
                 } else if (ExtensionUtils.isRawExtension(ext)) {
-                    // RAW：优先使用缓存Bitmap，否则解码
-                    val bmp = fullBitmapCache.get(path) ?: try {
+                    // RAW：优先使用缓存Bitmap，否则直接原生解码为 ARGB_8888 Bitmap
+                    val cachedBmp = fullBitmapCache.get(path)
+                    val bmp = cachedBmp ?: try {
                         RawWrapper.decodeToBitmap(path)
                     } catch (e: Exception) {
                         Timber.w(e, "RAW decode failed for path=%s, falling back to null", path)
                         null
                     }
-                    if (bmp != null) saveBitmapToGallery(bmp, displayName) else null
+                    try {
+                        if (bmp != null) saveBitmapToGallery(bmp, displayName) else null
+                    } finally {
+                        if (cachedBmp == null) {
+                            bmp?.recycle()
+                        }
+                    }
                 } else {
                     null
                 }

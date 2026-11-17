@@ -20,6 +20,8 @@ target_include_directories(lcms2_static PRIVATE
     ${LCMS2_ROOT}/src/
 )
 
+target_compile_options(lcms2_static PRIVATE -O3)
+
 file(GLOB_RECURSE LIBRAW_SOURCES "${LIBRAW_ROOT}/src/*.cpp")
 list(FILTER LIBRAW_SOURCES EXCLUDE REGEX ".*_ph\\.cpp$")
 
@@ -34,9 +36,9 @@ target_include_directories(libraw_static PRIVATE
 )
 target_compile_definitions(libraw_static PRIVATE
     LIBRAW_NODLL
-    LIBRAW_NOTHREADS
     USE_LCMS2
 )
+target_compile_options(libraw_static PRIVATE -O3 -fopenmp)
 target_link_libraries(libraw_static PRIVATE lcms2_static)
 
 add_library(${CMAKE_PROJECT_NAME} SHARED
@@ -49,13 +51,17 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     LIBRAW_NODLL
 )
+target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE -O3 -fopenmp)
+target_link_options(${CMAKE_PROJECT_NAME} PRIVATE -fopenmp -static-openmp)
 
 find_library(log_lib log)
 find_library(android_lib android)
+find_library(jnigraphics_lib jnigraphics)
 
 target_link_libraries(${CMAKE_PROJECT_NAME}
     libraw_static
     lcms2_static
     ${log_lib}
     ${android_lib}
+    ${jnigraphics_lib}
 )
