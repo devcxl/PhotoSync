@@ -1,6 +1,8 @@
 package cn.devcxl.photosync.ptp.usbcamera
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ObjectSyncPolicyTest {
@@ -114,5 +116,11 @@ class ObjectSyncPolicyTest {
         tracker.markSucceeded(99)
 
         assertEquals(emptyList<Int>(), tracker.pendingHandles())
+    }
+
+    @Test
+    fun shouldImportEventHandle_onlyWhenHandleNotYetImported() {
+        assertTrue(shouldImportEventHandle(handled = listOf(1, 2), handle = 3))
+        assertFalse(shouldImportEventHandle(handled = listOf(1, 2, 3), handle = 3))
     }
 }

@@ -1347,6 +1347,11 @@ open class BaselineInitiator : NameFactory, Runnable {
                     reconcileRequested = true
                 }
                 val handle = event.objectAddedHandle ?: continue
+                if (!shouldImportEventHandle(syncedObjectHandles, handle)) {
+                    Timber.tag(PTP_EVENT_TAG).d("跳过已导入的重复事件 handle=%d", handle)
+                    retryTracker.markSucceeded(handle)
+                    continue
+                }
                 if (processFileAddEvent(handle, event.payload)) {
                     rememberImportedHandle(handle)
                     retryTracker.markSucceeded(handle)

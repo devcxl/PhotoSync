@@ -57,6 +57,17 @@ internal fun withImportedHandle(handled: List<Int>, imported: Int): List<Int> {
 }
 
 /**
+ * Whether an event-mode object handle still needs to be downloaded and imported.
+ *
+ * Vendor event channels (such as Canon EOS reporting both `ObjectAddedEx` and
+ * `ObjectAddedEx64`, or queuing an event for a capture already caught by session-start
+ * reconciliation) can surface the same handle more than once.
+ */
+internal fun shouldImportEventHandle(handled: List<Int>, handle: Int): Boolean {
+    return handle !in handled
+}
+
+/**
  * Pure retry policy for event-mode object handles whose initial `GetObjectInfo`/`GetObject`
  * failed transiently (e.g., while the camera was busy committing a parameter change or
  * flushing a new capture to storage).
