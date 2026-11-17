@@ -322,8 +322,6 @@
         android:id="@+id/infoDrawerPanel"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginStart="16dp"
-        android:layout_marginTop="4dp"
         android:background="@drawable/bg_info_card"
         android:orientation="horizontal"
         android:paddingStart="14dp"
@@ -331,8 +329,10 @@
         android:paddingEnd="14dp"
         android:paddingBottom="9dp"
         android:visibility="gone"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/topOverlayBar"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        tools:layout_marginEnd="96dp"
+        tools:layout_marginTop="52dp"
         tools:visibility="visible">
 
         <LinearLayout
@@ -403,7 +403,7 @@
                 android:textColor="@color/darkroom_text_primary"
                 android:textSize="12sp"
                 android:textStyle="bold"
-                tools:text="#0x10042（支持删原件）"/>
+                tools:text="#0x10042"/>
         </LinearLayout>
     </LinearLayout>
 

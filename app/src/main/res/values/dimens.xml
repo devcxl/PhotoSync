@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <dimen name="top_bar_control_height">36dp</dimen>
+    <dimen name="info_drawer_top_gap">4dp</dimen>
     <dimen name="banner_margin_default">8dp</dimen>
 </resources>

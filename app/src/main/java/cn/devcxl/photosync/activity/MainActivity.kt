@@ -216,14 +216,8 @@ class MainActivity : AppCompatActivity() {
             insets
         }
 
-        val infoBaseStart =
-            (binding.infoDrawerPanel.layoutParams as ViewGroup.MarginLayoutParams).marginStart
-        ViewCompat.setOnApplyWindowInsetsListener(binding.infoDrawerPanel) { view, insets ->
-            val safe = insets.getInsets(safeChromeType)
-            val lp = view.layoutParams as ViewGroup.MarginLayoutParams
-            lp.marginStart = infoBaseStart + safe.left
-            view.layoutParams = lp
-            insets
+        binding.topOverlayBar.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            binding.infoDrawerPanel.post { alignInfoDrawerToToggle() }
         }
 
         val bannerBaseBottom =
@@ -380,6 +374,9 @@ class MainActivity : AppCompatActivity() {
         animateTopOverlay(show)
         animateBottomFilmstrip(shouldShowFilmstrip(hasPhotos, show))
         val hasDrawer = show && infoDrawerOpen && hasPhotos
+        if (hasDrawer) {
+            alignInfoDrawerToToggle()
+        }
         binding.infoDrawerPanel.visibility = if (hasDrawer) View.VISIBLE else View.GONE
         renderNewPhotoBanner()
         applySystemBarVisibility(showOverlays = show)
@@ -688,6 +685,21 @@ class MainActivity : AppCompatActivity() {
         binding.infoToggleLabel.setTextColor(ContextCompat.getColor(this, colorRes))
     }
 
+    private fun alignInfoDrawerToToggle() {
+        if (binding.infoToggleButton.visibility != View.VISIBLE || binding.topOverlayBar.width == 0) {
+            return
+        }
+        val gapPx = resources.getDimensionPixelSize(R.dimen.info_drawer_top_gap)
+        val lp = binding.infoDrawerPanel.layoutParams as ViewGroup.MarginLayoutParams
+        val targetTop = binding.topOverlayBar.top + binding.infoToggleButton.bottom + gapPx
+        val targetEnd = (binding.topOverlayBar.width - binding.infoToggleButton.right).coerceAtLeast(0)
+        if (lp.topMargin != targetTop || lp.marginEnd != targetEnd) {
+            lp.topMargin = targetTop
+            lp.marginEnd = targetEnd
+            binding.infoDrawerPanel.layoutParams = lp
+        }
+    }
+
     private fun renderInfoDrawer() {
         val count = adapter.itemCount
         if (count == 0 || !infoDrawerOpen) {
@@ -699,6 +711,7 @@ class MainActivity : AppCompatActivity() {
             userImmersive = userImmersive,
             isZoomed = currentPageZoomed
         )
+        alignInfoDrawerToToggle()
         binding.infoDrawerPanel.visibility = if (showOverlays) View.VISIBLE else View.GONE
         val index = binding.viewPager.currentItem.coerceIn(0, count - 1)
         val item = adapter.getItem(index) ?: return
