@@ -100,3 +100,8 @@ git submodule update --init --recursive
 
 APK is generated at `app/build/outputs/apk/debug/app-debug.apk`.
 Release AAB is at `app/build/outputs/bundle/release/app-release.aab`.
+
+## License
+
+Released under the [MIT license](LICENSE). Third-party components (LibRaw, Little CMS) keep
+their own licenses; see the license files under `libraw/src/main/cpp/third_party/`.

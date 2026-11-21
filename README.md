@@ -102,3 +102,8 @@ git submodule update --init --recursive
 
 生成的 Debug APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。
 Release AAB 位于 `app/build/outputs/bundle/release/app-release.aab`。
+
+## License
+
+本项目以 [MIT](LICENSE) 许可发布。第三方组件（LibRaw、Little CMS）遵循各自的许可，见
+`libraw/src/main/cpp/third_party/` 内的许可证文件。
