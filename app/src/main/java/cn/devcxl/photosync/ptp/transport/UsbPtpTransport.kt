@@ -24,9 +24,11 @@ internal class UsbPtpTransport private constructor(
     private val bulkIn: UsbEndpoint,
 ) : PtpTransport {
 
-    override val maxPacketSize: Int = maxOf(1, bulkIn.maxPacketSize)
-
-    /** The two directions can advertise different packet sizes; a terminator follows the OUT one. */
+    /**
+     * Packet size of the OUT endpoint, which decides when a container needs a terminating
+     * zero-length packet. The two directions can advertise different sizes, and the host is
+     * the side that has to terminate.
+     */
     private val outPacketSize: Int = maxOf(1, bulkOut.maxPacketSize)
 
     override fun writeContainer(bytes: ByteArray) {
@@ -106,28 +108,38 @@ internal class UsbPtpTransport private constructor(
             0,
             COMMAND_TIMEOUT_MS,
         )
-    }
-
-    override fun readDeviceStatus(): Int {
-        val response = ByteArray(DEVICE_STATUS_BYTES)
-        val read = connection.controlTransfer(
-            UsbConstants.USB_DIR_IN or UsbConstants.USB_TYPE_CLASS,
-            CLASS_GET_DEVICE_STATUS,
-            0,
-            0,
-            response,
-            response.size,
-            COMMAND_TIMEOUT_MS,
-        )
-        if (read < 4) {
-            throw PtpTransportException("GetDeviceStatus returned $read bytes")
-        }
-        return (response[2].toInt() and 0xff) or ((response[3].toInt() and 0xff) shl 8)
+        // The reset should have cleared these already, but a halt that survives it would
+        // break every later transfer, and clearing one costs a single control request.
+        clearHalt(bulkOut)
+        clearHalt(bulkIn)
     }
 
     override fun close() {
         runCatching { connection.releaseInterface(usbInterface) }
         runCatching { connection.close() }
+    }
+
+    /**
+     * Clears `ENDPOINT_HALT` on [endpoint] with the standard `CLEAR_FEATURE` request.
+     *
+     * Android's [UsbDeviceConnection] has no `clearHalt`, so the request goes out raw: a
+     * standard, endpoint-recipient, host-to-device control transfer selecting the feature
+     * by value 0.
+     */
+    private fun clearHalt(endpoint: UsbEndpoint) {
+        runCatching {
+            connection.controlTransfer(
+                // bmRequestType: host-to-device, standard, endpoint recipient. UsbConstants
+                // exposes the direction and type bits but no recipient constants.
+                RECIPIENT_ENDPOINT,
+                CLEAR_FEATURE,
+                ENDPOINT_HALT,
+                endpoint.address,
+                EMPTY,
+                0,
+                COMMAND_TIMEOUT_MS,
+            )
+        }
     }
 
     /** Streams one data container body, one USB request at a time. */
@@ -165,11 +177,12 @@ internal class UsbPtpTransport private constructor(
         private const val DATA_TIMEOUT_MS = 15_000
         private const val READ_CHUNK_BYTES = 64 * 1024
         private const val MAX_ZERO_PACKETS = 2
-        private const val DEVICE_STATUS_BYTES = 33
         private const val MAX_DATASET_BYTES = 16 * 1024 * 1024
 
         private const val CLASS_DEVICE_RESET = 0x66
-        private const val CLASS_GET_DEVICE_STATUS = 0x67
+        private const val CLEAR_FEATURE = 0x01
+        private const val ENDPOINT_HALT = 0x00
+        private const val RECIPIENT_ENDPOINT = 0x02
         private const val INTERFACE_CLASS_STILL_IMAGE = 6
 
         /**

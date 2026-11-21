@@ -23,7 +23,9 @@ import cn.devcxl.photosync.ptp.protocol.PtpTransportException
 import cn.devcxl.photosync.ptp.transport.PtpTransport
 import cn.devcxl.photosync.ptp.transport.UsbPtpTransport
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -88,12 +90,21 @@ internal class PtpCamera private constructor(
         Timber.i("PTP session opened on %s (%s)", modelName, profile.name)
     }
 
-    /** Closes the session and releases the USB device. Safe to call twice. */
-    internal suspend fun close() {
+    /**
+     * Closes the session and releases the USB device. Safe to call twice.
+     *
+     * Runs the release as a non-cancellable block: a disconnect cancels the coroutine that
+     * is waiting here, and abandoning the teardown half-way would leave the USB interface
+     * claimed and the device invisible until the next replug.
+     */
+    internal suspend fun close() = withContext(NonCancellable) {
         mutex.withLock {
             withContext(ioDispatcher) {
-                runCatching { session.closeSession() }
-                    .onFailure { Timber.w(it, "CloseSession failed during teardown") }
+                try {
+                    session.closeSession()
+                } catch (e: PtpException) {
+                    Timber.w(e, "CloseSession failed during teardown")
+                }
                 session.abandon()
                 transport.close()
             }
@@ -135,20 +146,30 @@ internal class PtpCamera private constructor(
         ids
     }
 
-    /** Every object handle the given storages currently report. */
-    internal suspend fun objectHandles(storageIds: IntArray): List<Int> = locked {
-        storageIds.flatMap { storageId ->
+    /**
+     * Every object handle the given storages currently report.
+     *
+     * [complete] is false when a storage could not be enumerated. Callers that reconcile
+     * their "already imported" bookkeeping against this list must not prune on a partial
+     * result: the missing handles did not leave the camera, they were simply not read, and
+     * dropping them would make the whole card look new on the next pass.
+     */
+    internal suspend fun objectHandles(storageIds: IntArray): ObjectHandles = locked {
+        val handles = mutableListOf<Int>()
+        var complete = true
+        for (storageId in storageIds) {
             try {
-                readObjectHandles(storageId).toList()
+                handles += readObjectHandles(storageId).toList()
             } catch (e: PtpTransportException) {
                 // Reporting an empty card here would look like every photo vanished, and
                 // the next pass would download all of them again.
                 throw e
             } catch (e: PtpException) {
                 Timber.w(e, "Object enumeration failed for storage %d", storageId)
-                emptyList()
+                complete = false
             }
         }
+        ObjectHandles(handles, complete)
     }
 
     /**
@@ -254,8 +275,13 @@ internal class PtpCamera private constructor(
         val store = importedHandleStore ?: return
         val snapshot = handledObjects.snapshot()
         withContext(ioDispatcher) {
-            runCatching { store.save(snapshot) }
-                .onFailure { Timber.w(it, "Saving imported handles failed (%s)", reason) }
+            try {
+                store.save(snapshot)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.w(e, "Saving imported handles failed (%s)", reason)
+            }
         }
     }
 
@@ -263,9 +289,14 @@ internal class PtpCamera private constructor(
     internal suspend fun loadPersistedHandles(): List<Int>? {
         val store = importedHandleStore ?: return null
         return withContext(ioDispatcher) {
-            runCatching { store.load() }
-                .onFailure { Timber.w(it, "Loading imported handles failed") }
-                .getOrNull()
+            try {
+                store.load()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.w(e, "Loading imported handles failed")
+                null
+            }
         }
     }
 
@@ -342,8 +373,7 @@ internal class PtpCamera private constructor(
     }
 
     companion object {
-        private const val STATUS_SETTLE_ATTEMPTS = 3
-        private const val STATUS_SETTLE_DELAY_MS = 200L
+        private const val RESET_SETTLE_MS = 300L
         private const val READ_BUFFER_BYTES = 64 * 1024
         private const val WRITE_BUFFER_BYTES = 64 * 1024
         private const val PROGRESS_STEP_BYTES = 256 * 1024
@@ -385,24 +415,9 @@ internal class PtpCamera private constructor(
 
     private suspend fun initialise() {
         transport.resetDevice()
-        // A body answers GetDeviceStatus with a non-OK code while it is still coming out of
-        // reset. Give it a few short chances, then go on: the first real transaction is the
-        // authority on whether the camera is ready.
-        var status = PtpStatus.GENERAL_ERROR
-        repeat(STATUS_SETTLE_ATTEMPTS) { attempt ->
-            status = runCatching { transport.readDeviceStatus() }
-                .onFailure { Timber.w(it, "GetDeviceStatus failed after reset") }
-                .getOrDefault(PtpStatus.GENERAL_ERROR)
-            if (status == PtpStatus.OK) {
-                return@repeat
-            }
-            if (attempt < STATUS_SETTLE_ATTEMPTS - 1) {
-                delay(STATUS_SETTLE_DELAY_MS)
-            }
-        }
-        if (status != PtpStatus.OK) {
-            Timber.w("Camera still reports device status 0x%04x after reset", status)
-        }
+        // A body needs a moment after a device reset before it answers on the bulk pipe;
+        // without it the first GetDeviceInfo tends to come back as a timeout.
+        delay(RESET_SETTLE_MS)
         val info = readDeviceInfo()
         deviceInfo = info
         Timber.i(
@@ -416,6 +431,12 @@ internal class PtpCamera private constructor(
         )
     }
 }
+
+/** The handles one or more storages report, and whether every storage answered. */
+internal data class ObjectHandles(
+    val handles: List<Int>,
+    val complete: Boolean,
+)
 
 /** Storage for the handles a device has already imported, owned by the caller. */
 internal interface ImportedHandleStore {

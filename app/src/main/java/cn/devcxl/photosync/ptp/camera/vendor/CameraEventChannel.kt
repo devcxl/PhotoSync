@@ -57,8 +57,6 @@ internal object CanonEosEventReader {
     private const val OBJECT_ADDED_EX64 = 0xc1a7
     private const val MAX_RECORD_BYTES = 1024 * 1024
 
-    fun hasEvents(payload: ByteArray): Boolean = payload.size >= RECORD_HEADER_BYTES
-
     fun read(payload: ByteArray): List<CameraEvent> {
         val events = mutableListOf<CameraEvent>()
         var offset = 0

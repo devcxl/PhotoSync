@@ -39,6 +39,7 @@ internal class PtpSession(private val transport: PtpTransport) {
      * @throws PtpSessionException when the camera rejects both the open and the recovery
      */
     fun open(supportsCloseSession: Boolean) {
+        check(!isOpen) { "A PTP session is already open" }
         val opened = exchange(PtpOp.OPEN_SESSION, intArrayOf(NEW_SESSION_ID), allowClosed = true)
         when (opened.code) {
             PtpStatus.OK -> {
@@ -95,7 +96,14 @@ internal class PtpSession(private val transport: PtpTransport) {
             return PtpDataExchange(response, null)
         }
         requireDataHeader(header, opcode, tid)
-        val body = transport.readBody(header.length - PtpContainer.HEADER_BYTES)
+        val payloadLength = header.length - PtpContainer.HEADER_BYTES
+        if (payloadLength > MAX_DATASET_BYTES) {
+            // A metadata dataset is small. If the camera claims megabytes, its length field
+            // is wrong and reading it would either block for the full timeout or allocate
+            // whatever it asked for.
+            throw PtpProtocolException("Data container for 0x%04x declares %d bytes".format(opcode, payloadLength))
+        }
+        val body = transport.readBody(payloadLength)
         return PtpDataExchange(readResponseFromWire(), body)
     }
 
@@ -213,6 +221,7 @@ internal class PtpSession(private val transport: PtpTransport) {
     }
 
     private companion object {
+        const val MAX_DATASET_BYTES = 16 * 1024 * 1024
         const val NEW_SESSION_ID = 1
         const val FIRST_TRANSACTION_ID = 1
         const val CLOSED_TRANSACTION_ID = 0

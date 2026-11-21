@@ -102,6 +102,16 @@ class EventRetryQueueTest {
     }
 
     @Test
+    fun shouldNotChargeAnAttempt_whenAHandleIsOnlyQueued() {
+        val queue = EventRetryQueue(maxAttempts = 2)
+
+        repeat(5) { queue.enqueue(7) }
+
+        // Queuing repeatedly must not exhaust a budget that only failed retries spend.
+        assertTrue(queue.hasPending())
+    }
+
+    @Test
     fun shouldNotResetAttempts_whenTheSameHandleIsEnqueuedAgain() {
         val queue = EventRetryQueue(maxAttempts = 2)
         queue.enqueue(7)

@@ -3,6 +3,9 @@ package cn.devcxl.photosync.ptp.camera.vendor
 import cn.devcxl.photosync.ptp.camera.PtpSession
 import cn.devcxl.photosync.ptp.protocol.PtpDeviceException
 import cn.devcxl.photosync.ptp.protocol.PtpEvent
+import cn.devcxl.photosync.ptp.protocol.PtpException
+import cn.devcxl.photosync.ptp.protocol.PtpTransportException
+import timber.log.Timber
 
 /**
  * What differs between camera families, as seen from the sync loop.
@@ -17,10 +20,15 @@ internal interface VendorProfile {
     /** Operation the vendor event channel polls, or null when the camera has none. */
     val eventChannelOperation: Int?
 
-    /** Runs once per session, before any storage is read. */
+    /**
+     * Runs once per session, before any storage is read.
+     *
+     * Best effort by contract: a body that refuses the vendor handshake still syncs over the
+     * object list, so a rejection here must not cost the connection.
+     */
     fun onSessionStart(session: PtpSession) = Unit
 
-    /** Runs after the storage ids were read and accepted. */
+    /** Runs after the storage ids were read and accepted. Best effort, like [onSessionStart]. */
     fun afterStorageEnumeration(session: PtpSession, storageIds: IntArray) = Unit
 
     /** Builds the event channel when this vendor has one. */
@@ -28,6 +36,22 @@ internal interface VendorProfile {
 }
 
 /** Cameras that speak plain PTP: object-list polling, no vendor handshake. */
+/**
+ * Runs a vendor handshake step, treating a camera rejection as "this body does not do that".
+ *
+ * Only protocol-level failures are swallowed: a broken USB link still propagates, because
+ * continuing on it would turn one clean error into a stream of timeouts.
+ */
+private inline fun ignoreRejection(step: () -> Unit) {
+    try {
+        step()
+    } catch (e: PtpTransportException) {
+        throw e
+    } catch (e: PtpException) {
+        Timber.d(e, "Vendor handshake step rejected")
+    }
+}
+
 internal object GenericProfile : VendorProfile {
     override val name: String = "PTP standard"
     override val eventChannelOperation: Int? = null
@@ -45,8 +69,9 @@ internal class CanonEosProfile : VendorProfile {
 
     override fun onSessionStart(session: PtpSession) {
         // Remote mode is what stops the body from going to sleep mid-transfer, and the
-        // object-list poll path needs it just as much as the event channel does.
-        session.transact(OP_SET_REMOTE_MODE, 1)
+        // object-list poll path needs it just as much as the event channel does. A body that
+        // rejects it still transfers, so this is not allowed to fail the session.
+        ignoreRejection { session.transact(OP_SET_REMOTE_MODE, 1) }
     }
 
     override fun createEventChannel(session: PtpSession): CameraEventChannel =
@@ -64,8 +89,10 @@ internal class CanonEosEventChannel(private val session: PtpSession) : CameraEve
     override val description: String = "Canon EOS GetEvent 0x9116"
 
     override fun prepare() {
-        // Only an event-mode session asks the body to queue events.
-        session.transact(CanonEosProfile.OP_SET_EVENT_MODE, 1)
+        // Only an event-mode session asks the body to queue events. A body that refuses
+        // stays silent on the channel, which the loop reads as a quiet camera and then
+        // degrades after three failed polls.
+        ignoreRejection { session.transact(CanonEosProfile.OP_SET_EVENT_MODE, 1) }
     }
 
     override fun poll(): List<CameraEvent> {
@@ -134,11 +161,12 @@ internal class SonyProfile : VendorProfile {
     private fun connect(session: PtpSession, mode: Int) {
         // A body that does not answer the handshake still enumerates on its own; failing
         // the whole session here would take a working camera offline.
-        runCatching { session.transactForData(OP_SDIO_CONNECT, mode) }
+        ignoreRejection { session.transactForData(OP_SDIO_CONNECT, mode) }
     }
 
     private fun requestExtendedDeviceInfo(session: PtpSession) {
-        runCatching { session.transactForData(OP_GET_EXTENDED_DEVICE_INFO, EXTENDED_INFO_PARAM) }
+        // Nothing reads the answer yet; the request is part of the vendor's handshake order.
+        ignoreRejection { session.transactForData(OP_GET_EXTENDED_DEVICE_INFO, EXTENDED_INFO_PARAM) }
     }
 
     companion object {

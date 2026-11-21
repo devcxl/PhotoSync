@@ -192,8 +192,6 @@ class PtpSessionTest {
         private val pending = responses.toMutableList()
         private val commands = mutableListOf<ByteArray>()
 
-        override val maxPacketSize: Int = 512
-
         override fun writeContainer(bytes: ByteArray) {
             commands += bytes
         }
@@ -208,8 +206,6 @@ class PtpSessionTest {
         }
 
         override fun resetDevice() = Unit
-
-        override fun readDeviceStatus(): Int = PtpStatus.OK
 
         override fun close() = Unit
 

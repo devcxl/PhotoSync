@@ -93,6 +93,34 @@ internal fun nextHandledSet(
 }
 
 /**
+ * The handled set after an enumeration pass, which may have been partial.
+ *
+ * A partial pass — one storage answered, another did not — must only ever add. Pruning
+ * against it would drop the handles that live on the unread storage, and the next complete
+ * pass would then see them as new and download the whole card again.
+ *
+ * @param handled handles recorded before this pass
+ * @param onCamera handles the pass read back
+ * @param imported handles this pass imported successfully
+ * @param complete whether every storage answered
+ */
+internal fun reconcileHandledSet(
+    handled: Collection<Int>,
+    onCamera: List<Int>,
+    imported: Collection<Int>,
+    complete: Boolean,
+): List<Int> {
+    if (!complete) {
+        return if (imported.isEmpty()) {
+            handled.toList()
+        } else {
+            handled.toList() + imported.filter { it !in handled }
+        }
+    }
+    return nextHandledSet(handled, onCamera, imported)
+}
+
+/**
  * Retry bookkeeping for event-mode handles whose import failed transiently.
  *
  * Cameras announce a file before it is readable — the body is still flushing the capture —
@@ -102,6 +130,13 @@ internal fun nextHandledSet(
 internal class EventRetryQueue(private val maxAttempts: Int = 10) {
     private val attempts = LinkedHashMap<Int, Int>()
 
+    /**
+     * Remembers [handle] for a later poll.
+     *
+     * Queuing does not itself charge an attempt; only a retry that fails does. That is what
+     * lets a handle wait out a condition the camera cannot change — no download directory
+     * configured yet — without spending the budget that is meant for transfer failures.
+     */
     fun enqueue(handle: Int) {
         attempts.putIfAbsent(handle, 0)
     }
@@ -113,6 +148,7 @@ internal class EventRetryQueue(private val maxAttempts: Int = 10) {
     fun markSucceeded(handle: Int) {
         attempts.remove(handle)
     }
+
 
     fun markFailed(handle: Int) {
         val next = (attempts[handle] ?: 0) + 1

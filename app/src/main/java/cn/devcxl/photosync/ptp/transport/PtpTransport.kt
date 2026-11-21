@@ -11,12 +11,12 @@ import cn.devcxl.photosync.ptp.protocol.PtpContainerHeader
  * Implementations are not thread-safe: one session at a time owns the device.
  */
 internal interface PtpTransport {
-    /** Largest packet the bulk-IN endpoint accepts, used to size transfers. */
-    val maxPacketSize: Int
-
     /**
      * Writes one container, terminating it with a zero-length packet when its length is a
-     * multiple of [maxPacketSize].
+     * multiple of the bulk-OUT endpoint's packet size.
+     *
+     * The two directions can advertise different packet sizes, and the host is the side that
+     * must terminate, so the OUT size is the one that decides.
      */
     fun writeContainer(bytes: ByteArray)
 
@@ -29,11 +29,14 @@ internal interface PtpTransport {
     /** Opens a data container body for streaming, without buffering it. */
     fun openBody(length: Int): PtpBody
 
-    /** Issues the class-specific device reset request (`ResetDevice`, 0x66). */
+    /**
+     * Issues the class-specific device reset (`ResetDevice`, 0x66) and clears any halt left
+     * on the bulk endpoints by an earlier session.
+     *
+     * A halted bulk endpoint fails every transfer, and nothing else in this layer would
+     * recover from it.
+     */
     fun resetDevice()
-
-    /** Reads the class-specific device status (`GetDeviceStatus`, 0x67). */
-    fun readDeviceStatus(): Int
 
     /** Releases the interface and closes the USB connection. */
     fun close()

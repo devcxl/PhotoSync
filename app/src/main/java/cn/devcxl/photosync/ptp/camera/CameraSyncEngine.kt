@@ -76,10 +76,21 @@ internal class CameraSyncEngine(
         // No record: this is the first connect, so what is on the card now becomes
         // "already imported" rather than a queue to download.
         val baseline = camera.objectHandles(storages)
-        camera.handledObjects.replace(baseline)
+        if (!baseline.complete) {
+            // Storing a baseline that is missing a storage would make this session's
+            // partial view permanent: every photo on the unread storage would look new on
+            // each later connect. Keep it in memory for this session only and let the next
+            // connect build a complete one.
+            Timber.w(
+                "First-session baseline is partial (%d objects); not storing it",
+                baseline.handles.size,
+            )
+            return baseline.handles
+        }
+        camera.handledObjects.replace(baseline.handles)
         camera.persistHandledObjects("session baseline")
-        Timber.i("First session for %s, baseline holds %d objects", camera.modelName, baseline.size)
-        return baseline
+        Timber.i("First session for %s, baseline holds %d objects", camera.modelName, baseline.handles.size)
+        return baseline.handles
     }
 
     private fun eventChannelOrNull(): CameraEventChannel? {
@@ -98,7 +109,15 @@ internal class CameraSyncEngine(
         // The channel only reports objects added while the session is open, so the first
         // pass finds what was shot while the camera was unplugged. Reconnecting opens a new
         // session and gets the same pass; no timer ever runs one.
-        reconcile(storages)
+        try {
+            reconcile(storages)
+        } catch (e: PtpTransportException) {
+            throw e
+        } catch (e: PtpException) {
+            // A body that is still committing its last capture answers the enumeration with
+            // a busy code; the events that follow will still arrive.
+            Timber.w(e, "First reconcile failed, continuing on the event channel")
+        }
 
         var pollDelayMs = EVENT_POLL_FAST_MS
         var consecutiveFailures = 0
@@ -142,7 +161,9 @@ internal class CameraSyncEngine(
                     pollDelayMs,
                     maxOf(events.size, if (retries.hasPending()) 1 else 0),
                 )
-                delay(pollDelayMs)
+                // Held handles are pending work, but nothing can be written yet: poll at the
+                // idle rate instead of every 200 ms waiting for a directory to appear.
+                delay(if (downloadDirectory() == null) EVENT_POLL_IDLE_MS else pollDelayMs)
             }
         } finally {
             Timber.i(
@@ -173,14 +194,23 @@ internal class CameraSyncEngine(
                 retries.markSucceeded(handle)
                 continue
             }
-            val succeeded = importSafely(handle)
-            if (succeeded) {
-                rememberImported(handle, "event import 0x%08x".format(handle))
-                retries.markSucceeded(handle)
-                imported++
-            } else {
-                Timber.d("Object 0x%08x not readable yet, queued for retry", handle)
-                retries.enqueue(handle)
+            when (importSafely(handle)) {
+                ImportOutcome.IMPORTED -> {
+                    rememberImported(handle, "event import 0x%08x".format(handle))
+                    retries.markSucceeded(handle)
+                    imported++
+                }
+                ImportOutcome.NOT_READY -> {
+                    Timber.d("Object 0x%08x not readable yet, queued for retry", handle)
+                    retries.enqueue(handle)
+                }
+                ImportOutcome.NO_DESTINATION -> {
+                    // The event that announced this object will not repeat, so the handle
+                    // has to be kept. Queuing does not charge an attempt, which leaves the
+                    // budget for actual transfer failures.
+                    Timber.d("No download directory configured, object 0x%08x queued", handle)
+                    retries.enqueue(handle)
+                }
             }
         }
         if (reconcileRequested) {
@@ -205,12 +235,14 @@ internal class CameraSyncEngine(
                 retries.markSucceeded(handle)
                 continue
             }
-            if (importSafely(handle)) {
-                rememberImported(handle, "retried event import 0x%08x".format(handle))
-                retries.markSucceeded(handle)
-                imported++
-            } else {
-                retries.markFailed(handle)
+            when (importSafely(handle)) {
+                ImportOutcome.IMPORTED -> {
+                    rememberImported(handle, "retried event import 0x%08x".format(handle))
+                    retries.markSucceeded(handle)
+                    imported++
+                }
+                ImportOutcome.NOT_READY -> retries.markFailed(handle)
+                ImportOutcome.NO_DESTINATION -> retries.enqueue(handle)
             }
         }
         return imported
@@ -222,6 +254,10 @@ internal class CameraSyncEngine(
         var consecutiveFailures = 0
         while (currentCoroutineContext().isActive) {
             delay(POLL_INTERVAL_MS)
+            if (downloadDirectory() == null) {
+                // Nothing can be written yet, so there is nothing to reconcile for.
+                continue
+            }
             try {
                 reconcile(storages)
                 consecutiveFailures = 0
@@ -241,60 +277,59 @@ internal class CameraSyncEngine(
      * with what the camera still reports.
      */
     private suspend fun reconcile(storages: IntArray) {
-        val onCamera = camera.objectHandles(storages)
+        val enumeration = camera.objectHandles(storages)
         val handled = camera.handledObjects.snapshot()
-        val added = newHandles(handled, onCamera)
+        val added = newHandles(handled, enumeration.handles)
         Timber.v("New object handles: %s", added)
 
         val imported = mutableListOf<Int>()
         for (handle in added) {
-            if (!importSafely(handle)) {
+            when (importSafely(handle)) {
                 // Leave the rest for the next pass instead of giving up on all of them.
-                break
+                ImportOutcome.NOT_READY -> break
+                ImportOutcome.NO_DESTINATION -> return
+                ImportOutcome.IMPORTED -> imported += handle
             }
-            imported += handle
         }
 
-        val next = nextHandledSet(handled, onCamera, imported)
+        val next = reconcileHandledSet(handled, enumeration.handles, imported, enumeration.complete)
         if (next.toSet() != handled.toSet()) {
             camera.handledObjects.replace(next)
-            camera.persistHandledObjects("object list pass")
+            camera.persistHandledObjects(
+                if (enumeration.complete) "object list pass" else "partial object list pass"
+            )
         }
     }
 
     // ------------------------------------------------------------------ import
 
-    private suspend fun importSafely(handle: Int): Boolean = try {
+    private suspend fun importSafely(handle: Int): ImportOutcome = try {
         importObject(handle)
     } catch (e: PtpTransportException) {
         throw e
     } catch (e: PtpException) {
         Timber.w(e, "Importing object 0x%08x failed", handle)
-        false
+        ImportOutcome.NOT_READY
     } catch (e: Exception) {
         Timber.e(e, "Importing object 0x%08x failed unexpectedly", handle)
-        false
+        ImportOutcome.NOT_READY
     }
 
     /**
      * Downloads one object into the configured directory.
      *
-     * @return true when the object is on disk, or when it is a folder nothing needs
-     *   downloading from
+     * @return [ImportOutcome.IMPORTED] when the object is on disk, or when it is a folder
+     *   nothing needs downloading from
      */
-    private suspend fun importObject(handle: Int): Boolean {
-        val directory = downloadDirectory()
-        if (directory == null) {
-            Timber.d("No download directory yet, object 0x%08x waits", handle)
-            return false
-        }
-        val info = camera.objectInfo(handle) ?: return false
+    private suspend fun importObject(handle: Int): ImportOutcome {
+        val directory = downloadDirectory() ?: return ImportOutcome.NO_DESTINATION
+        val info = camera.objectInfo(handle) ?: return ImportOutcome.NOT_READY
         if (info.isFolder) {
-            return true
+            return ImportOutcome.IMPORTED
         }
         if (!directory.exists() && !directory.mkdirs()) {
             Timber.e("Unable to create download directory %s", directory.absolutePath)
-            return false
+            return ImportOutcome.NOT_READY
         }
         val name = DownloadNaming.sanitize(info.filename) ?: DownloadNaming.generatedName(random)
         val target = DownloadNaming.uniqueFile(directory, name)
@@ -304,10 +339,10 @@ internal class CameraSyncEngine(
         }
         if (!completed) {
             Timber.w("Camera refused object 0x%08x", handle)
-            return false
+            return ImportOutcome.NOT_READY
         }
         downloadedListener?.onFileDownloaded(handle, target, System.currentTimeMillis() - startedAt)
-        return true
+        return ImportOutcome.IMPORTED
     }
 
     private suspend fun rememberImported(handle: Int, reason: String) {
@@ -315,4 +350,16 @@ internal class CameraSyncEngine(
             camera.persistHandledObjects(reason)
         }
     }
+}
+
+/** What one import attempt achieved. */
+internal enum class ImportOutcome {
+    /** The object is on disk, or is a folder there is nothing to download from. */
+    IMPORTED,
+
+    /** The camera could not serve it yet; worth another attempt on a later pass. */
+    NOT_READY,
+
+    /** No download directory is configured, so no attempt was made at all. */
+    NO_DESTINATION,
 }
