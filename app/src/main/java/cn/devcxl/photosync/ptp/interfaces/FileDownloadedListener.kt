@@ -1,16 +1,15 @@
 package cn.devcxl.photosync.ptp.interfaces
 
-import cn.devcxl.photosync.ptp.usbcamera.BaselineInitiator
 import java.io.File
 
 /**
- * @author devcxl
+ * Called once per object that was fully written to local storage.
  */
 fun interface FileDownloadedListener {
     /**
-     * @param fileHandle 相机的 file handle
-     * @param localFile 下载到本地的文件
-     * @param timeduring 所花的时间
+     * @param fileHandle handle of the object on the camera
+     * @param localFile the completed local file
+     * @param durationMs how long the transfer took
      */
-    fun onFileDownloaded(bi: BaselineInitiator, fileHandle: Int, localFile: File, timeduring: Long)
+    fun onFileDownloaded(fileHandle: Int, localFile: File, durationMs: Long)
 }

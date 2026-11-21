@@ -1,6 +1,6 @@
 package cn.devcxl.photosync.ptp.manager
 
-import cn.devcxl.photosync.ptp.usbcamera.Response
+import cn.devcxl.photosync.ptp.protocol.PtpStatus
 
 /**
  * Outcome of asking the camera to delete one object.
@@ -71,13 +71,13 @@ internal fun cameraDeleteBlockedBy(
  */
 internal fun cameraDeleteResultOf(responseCode: Int): CameraDeleteResult {
     return when (responseCode) {
-        Response.OK -> CameraDeleteResult.Deleted
-        Response.OperationNotSupported -> CameraDeleteResult.NotSupported
-        Response.InvalidObjectHandle -> CameraDeleteResult.NotFound
-        Response.ObjectWriteProtected -> CameraDeleteResult.Protected
-        Response.StoreReadOnly,
-        Response.AccessDenied -> CameraDeleteResult.ReadOnly
-        Response.SessionNotOpen -> CameraDeleteResult.NotConnected
-        else -> CameraDeleteResult.Failed(Response._getResponseString(responseCode))
+        PtpStatus.OK -> CameraDeleteResult.Deleted
+        PtpStatus.OPERATION_NOT_SUPPORTED -> CameraDeleteResult.NotSupported
+        PtpStatus.INVALID_OBJECT_HANDLE -> CameraDeleteResult.NotFound
+        PtpStatus.OBJECT_WRITE_PROTECTED -> CameraDeleteResult.Protected
+        PtpStatus.STORE_READ_ONLY,
+        PtpStatus.ACCESS_DENIED -> CameraDeleteResult.ReadOnly
+        PtpStatus.SESSION_NOT_OPEN -> CameraDeleteResult.NotConnected
+        else -> CameraDeleteResult.Failed(PtpStatus.describe(responseCode))
     }
 }

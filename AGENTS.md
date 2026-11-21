@@ -55,11 +55,13 @@ PhotoSync/
 │   │   │   ├── adapter/           # RecyclerView adapters, render decisions
 │   │   │   ├── data/             # Data layer - Room DB, DAOs, Entities
 │   │   │   ├── ptp/               # USB PTP protocol implementation
+│   │   │   │   ├── camera/        # PtpCamera facade, session/transaction layer, sync engine
 │   │   │   │   ├── detect/        # CameraDetector (vendor detection)
 │   │   │   │   ├── interfaces/    # Transfer/download listener interfaces
 │   │   │   │   ├── manager/       # UsbPtpConnectionController, SyncDeviceManager
-│   │   │   │   ├── params/        # SyncParams constants
-│   │   │   │   └── usbcamera/     # PTP core + per-vendor initiators (eos/nikon/sony)
+│   │   │   │   ├── protocol/      # PIMA 15740 containers and datasets
+│   │   │   │   ├── transport/     # USB bulk transport
+│   │   │   │   └── camera/vendor/ # Per-vendor event channels (Canon EOS, Nikon, Sony)
 │   │   │   ├── receiver/         # Broadcast receivers
 │   │   │   ├── utils/             # Utility extensions
 │   │   │   └── App.kt             # Application class

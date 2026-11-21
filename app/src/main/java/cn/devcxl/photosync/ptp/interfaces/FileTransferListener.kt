@@ -1,19 +1,13 @@
 package cn.devcxl.photosync.ptp.interfaces
 
-import cn.devcxl.photosync.ptp.usbcamera.BaselineInitiator
-
 /**
- * @author devcxl
+ * Progress of one object transfer, reported in coarse steps rather than per USB packet.
  */
 fun interface FileTransferListener {
     /**
-     * @param totalByteLength 文件总长度
-     * @param transterByteLength 文件已传输长度
+     * @param fileHandle handle of the object being transferred
+     * @param totalBytes size the camera declared for the object
+     * @param transferredBytes bytes written to local storage so far
      */
-    fun onFileTranster(
-        bi: BaselineInitiator,
-        fileHandle: Int,
-        totalByteLength: Int,
-        transterByteLength: Int
-    )
+    fun onFileTransfer(fileHandle: Int, totalBytes: Int, transferredBytes: Int)
 }

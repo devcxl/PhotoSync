@@ -834,7 +834,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun configureConnectionController() {
         connectionController.setFileDownloadPath(externalCacheDir?.absolutePath)
-        connectionController.setFileTransferListener { _, _, totalByteLength, transterByteLength ->
+        connectionController.setFileTransferListener { _, totalByteLength, transterByteLength ->
             val progressPercent = resolveTransferPercent(transterByteLength, totalByteLength)
             lifecycleScope.launch(Dispatchers.Main) {
                 if (binding.transferStatusCard.visibility != View.VISIBLE) {
@@ -845,7 +845,7 @@ class MainActivity : AppCompatActivity() {
                 binding.progressBar.progress = progressPercent
             }
         }
-        connectionController.setFileDownloadedListener { _, fileHandle, localFile, timeduring ->
+        connectionController.setFileDownloadedListener { fileHandle, localFile, timeduring ->
             Timber.v("file downloaded at %s, time: %sms", localFile.absolutePath, timeduring)
             lifecycleScope.launch(Dispatchers.Main) {
                 binding.transferStatusCard.visibility = View.GONE

@@ -1,6 +1,6 @@
 package cn.devcxl.photosync.ptp.manager
 
-import cn.devcxl.photosync.ptp.usbcamera.Response
+import cn.devcxl.photosync.ptp.protocol.PtpStatus
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -54,14 +54,14 @@ class CameraDeletionPolicyTest {
 
     @Test
     fun shouldReportDeleted_whenResponseIsOk() {
-        assertEquals(CameraDeleteResult.Deleted, cameraDeleteResultOf(Response.OK))
+        assertEquals(CameraDeleteResult.Deleted, cameraDeleteResultOf(PtpStatus.OK))
     }
 
     @Test
     fun shouldReportNotFound_whenHandleIsInvalid() {
         assertEquals(
             CameraDeleteResult.NotFound,
-            cameraDeleteResultOf(Response.InvalidObjectHandle)
+            cameraDeleteResultOf(PtpStatus.INVALID_OBJECT_HANDLE)
         )
     }
 
@@ -69,31 +69,31 @@ class CameraDeletionPolicyTest {
     fun shouldReportProtected_whenObjectIsWriteProtected() {
         assertEquals(
             CameraDeleteResult.Protected,
-            cameraDeleteResultOf(Response.ObjectWriteProtected)
+            cameraDeleteResultOf(PtpStatus.OBJECT_WRITE_PROTECTED)
         )
     }
 
     @Test
     fun shouldReportReadOnly_whenStoreIsReadOnly() {
-        assertEquals(CameraDeleteResult.ReadOnly, cameraDeleteResultOf(Response.StoreReadOnly))
+        assertEquals(CameraDeleteResult.ReadOnly, cameraDeleteResultOf(PtpStatus.STORE_READ_ONLY))
     }
 
     @Test
     fun shouldReportReadOnly_whenAccessIsDenied() {
-        assertEquals(CameraDeleteResult.ReadOnly, cameraDeleteResultOf(Response.AccessDenied))
+        assertEquals(CameraDeleteResult.ReadOnly, cameraDeleteResultOf(PtpStatus.ACCESS_DENIED))
     }
 
     @Test
     fun shouldReportNotSupported_whenCameraRejectsTheOperation() {
         assertEquals(
             CameraDeleteResult.NotSupported,
-            cameraDeleteResultOf(Response.OperationNotSupported)
+            cameraDeleteResultOf(PtpStatus.OPERATION_NOT_SUPPORTED)
         )
     }
 
     @Test
     fun shouldReportFailureWithTheCodeName_whenResponseIsUnexpected() {
-        val result = cameraDeleteResultOf(Response.GeneralError)
+        val result = cameraDeleteResultOf(PtpStatus.GENERAL_ERROR)
 
         assertEquals(CameraDeleteResult.Failed("GeneralError"), result)
     }

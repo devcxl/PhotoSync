@@ -6,17 +6,19 @@ import android.content.Intent
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import cn.devcxl.photosync.App
+import cn.devcxl.photosync.ptp.camera.CameraSyncEngine
+import cn.devcxl.photosync.ptp.camera.ImportedHandleStore
+import cn.devcxl.photosync.ptp.camera.PtpCamera
 import cn.devcxl.photosync.ptp.detect.isSupportedCamera
 import cn.devcxl.photosync.ptp.detect.toUsbDeviceTraits
 import cn.devcxl.photosync.ptp.interfaces.FileDownloadedListener
 import cn.devcxl.photosync.ptp.interfaces.FileTransferListener
-import cn.devcxl.photosync.ptp.usbcamera.BaselineInitiator
-import cn.devcxl.photosync.ptp.usbcamera.InitiatorFactory
-import cn.devcxl.photosync.ptp.usbcamera.PTPException
-import cn.devcxl.photosync.ptp.usbcamera.toSyncTriggerMode
+import cn.devcxl.photosync.ptp.protocol.PtpException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -26,14 +28,15 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import timber.log.Timber
-
-/** `ObjectInfo.AssociationType` value for a folder. */
-private const val ASSOCIATION_TYPE_FOLDER = 1
+import java.io.File
 
 /**
- * Manages the lifecycle of a USB PTP session: detecting attached cameras, connecting,
- * disconnecting, and routing file-transfer events. Exposes a [StateFlow] of
- * [UsbPtpConnectionState] and [availableCameras].
+ * Owns the USB PTP session: detects attached cameras, connects, disconnects, and hands the
+ * delete and transfer entry points to the UI.
+ *
+ * The connection state is a [StateFlow] so the activity can render it without polling. A
+ * session is only opened on explicit request: while it is open the camera is locked out of
+ * shooting, so plugging the cable alone must not start one.
  */
 class UsbPtpConnectionController(
     context: Context,
@@ -46,12 +49,19 @@ class UsbPtpConnectionController(
     private val _connectionState = MutableStateFlow<UsbPtpConnectionState>(UsbPtpConnectionState.Idle)
     private val _availableCameras = MutableStateFlow<List<UsbPtpDeviceId>>(emptyList())
 
-    private var currentInitiator: BaselineInitiator? = null
+    private var currentCamera: PtpCamera? = null
     private var currentDevice: UsbDevice? = null
     private var currentDeviceId: UsbPtpDeviceId? = null
     private var pendingPermissionDeviceId: UsbPtpDeviceId? = null
+    private var syncJob: Job? = null
+
+    @Volatile
     private var transferListener: FileTransferListener? = null
+
+    @Volatile
     private var downloadedListener: FileDownloadedListener? = null
+
+    @Volatile
     private var fileDownloadPath: String? = null
 
     /**
@@ -72,11 +82,17 @@ class UsbPtpConnectionController(
      */
     val availableCameras: StateFlow<List<UsbPtpDeviceId>> = _availableCameras.asStateFlow()
 
+    /** Forwards progress to whichever listener is set now, not the one set at connect. */
+    private val transferProxy = FileTransferListener { handle, total, transferred ->
+        transferListener?.onFileTransfer(handle, total, transferred)
+    }
+
+    private val downloadedProxy = FileDownloadedListener { handle, file, duration ->
+        downloadedListener?.onFileDownloaded(handle, file, duration)
+    }
+
     /**
      * Re-reads the attached cameras. Never connects.
-     *
-     * Plugging the cable is not the same intent as opening a session: a session locks the
-     * camera out of shooting until it is closed, so only the user starts one.
      */
     fun refreshAvailableCameras() {
         scope.launch {
@@ -84,9 +100,7 @@ class UsbPtpConnectionController(
         }
     }
 
-    /**
-     * Connects the first attached camera, asking for USB permission when it is missing.
-     */
+    /** Connects the first attached camera, asking for USB permission when it is missing. */
     fun connectToAvailableCamera() {
         scope.launch {
             val device = attachedCameras().firstOrNull()
@@ -122,8 +136,7 @@ class UsbPtpConnectionController(
      * [PendingIntent] is created with [PendingIntent.FLAG_IMMUTABLE] (a mutable one with
      * an implicit intent throws on target SDK 34+), while the system injects
      * `EXTRA_DEVICE` and `EXTRA_PERMISSION_GRANTED` at send time — exactly the extras an
-     * immutable PendingIntent drops. Reading them reported a granted permission as
-     * denied.
+     * immutable PendingIntent drops. Reading them reported a granted permission as denied.
      *
      * Instead the device tracked when the permission was requested is re-resolved, and
      * [UsbManager.hasPermission] decides. That is also immune to a forged broadcast.
@@ -170,26 +183,26 @@ class UsbPtpConnectionController(
      * @param objectHandle The PTP handle recorded when the photo was imported.
      */
     suspend fun deleteOnCamera(objectHandle: Int): CameraDeleteResult = withContext(ioDispatcher) {
-        val initiator = stateMutex.withLock { currentInitiator }
+        val camera = stateMutex.withLock { currentCamera }
             ?: return@withContext CameraDeleteResult.NotConnected
-        if (!initiator.supportsObjectDeletion()) {
+        if (!camera.supportsObjectDeletion) {
             return@withContext CameraDeleteResult.NotSupported
         }
         try {
-            val objectInfo = initiator.objectInfoOrNull(objectHandle)
+            val objectInfo = camera.objectInfo(objectHandle)
                 ?: return@withContext CameraDeleteResult.NotFound
-            if (objectInfo.associationType == ASSOCIATION_TYPE_FOLDER) {
+            if (objectInfo.isFolder) {
                 // Would take every photo in the folder with it; the app never imports one.
                 return@withContext CameraDeleteResult.Failed("association_object")
             }
-            if (objectInfo.protectionStatus != 0) {
+            if (objectInfo.isProtected) {
                 return@withContext CameraDeleteResult.Protected
             }
-            if (!initiator.storageAcceptsDeletion(objectInfo.storageId)) {
+            if (!camera.storageAcceptsWrites(objectInfo.storageId)) {
                 return@withContext CameraDeleteResult.ReadOnly
             }
-            cameraDeleteResultOf(initiator.deleteObject(objectHandle))
-        } catch (e: PTPException) {
+            cameraDeleteResultOf(camera.deleteObject(objectHandle))
+        } catch (e: PtpException) {
             Timber.w(e, "deleteOnCamera failed for handle %s", objectHandle)
             CameraDeleteResult.Failed(e.message)
         } catch (e: Exception) {
@@ -200,41 +213,18 @@ class UsbPtpConnectionController(
 
     fun setFileDownloadPath(path: String?) {
         fileDownloadPath = path
-        scope.launch {
-            stateMutex.withLock {
-                currentInitiator?.setFileDownloadPath(path)
-            }
-        }
     }
 
     fun setFileTransferListener(listener: FileTransferListener?) {
         transferListener = listener
-        scope.launch {
-            stateMutex.withLock {
-                currentInitiator?.resetFileTransferListener()
-                if (listener != null) {
-                    currentInitiator?.setFileTransferListener(listener)
-                }
-            }
-        }
     }
 
     fun setFileDownloadedListener(listener: FileDownloadedListener?) {
         downloadedListener = listener
-        scope.launch {
-            stateMutex.withLock {
-                currentInitiator?.resetFileDownloadedListener()
-                if (listener != null) {
-                    currentInitiator?.setFileDownloadedListener(listener)
-                }
-            }
-        }
     }
 
-    private fun attachedCameras(): List<UsbDevice> {
-        return usbManager.deviceList.values
-            .filter { isSupportedCamera(it.toUsbDeviceTraits()) }
-    }
+    private fun attachedCameras(): List<UsbDevice> =
+        usbManager.deviceList.values.filter { isSupportedCamera(it.toUsbDeviceTraits()) }
 
     private suspend fun tryStartConnection(device: UsbDevice): Boolean {
         val candidateId = device.toUsbPtpDeviceId()
@@ -277,70 +267,123 @@ class UsbPtpConnectionController(
         }
         _connectionState.value = UsbPtpConnectionState.Connecting(deviceId)
 
-        var produced: BaselineInitiator? = null
-        val initiator = try {
-            val created = InitiatorFactory.produceInitiator(device, usbManager)
+        var produced: PtpCamera? = null
+        val camera = try {
+            val created = PtpCamera.connect(usbManager, device, ioDispatcher)
             produced = created
-            created.getClearStatus()
-            val triggerDecision = created.triggerDecision()
-            created.setSyncTriggerMode(triggerDecision.toSyncTriggerMode())
-            Timber.i("同步触发方式: %s, device=%s", triggerDecision, deviceId.deviceName)
-            fileDownloadPath?.let(created::setFileDownloadPath)
-            transferListener?.let(created::setFileTransferListener)
-            downloadedListener?.let(created::setFileDownloadedListener)
+            created.importedHandleStore = SyncDeviceHandleStore(device)
             created.openSession()
             created
         } catch (e: Exception) {
             runCatching { produced?.close() }
-                .onFailure { closeErr -> Timber.w(closeErr, "Failed to close initiator after connect failure") }
-            stateMutex.withLock {
-                currentDeviceId = null
-            }
+                .onFailure { closeErr -> Timber.w(closeErr, "Failed to close the camera after connect failure") }
+            stateMutex.withLock { currentDeviceId = null }
             _connectionState.value = UsbPtpConnectionState.Error(deviceId, "connect_failed", e.message)
             Timber.e(e, "connectInternal failed")
             return false
         }
 
         stateMutex.withLock {
-            currentInitiator = initiator
+            currentCamera = camera
             currentDevice = device
-            connectedCameraSupportsDeletion = initiator.supportsObjectDeletion()
+            connectedCameraSupportsDeletion = camera.supportsObjectDeletion
         }
+        // Publish the state before the loop starts, so a listener installed on Connected
+        // cannot miss the first import.
         _connectionState.value = UsbPtpConnectionState.Connected(deviceId)
+        startSync(camera)
         return true
+    }
+
+    /**
+     * Starts the import loop for [camera].
+     *
+     * The engine owns the trigger decision; the controller only supplies the environment it
+     * runs in. Launching it after the state is published means a listener set from the UI
+     * right after `Connected` already sees the first import.
+     */
+    private fun startSync(camera: PtpCamera) {
+        val engine = CameraSyncEngine(
+            camera = camera,
+            downloadDirectory = { fileDownloadPath?.let(::File) },
+            transferListener = transferProxy,
+            downloadedListener = downloadedProxy,
+        )
+        syncJob = scope.launch {
+            // The camera may have been disconnected between publishing Connected and this
+            // job starting; running the loop then would fight the teardown.
+            if (stateMutex.withLock { currentCamera } !== camera) {
+                Timber.d("Sync loop skipped, camera was released before it started")
+                return@launch
+            }
+            var failure: Exception? = null
+            try {
+                engine.run()
+            } catch (e: CancellationException) {
+                Timber.d("Sync loop cancelled")
+                throw e
+            } catch (e: Exception) {
+                failure = e
+                Timber.e(e, "Sync loop stopped on an unexpected failure")
+            }
+            // The session is over either way: a loop that died leaves a camera that looks
+            // connected but will never import anything, which is worse than saying so.
+            failure?.let { releaseAfterSyncFailure(camera) }
+        }
+    }
+
+    /**
+     * Tears the session down after [camera]'s sync loop failed.
+     *
+     * Runs from the loop's own coroutine, so it must not cancel the job it is running in:
+     * the cancellation would abort the USB teardown itself.
+     */
+    private suspend fun releaseAfterSyncFailure(camera: PtpCamera) {
+        disconnectInternal(
+            reason = "sync_failed",
+            targetDeviceId = camera.usbDevice?.toUsbPtpDeviceId(),
+            cancelSync = false,
+        )
     }
 
     private suspend fun disconnectInternal(
         reason: String,
         targetDeviceId: UsbPtpDeviceId?,
-        resetStateAfterDisconnect: Boolean = true
+        resetStateAfterDisconnect: Boolean = true,
+        cancelSync: Boolean = true,
     ) {
         stateMutex.withLock {
-            if (currentInitiator == null && currentDeviceId == null && pendingPermissionDeviceId == null) {
+            if (currentCamera == null && currentDeviceId == null && pendingPermissionDeviceId == null) {
                 if (resetStateAfterDisconnect && _connectionState.value !is UsbPtpConnectionState.Idle) {
                     _connectionState.value = UsbPtpConnectionState.Disconnected(targetDeviceId, reason)
                 }
                 return
             }
         }
-        val initiatorToClose: BaselineInitiator?
+        val cameraToClose: PtpCamera?
+        val jobToCancel: Job?
         val deviceToDisconnect: UsbPtpDeviceId?
         stateMutex.withLock {
             deviceToDisconnect = targetDeviceId ?: currentDeviceId ?: pendingPermissionDeviceId
-            initiatorToClose = currentInitiator
+            cameraToClose = currentCamera
+            jobToCancel = syncJob
             if (deviceToDisconnect != null) {
                 _connectionState.value = UsbPtpConnectionState.Disconnecting(deviceToDisconnect, reason)
             }
-            currentInitiator = null
+            currentCamera = null
             currentDevice = null
             currentDeviceId = null
             pendingPermissionDeviceId = null
+            syncJob = null
             connectedCameraSupportsDeletion = false
         }
 
+        if (cancelSync) {
+            jobToCancel?.cancel()
+        }
         try {
-            initiatorToClose?.close()
-        } catch (e: PTPException) {
+            cameraToClose?.close()
+        } catch (e: PtpException) {
             Timber.w(e, "disconnectInternal close failed")
         } catch (e: Exception) {
             Timber.w(e, "disconnectInternal unexpected close failure")
@@ -348,6 +391,25 @@ class UsbPtpConnectionController(
 
         if (resetStateAfterDisconnect) {
             _connectionState.value = UsbPtpConnectionState.Disconnected(deviceToDisconnect, reason)
+        }
+    }
+
+    /**
+     * Persists imported handles in the per-device sync record.
+     *
+     * A separate type from the PTP layer so the protocol code never depends on Room.
+     */
+    private class SyncDeviceHandleStore(private val device: UsbDevice) : ImportedHandleStore {
+        override suspend fun load(): List<Int>? = withContext(Dispatchers.IO) {
+            val manager = SyncDeviceManager(device)
+            val record = manager.getSyncDevice(device)
+            if (record?.syncAt == null) null else manager.getIdList(record)
+        }
+
+        override suspend fun save(handles: List<Int>) = withContext(Dispatchers.IO) {
+            val manager = SyncDeviceManager(device)
+            manager.updateDeviceInfo()
+            manager.updateIdList(handles)
         }
     }
 }
