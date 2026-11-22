@@ -43,6 +43,7 @@ target_link_libraries(libraw_static PRIVATE lcms2_static)
 
 add_library(${CMAKE_PROJECT_NAME} SHARED
     libraw_jni.cpp
+    raw_exif_jni.cpp
     raw_postprocess.cpp
 )
 

@@ -81,6 +81,7 @@ dependencies {
 
     // Required by PhotoView
     implementation libs.androidx.appcompat
+    implementation libs.androidx.exifinterface
 
     implementation libs.androidx.activity.ktx
 

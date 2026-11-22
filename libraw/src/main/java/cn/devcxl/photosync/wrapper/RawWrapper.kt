@@ -14,6 +14,7 @@ object RawWrapper {
     external fun decodeThumbnail(path: String): ByteArray?
     external fun decodeToRGB(path: String): ByteArray?
     external fun decodeToBitmapNative(path: String): Bitmap?
+    external fun extractExifMetadata(path: String): RawExifMetadata?
 
     /**
      * 解码缩略图为 Bitmap。先尝试嵌入式 JPEG，失败则尝试 BITMAP 格式。

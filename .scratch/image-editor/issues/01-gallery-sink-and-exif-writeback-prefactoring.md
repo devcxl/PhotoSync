@@ -4,9 +4,9 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] 引入 `androidx.exifinterface:exifinterface` 依赖（版本集中声明在 Version Catalog 中）。
-- [ ] 提供 `GallerySink` 与 `ExifCopier`：支持从 JPEG 原图或 RAW 解码元数据（品牌、机型、拍摄时间 `localtime()` 反解、光圈、快门、ISO、焦距、镜头信息）按显式白名单复制 EXIF 标签（排除 `TAG_MAKER_NOTE`），并强制覆写 `TAG_ORIENTATION = "1"` 与实际输出宽高。
-- [ ] API 29+ 路径在像素流写完并关闭 `"w"` 流后，通过 `openFileDescriptor(uri, "rw")` 执行 `ExifInterface.saveAttributes()`，成功后再将 `IS_PENDING` 置为 `0`；任一步骤抛异常时自动调用 `resolver.delete(uri)` 清理半成品。
-- [ ] 主界面现有的未编辑 JPEG 与 RAW 导出切换至该契约，所有既有单元测试与 Lint 检查保持全绿。
+- [x] 引入 `androidx.exifinterface:exifinterface` 依赖（版本集中声明在 Version Catalog 中）。
+- [x] 提供 `GallerySink` 与 `ExifCopier`：支持从 JPEG 原图或 RAW 解码元数据（品牌、机型、拍摄时间 `localtime()` 反解、光圈、快门、ISO、焦距、镜头信息）按显式白名单复制 EXIF 标签（排除 `TAG_MAKER_NOTE`），并强制覆写 `TAG_ORIENTATION = "1"` 与实际输出宽高。
+- [x] API 29+ 路径在像素流写完并关闭 `"w"` 流后，通过 `openFileDescriptor(uri, "rw")` 执行 `ExifInterface.saveAttributes()`，成功后再将 `IS_PENDING` 置为 `0`；任一步骤抛异常时自动调用 `resolver.delete(uri)` 清理半成品。
+- [x] 主界面现有的未编辑 JPEG 与 RAW 导出切换至该契约，所有既有单元测试与 Lint 检查保持全绿。

@@ -3,16 +3,13 @@ package cn.devcxl.photosync.activity
 import kotlin.math.roundToInt
 
 import java.io.File
-import java.io.FileOutputStream
 import java.io.IOException
-import java.io.OutputStream
 import java.text.SimpleDateFormat
 import java.util.Collections
 import java.util.Date
 import java.util.Locale
 
 import android.Manifest
-import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
@@ -23,10 +20,8 @@ import android.hardware.usb.UsbManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.Environment
 import android.os.Handler
 import android.os.Looper
-import android.provider.MediaStore
 import android.util.LruCache
 import android.view.View
 import android.view.ViewGroup
@@ -69,6 +64,9 @@ import cn.devcxl.photosync.data.AppDatabase
 import cn.devcxl.photosync.data.PhotoDao
 import cn.devcxl.photosync.data.entity.PhotoEntity
 import cn.devcxl.photosync.databinding.ActivityMainBinding
+import cn.devcxl.photosync.export.ExifCopier
+import cn.devcxl.photosync.export.GallerySink
+import cn.devcxl.photosync.export.MediaStoreGallerySink
 import cn.devcxl.photosync.ptp.manager.UsbPtpConnectionState
 import cn.devcxl.photosync.ptp.manager.cameraDeleteBlockedBy
 import cn.devcxl.photosync.utils.ExtensionUtils
@@ -80,15 +78,18 @@ class MainActivity : AppCompatActivity() {
         (application as App).usbPtpConnectionController
     }
 
+    private val gallerySink: GallerySink by lazy {
+        MediaStoreGallerySink(contentResolver)
+    }
+
     companion object {
         private const val REQ_WRITE_STORAGE = 2001
         private const val THUMBNAIL_MAX_EDGE_PX = 512
         private const val RAW_PREVIEW_MAX_EDGE_PX = 1200
         private const val FULL_PREVIEW_SCALE_FACTOR = 2
         private const val FULL_PREVIEW_MAX_EDGE_PX = 4096
-        private const val JPEG_MIME = "image/jpeg"
+        private const val JPEG_MIME = GallerySink.JPEG_MIME
         private const val JPEG_EXPORT_QUALITY = 95
-        private const val GALLERY_DIR_NAME = "PhotoSync"
         private const val PREFS_NAME = "photosync_prefs"
         private const val PREF_DELETE_ON_CAMERA = "delete_on_camera"
         private val exportDateFormat = ThreadLocal.withInitial {
@@ -1137,7 +1138,11 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                     try {
-                        if (bmp != null) saveBitmapToGallery(bmp, displayName) else null
+                        if (bmp != null) {
+                            saveBitmapToGallery(bmp, displayName, rawSourcePath = path)
+                        } else {
+                            null
+                        }
                     } finally {
                         if (cachedBmp == null) {
                             bmp?.recycle()
@@ -1193,83 +1198,57 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun saveBitmapToGallery(bitmap: Bitmap, displayName: String): Uri? {
-        return saveToGallery(displayName, mime = JPEG_MIME) { out ->
-            if (!bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_EXPORT_QUALITY, out)) {
-                throw IOException("JPEG compress failed")
+    private fun saveBitmapToGallery(
+        bitmap: Bitmap,
+        displayName: String,
+        rawSourcePath: String? = null
+    ): Uri? {
+        val rawMetadata = rawSourcePath?.let { src ->
+            try {
+                RawWrapper.extractExifMetadata(src)
+            } catch (e: Exception) {
+                Timber.w(e, "Failed to extract RAW EXIF metadata")
+                null
             }
         }
+        val outWidth = bitmap.width
+        val outHeight = bitmap.height
+        return gallerySink.save(
+            displayName = displayName,
+            mime = JPEG_MIME,
+            write = { out ->
+                if (!bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_EXPORT_QUALITY, out)) {
+                    throw IOException("JPEG compress failed")
+                }
+            },
+            writeExif = if (rawMetadata != null) {
+                { exifWriter ->
+                    ExifCopier.applyFromRawMetadata(
+                        metadata = rawMetadata,
+                        target = exifWriter,
+                        outputWidth = outWidth,
+                        outputHeight = outHeight
+                    )
+                }
+            } else {
+                null
+            }
+        )
     }
 
     // 直接复制文件至相册（用于JPEG等已经是目标格式的文件）
-    private fun saveFileToGalleryByCopying(srcFile: File, displayName: String, mime: String = JPEG_MIME): Uri? {
-        return saveToGallery(displayName, mime) { out ->
-            srcFile.inputStream().use { input -> input.copyTo(out) }
-        }
-    }
-
-    /**
-     * Writes one image into the system gallery under Pictures/PhotoSync.
-     *
-     * On API 29+ the entry is inserted through MediaStore with `IS_PENDING` set, so a
-     * failed write never leaves a half-written image visible. Older versions write the
-     * file directly to external storage, then announce it to MediaStore and return that
-     * insert's result.
-     *
-     * @param displayName File name to publish in the gallery.
-     * @param mime MIME type to record in MediaStore.
-     * @param write Callback that writes the image bytes; returning normally means success,
-     *   throwing marks the entry as failed and it is removed again.
-     * @return The MediaStore [Uri] of the new entry, or null when saving failed.
-     */
-    private fun saveToGallery(displayName: String, mime: String, write: (OutputStream) -> Unit): Uri? {
-        return try {
-            if (Build.VERSION.SDK_INT >= 29) {
-                val values = ContentValues().apply {
-                    put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
-                    put(MediaStore.MediaColumns.MIME_TYPE, mime)
-                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/PhotoSync")
-                    put(MediaStore.Images.Media.IS_PENDING, 1)
-                }
-                val resolver = contentResolver
-                val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-                if (uri != null) {
-                    try {
-                        val stream = resolver.openOutputStream(uri)
-                            ?: throw IOException("openOutputStream returned null")
-                        stream.use { out ->
-                            write(out)
-                            out.flush()
-                        }
-                    } catch (e: Exception) {
-                        resolver.delete(uri, null, null)
-                        throw e
-                    }
-                    values.clear()
-                    values.put(MediaStore.Images.Media.IS_PENDING, 0)
-                    resolver.update(uri, values, null, null)
-                }
-                uri
-            } else {
-                val pictures = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
-                val dir = File(pictures, GALLERY_DIR_NAME).apply { if (!exists()) mkdirs() }
-                val file = File(dir, displayName)
-                FileOutputStream(file).use { out ->
-                    write(out)
-                    out.flush()
-                }
-                // Insert into MediaStore on older devices so it shows up in gallery
-                val values = ContentValues().apply {
-                    put(MediaStore.MediaColumns.DATA, file.absolutePath)
-                    put(MediaStore.MediaColumns.MIME_TYPE, mime)
-                    put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
-                }
-                contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+    private fun saveFileToGalleryByCopying(
+        srcFile: File,
+        displayName: String,
+        mime: String = JPEG_MIME
+    ): Uri? {
+        return gallerySink.save(
+            displayName = displayName,
+            mime = mime,
+            write = { out ->
+                srcFile.inputStream().use { input -> input.copyTo(out) }
             }
-        } catch (e: Exception) {
-            Timber.e(e, "saveToGallery failed for %s", displayName)
-            null
-        }
+        )
     }
 
     /**
