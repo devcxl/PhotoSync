@@ -41,10 +41,11 @@ internal class EditorPreviewSession(
     }
 
     /** Pushes the parameter state a preview draw depends on into [renderer]. */
-    fun applyGraph(graph: EditGraph) {
+    fun applyGraph(graph: EditGraph, useProxy: Boolean = false) {
         renderer.baseLook = graph.baseLook
         renderer.exposureEv = graph.tone.exposure
-        renderer.useFastProxy = false
+        renderer.applyGeometry(graph)
+        renderer.useFastProxy = useProxy
     }
 
     /**
@@ -57,14 +58,13 @@ internal class EditorPreviewSession(
             null -> null
             is EditorSource.LinearRawSource -> PreviewCacheWriter.writePreviewCache(
                 source = current.full,
-                baseLook = graph.baseLook,
-                exposureEv = graph.tone.exposure,
+                graph = graph,
                 cacheDir = cacheDir,
                 photoId = photoId
             )
             is EditorSource.BitmapSource -> PreviewCacheWriter.writePreviewCache(
                 source = current.full,
-                exposureEv = graph.tone.exposure,
+                graph = graph,
                 cacheDir = cacheDir,
                 photoId = photoId
             )

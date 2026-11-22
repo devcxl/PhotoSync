@@ -14,9 +14,10 @@ internal object ExposureShaderSources {
         in vec2 aPosition;
         in vec2 aTexCoord;
         uniform vec2 uScale;
+        uniform vec2 uOffset;
         out vec2 vTexCoord;
         void main() {
-            gl_Position = vec4(aPosition * uScale, 0.0, 1.0);
+            gl_Position = vec4(aPosition * uScale + uOffset, 0.0, 1.0);
             vTexCoord = aTexCoord;
         }
     """.trimIndent()
@@ -61,9 +62,10 @@ internal object ExposureShaderSources {
         attribute vec2 aPosition;
         attribute vec2 aTexCoord;
         uniform vec2 uScale;
+        uniform vec2 uOffset;
         varying vec2 vTexCoord;
         void main() {
-            gl_Position = vec4(aPosition * uScale, 0.0, 1.0);
+            gl_Position = vec4(aPosition * uScale + uOffset, 0.0, 1.0);
             vTexCoord = aTexCoord;
         }
     """.trimIndent()

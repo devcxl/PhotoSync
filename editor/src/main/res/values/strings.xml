@@ -21,4 +21,39 @@
     <string name="editor_base_look_camera_default">默认观感</string>
     <string name="editor_base_look_linear_neutral">线性中性</string>
     <string name="editor_base_look_separator">|</string>
+
+    <!-- Geometry sub-tools -->
+    <string name="editor_tool_crop">裁切</string>
+    <string name="editor_tool_crop_modified">裁切 •</string>
+    <string name="editor_tool_straighten">拉直</string>
+    <string name="editor_tool_straighten_modified">拉直 •</string>
+    <string name="editor_tool_rotate90">旋转 90°</string>
+    <string name="editor_tool_rotate90_modified">旋转 90° •</string>
+    <string name="editor_tool_flip_horizontal">水平翻转</string>
+    <string name="editor_tool_flip_horizontal_modified">水平翻转 •</string>
+    <string name="editor_tool_flip_vertical">垂直翻转</string>
+    <string name="editor_tool_flip_vertical_modified">垂直翻转 •</string>
+    <string name="editor_tool_perspective">透视</string>
+    <string name="editor_tool_perspective_modified">透视 •</string>
+
+    <!-- Detail sub-tools -->
+    <string name="editor_tool_ca_red_cyan">色散 R/C</string>
+    <string name="editor_tool_ca_red_cyan_modified">色散 R/C •</string>
+    <string name="editor_tool_ca_blue_yellow">色散 B/Y</string>
+    <string name="editor_tool_ca_blue_yellow_modified">色散 B/Y •</string>
+
+    <!-- Value formats -->
+    <string name="editor_value_degrees_fmt">%1$+.1f°</string>
+    <string name="editor_value_plain_degrees_fmt">%1$.0f°</string>
+    <string name="editor_value_signed_fmt">%1$+.0f</string>
+    <string name="editor_value_aspect_fmt">%1$.2f : 1</string>
+    <string name="editor_value_on">开</string>
+    <string name="editor_value_off">关</string>
+
+    <!-- Aspect-ratio lock chips -->
+    <string name="editor_aspect_free">自由</string>
+    <string name="editor_aspect_original">原比例</string>
+    <string name="editor_aspect_square">1:1</string>
+    <string name="editor_aspect_four_three">4:3</string>
+    <string name="editor_aspect_sixteen_nine">16:9</string>
 </resources>

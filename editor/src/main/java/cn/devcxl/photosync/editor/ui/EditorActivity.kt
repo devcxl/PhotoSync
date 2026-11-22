@@ -1,16 +1,14 @@
 package cn.devcxl.photosync.editor.ui
 
-import java.util.Locale
-import kotlin.math.abs
-
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
+import android.opengl.GLSurfaceView
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
 import android.widget.Toast
@@ -32,16 +30,25 @@ import cn.devcxl.photosync.editor.domain.EditParameterKey
 import cn.devcxl.photosync.editor.domain.EditorUndoController
 import cn.devcxl.photosync.editor.render.EditorGlRenderer
 import cn.devcxl.photosync.editor.render.EditorPreviewSession
+import cn.devcxl.photosync.editor.ui.gesture.CanvasTransform
+import cn.devcxl.photosync.editor.ui.gesture.EditorGroup
+import cn.devcxl.photosync.editor.ui.gesture.EditorTool
+import cn.devcxl.photosync.editor.ui.panels.EditorPanelController
+import cn.devcxl.photosync.editor.ui.panels.EditorPreviewGeometry
+import cn.devcxl.photosync.editor.ui.widgets.CropOverlayView
 
 /**
- * Full-screen non-destructive photo editor (Tracer-Bullet Slice: Exposure + RAW BaseLook +
- * Undo/Redo + Before/After Compare + GLES 3.0 1024px Proxy Throttling).
+ * Full-screen non-destructive photo editor.
+ *
+ * Combines 16-bit linear RAW decoding + `BaseLook` baseline switching with Pass A geometry /
+ * lateral chromatic-aberration resampling and Pass B linear-light exposure grading.
  */
-class EditorActivity : AppCompatActivity() {
+class EditorActivity : AppCompatActivity(), EditorPanelController.Host {
 
     private lateinit var binding: ActivityEditorBinding
     private lateinit var previewSession: EditorPreviewSession
     private lateinit var saveCoordinator: EditorSaveCoordinator
+    private lateinit var panel: EditorPanelController
     private val renderer = EditorGlRenderer()
     private val undoController = EditorUndoController()
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -51,10 +58,7 @@ class EditorActivity : AppCompatActivity() {
     private var isRaw: Boolean = false
     private var preferLinearSource: Boolean = false
 
-    private val settleFullQualityRunnable = Runnable {
-        renderer.useFastProxy = false
-        binding.glSurfaceView.requestRender()
-    }
+    private val settleFullQualityRunnable = Runnable { renderCurrentGraph(useProxy = false) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -68,8 +72,10 @@ class EditorActivity : AppCompatActivity() {
         saveCoordinator = EditorSaveCoordinator(photoId, previewSession)
 
         setupGlSurfaceView()
-        setupExposureSlider()
-        setupActionButtons()
+        setupOverlay()
+        setupTopBar()
+        panel = EditorPanelController(this, binding, undoController, this)
+        panel.selectGroup(EditorGroup.TONE)
         loadInitialPhotoAndEditState()
     }
 
@@ -86,68 +92,69 @@ class EditorActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         mainHandler.removeCallbacks(settleFullQualityRunnable)
+        binding.cropOverlayView.listener = null
         previewSession.release()
         super.onDestroy()
     }
 
-    private fun setupGlSurfaceView() {
-        preferLinearSource = EditorCanvasSetup.supportsEs3(this)
-        EditorCanvasSetup.configure(
-            context = this,
-            surfaceView = binding.glSurfaceView,
-            renderer = renderer,
-            supportsEs3 = preferLinearSource
-        ) { comparing -> setCompareOriginal(comparing) }
+    override fun onEditorToolChanged(tool: EditorTool) {
+        binding.cropOverlayView.tool = tool
+        binding.cropOverlayView.group = panel.currentGroup
+        renderCurrentGraph(useProxy = false)
     }
 
-    private fun setupExposureSlider() {
-        ExposureSliderBinder.bind(
-            seekBar = binding.dialSeekBar,
-            onExposureChanged = ::onExposureChanged,
-            onExposureReleased = ::onExposureReleased
-        )
-    }
-
-    private fun onExposureChanged(value: Float) {
+    override fun onGraphEdited(graph: EditGraph, parameterKey: EditParameterKey) {
         mainHandler.removeCallbacks(settleFullQualityRunnable)
-        val current = undoController.currentGraph
-        val updated = current.copy(tone = current.tone.copy(exposure = value))
-        val sanitized = undoController.onParameterDrag(updated, EditParameterKey.TONE_EXPOSURE)
-        renderer.useFastProxy = true
-        renderer.exposureEv = sanitized.tone.exposure
-        binding.glSurfaceView.requestRender()
-        updateControlsUi()
-    }
-
-    private fun onExposureReleased() {
-        undoController.onParameterRelease()
-        mainHandler.removeCallbacks(settleFullQualityRunnable)
+        renderCurrentGraph(useProxy = true)
         mainHandler.postDelayed(settleFullQualityRunnable, SETTLE_DELAY_MS)
-        updateControlsUi()
+    }
+
+    override fun onGraphCommitted(graph: EditGraph, parameterKey: EditParameterKey) {
+        mainHandler.removeCallbacks(settleFullQualityRunnable)
+        renderCurrentGraph(useProxy = false)
+        updateHistoryButtons()
+    }
+
+    override fun previewAspect(): Float =
+        EditorPreviewGeometry.previewAspect(
+            undoController.currentGraph,
+            panel.currentTool,
+            renderer.sourceAspect()
+        )
+
+    private fun createOverlayGestures(): CropOverlayView.Listener = EditorGeometryGestures(
+        undoController = undoController,
+        onDragged = {
+            mainHandler.removeCallbacks(settleFullQualityRunnable)
+            renderCurrentGraph(useProxy = true)
+        },
+        onFinished = {
+            renderCurrentGraph(useProxy = false)
+            updateHistoryButtons()
+        },
+        onCanvasTransformChanged = ::onCanvasTransformChanged,
+        onCompareHold = ::setCompareOriginal
+    )
+
+    private fun setupGlSurfaceView() {
+        val activityManager = getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+        preferLinearSource =
+            (activityManager?.deviceConfigurationInfo?.reqGlEsVersion ?: 0) >= MIN_GLES_VERSION_ES3
+        renderer.preferEs3 = preferLinearSource
+        binding.glSurfaceView.setEGLContextClientVersion(if (preferLinearSource) 3 else 2)
+        binding.glSurfaceView.setRenderer(renderer)
+        binding.glSurfaceView.renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
+    }
+
+    private fun setupOverlay() {
+        binding.cropOverlayView.listener = createOverlayGestures()
+        binding.cropOverlayView.tool = EditorTool.NONE
     }
 
     @SuppressLint("ClickableViewAccessibility")
-    private fun setupActionButtons() {
-        val chipGestureDetector = GestureDetector(
-            this,
-            object : GestureDetector.SimpleOnGestureListener() {
-                override fun onSingleTapConfirmed(e: MotionEvent): Boolean = true
-                override fun onDoubleTap(e: MotionEvent): Boolean {
-                    resetExposureToZero()
-                    return true
-                }
-            }
-        )
-        binding.chipExposure.setOnTouchListener { _, event ->
-            chipGestureDetector.onTouchEvent(event)
-            true
-        }
-        binding.btnUndo.setOnClickListener {
-            applyGraphToRendererAndUi(undoController.undo())
-        }
-        binding.btnRedo.setOnClickListener {
-            applyGraphToRendererAndUi(undoController.redo())
-        }
+    private fun setupTopBar() {
+        binding.btnUndo.setOnClickListener { applyHistoryGraph(undoController.undo()) }
+        binding.btnRedo.setOnClickListener { applyHistoryGraph(undoController.redo()) }
         binding.btnCompare.setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> setCompareOriginal(true)
@@ -157,29 +164,84 @@ class EditorActivity : AppCompatActivity() {
         }
         binding.baseLookToggle.onLookSelected = ::selectBaseLook
         binding.btnDone.setOnClickListener { saveEditAndFinish() }
-        EditorCategoryTabs.bindComingSoon(
-            this,
-            listOf(
-                binding.tabPreset,
-                binding.tabGeometry,
-                binding.tabColor,
-                binding.tabDetail,
-                binding.tabPortrait
-            )
+        updateHistoryButtons()
+    }
+
+    private fun applyHistoryGraph(graph: EditGraph) {
+        mainHandler.removeCallbacks(settleFullQualityRunnable)
+        renderCurrentGraph(useProxy = false)
+        updateBaseLookPill(graph.baseLook)
+        updateHistoryButtons()
+    }
+
+    private fun renderCurrentGraph(useProxy: Boolean) {
+        val graph = undoController.currentGraph
+        val preview = EditorPreviewGeometry.previewGraph(graph, panel.currentTool)
+        previewSession.applyGraph(preview, useProxy = useProxy)
+        syncOverlay(graph)
+        panel.refresh()
+        updateBaseLookPill(graph.baseLook)
+        binding.glSurfaceView.requestRender()
+    }
+
+    private fun syncOverlay(graph: EditGraph) {
+        val overlay = binding.cropOverlayView
+        overlay.cropRect = graph.geometry.crop
+        overlay.perspectiveQuad = graph.geometry.perspective.toFloatArray()
+        overlay.lockedAspect = panel.lockedAspect
+        overlay.frameAspect = previewAspect()
+        overlay.tool = panel.currentTool
+        overlay.group = panel.currentGroup
+    }
+
+    private fun onCanvasTransformChanged(transform: CanvasTransform) {
+        renderer.canvasScale = transform.scale
+        renderer.canvasOffsetX = transform.offsetX
+        renderer.canvasOffsetY = transform.offsetY
+        binding.glSurfaceView.requestRender()
+    }
+
+    private fun setCompareOriginal(comparing: Boolean) {
+        if (renderer.compareOriginal == comparing) return
+        renderer.compareOriginal = comparing
+        binding.compareStatusPill.visibility = if (comparing) View.VISIBLE else View.GONE
+        binding.glSurfaceView.requestRender()
+    }
+
+    private fun selectBaseLook(baseLook: BaseLook) {
+        val current = undoController.currentGraph
+        if (current.baseLook == baseLook) return
+        undoController.onParameterDrag(
+            current.copy(baseLook = baseLook),
+            EditParameterKey.BASE_LOOK
         )
-        updateControlsUi()
+        undoController.onParameterRelease()
+        applyHistoryGraph(undoController.currentGraph)
+    }
+
+    private fun updateBaseLookPill(baseLook: BaseLook) {
+        binding.baseLookToggle.visibility =
+            if (isRaw && previewSession.supportsBaseLook) View.VISIBLE else View.GONE
+        binding.baseLookToggle.setLook(baseLook)
+    }
+
+    private fun updateHistoryButtons() {
+        binding.btnUndo.isEnabled = undoController.canUndo
+        binding.btnRedo.isEnabled = undoController.canRedo
+        binding.btnUndo.alpha = if (undoController.canUndo) 1.0f else 0.4f
+        binding.btnRedo.alpha = if (undoController.canRedo) 1.0f else 0.4f
     }
 
     private fun loadInitialPhotoAndEditState() {
         lifecycleScope.launch {
-            val loadedGraph = withContext(Dispatchers.IO) {
+            val (loadedGraph, source) = withContext(Dispatchers.IO) {
                 readPersistedGraph() to previewSession.loadSource(
                     sourcePath = sourcePath,
                     isRaw = isRaw,
                     preferLinear = preferLinearSource
                 )
             }
-            if (loadedGraph.second == null) {
+            if (source == null) {
                 Toast.makeText(
                     this@EditorActivity,
                     R.string.editor_source_missing,
@@ -188,8 +250,9 @@ class EditorActivity : AppCompatActivity() {
                 finish()
                 return@launch
             }
-            undoController.resetTo(loadedGraph.first)
-            applyGraphToRendererAndUi(undoController.currentGraph)
+            undoController.resetTo(loadedGraph)
+            renderCurrentGraph(useProxy = false)
+            updateHistoryButtons()
         }
     }
 
@@ -203,87 +266,25 @@ class EditorActivity : AppCompatActivity() {
         } ?: EditGraph()
     }
 
-    private fun selectBaseLook(baseLook: BaseLook) {
-        val current = undoController.currentGraph
-        if (current.baseLook == baseLook) return
-        undoController.onParameterDrag(
-            current.copy(baseLook = baseLook),
-            EditParameterKey.BASE_LOOK
-        )
-        undoController.onParameterRelease()
-        applyGraphToRendererAndUi(undoController.currentGraph)
-    }
-
-    private fun resetExposureToZero() {
-        val current = undoController.currentGraph
-        if (abs(current.tone.exposure) < 1e-4f) return
-        val resetGraph = current.copy(tone = current.tone.copy(exposure = 0.0f))
-        undoController.onParameterDrag(resetGraph, EditParameterKey.TONE_EXPOSURE)
-        undoController.onParameterRelease()
-        applyGraphToRendererAndUi(undoController.currentGraph)
-    }
-
-    private fun applyGraphToRendererAndUi(graph: EditGraph) {
-        previewSession.applyGraph(graph)
-        binding.dialSeekBar.setValue(graph.tone.exposure, notify = false)
-        binding.glSurfaceView.requestRender()
-        updateControlsUi()
-    }
-
-    private fun setCompareOriginal(comparing: Boolean) {
-        renderer.compareOriginal = comparing
-        binding.compareStatusPill.visibility = if (comparing) View.VISIBLE else View.GONE
-        binding.glSurfaceView.requestRender()
-    }
-
-    private fun updateControlsUi() {
-        val graph = undoController.currentGraph
-        val exposure = graph.tone.exposure
-        binding.activeValueText.text = String.format(
-            Locale.US,
-            getString(R.string.editor_exposure_value_fmt),
-            exposure
-        )
-        val isModified = abs(exposure) >= 1e-4f
-        binding.chipExposure.setText(
-            if (isModified) R.string.editor_tool_exposure_modified else R.string.editor_tool_exposure
-        )
-        binding.btnUndo.isEnabled = undoController.canUndo
-        binding.btnRedo.isEnabled = undoController.canRedo
-        binding.btnUndo.alpha = if (undoController.canUndo) 1.0f else 0.4f
-        binding.btnRedo.alpha = if (undoController.canRedo) 1.0f else 0.4f
-        updateBaseLookPill(graph.baseLook)
-    }
-
-    /**
-     * The pill is only actionable when the staged source is 16-bit linear: an 8-bit RAW fallback
-     * already has the browse look baked into its texels, so switching the baseline would lie.
-     */
-    private fun updateBaseLookPill(baseLook: BaseLook) {
-        binding.baseLookToggle.visibility =
-            if (isRaw && previewSession.supportsBaseLook) View.VISIBLE else View.GONE
-        binding.baseLookToggle.setLook(baseLook)
-    }
-
     private fun saveEditAndFinish() {
         binding.btnDone.isEnabled = false
         val finalGraph = undoController.currentGraph
         lifecycleScope.launch {
             withContext(Dispatchers.IO) { saveCoordinator.persist(finalGraph) }
-            setResult(Activity.RESULT_OK, resultIntent())
+            val resultIntent = Intent().apply {
+                putExtra(EXTRA_PHOTO_ID, photoId)
+                putExtra(EXTRA_SOURCE_PATH, sourcePath)
+            }
+            setResult(Activity.RESULT_OK, resultIntent)
             finish()
         }
-    }
-
-    private fun resultIntent(): Intent = Intent().apply {
-        putExtra(EXTRA_PHOTO_ID, photoId)
-        putExtra(EXTRA_SOURCE_PATH, sourcePath)
     }
 
     companion object {
         const val EXTRA_PHOTO_ID = "extra_photo_id"
         const val EXTRA_SOURCE_PATH = "extra_source_path"
         private const val EXTRA_IS_RAW = "extra_is_raw"
+        private const val MIN_GLES_VERSION_ES3 = 0x30000
         private const val SETTLE_DELAY_MS = 150L
 
         fun createIntent(context: Context, args: EditorLaunchArgs): Intent {

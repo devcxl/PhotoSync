@@ -12,4 +12,7 @@
     <color name="editor_accent_blue_pill">#DB2563EB</color>
     <color name="editor_accent_blue_border">#8093C5FD</color>
     <color name="editor_zero_pin">#F59E0B</color>
+    <color name="editor_crop_scrim">#A6000000</color>
+    <color name="editor_overlay_line">#E6F4F5F7</color>
+    <color name="editor_overlay_grid">#59F4F5F7</color>
 </resources>
