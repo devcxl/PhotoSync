@@ -33,7 +33,7 @@ object PreviewDetailPass {
         width: Int,
         height: Int,
         graph: EditGraph,
-        fullResolutionShortEdge: Int = max(width, height)
+        fullResolutionShortEdge: Int = min(width, height)
     ): IntArray {
         require(argb.size == width * height) { "Pixels must match the ${width}x$height frame" }
         val params = SpatialDetailParams.from(graph)

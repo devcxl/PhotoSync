@@ -10,7 +10,9 @@ import android.view.View
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 import cn.devcxl.photosync.editor.R
 import cn.devcxl.photosync.editor.contract.EditorLaunchArgs
@@ -213,11 +215,21 @@ class EditorActivity : AppCompatActivity(),
     private fun renderCurrentGraph(useProxy: Boolean) {
         val graph = undoController.currentGraph
         val preview = EditorPreviewGeometry.previewGraph(graph, panel.currentTool)
-        previewSession.applyGraph(preview, useProxy = useProxy)
+        val lutWarm = previewSession.applyGraph(preview, useProxy = useProxy)
         overlaySync.sync(graph)
         panel.refresh()
         updateBaseLookPill(graph.baseLook)
         binding.glSurfaceView.requestRender()
+        if (!lutWarm) preloadLutAsync(graph)
+    }
+
+    private fun preloadLutAsync(graph: EditGraph) {
+        lifecycleScope.launch {
+            val loaded = withContext(Dispatchers.IO) { previewSession.preloadLut(graph) }
+            if (loaded && undoController.currentGraph.color.lut?.id == graph.color.lut?.id) {
+                binding.glSurfaceView.requestRender()
+            }
+        }
     }
 
     private fun publishLiquifyMesh() {
@@ -226,11 +238,7 @@ class EditorActivity : AppCompatActivity(),
     }
 
     override fun onCanvasTransformChanged(transform: CanvasTransform) {
-        renderer.canvasTransform = CanvasViewportTransform(
-            transform.scale,
-            transform.offsetX,
-            transform.offsetY
-        )
+        renderer.canvasTransform = CanvasViewportTransform(transform.scale, transform.offsetX, transform.offsetY)
         overlaySync.syncCanvasTransform(transform)
         binding.glSurfaceView.requestRender()
     }
@@ -281,7 +289,6 @@ class EditorActivity : AppCompatActivity(),
         const val EXTRA_PHOTO_ID = "extra_photo_id"
         const val EXTRA_SOURCE_PATH = "extra_source_path"
         private const val EXTRA_IS_RAW = "extra_is_raw"
-        private const val MIN_GLES_VERSION_ES3 = 0x30000
         private const val SETTLE_DELAY_MS = 150L
 
         fun createIntent(context: Context, args: EditorLaunchArgs): Intent =

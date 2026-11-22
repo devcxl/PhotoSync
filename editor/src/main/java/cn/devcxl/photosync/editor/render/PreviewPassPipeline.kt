@@ -115,6 +115,11 @@ internal class PreviewPassPipeline {
             return
         }
         val frame = renderGeometryPass(request, source)
+        if (GlCapabilities.isMinimalFallback) {
+            lastPassCDrawCalls = 0
+            drawPassB(request, frame)
+            return
+        }
         val passCTexture = renderSpatialDetailIfActive(request, frame)
         val effectsActive = !request.state.effectsParams.isIdentity && effectsStage.isReady
         when {
@@ -180,6 +185,7 @@ internal class PreviewPassPipeline {
             revision = request.graphRevision,
             targetWidth = targetWidth,
             targetHeight = targetHeight,
+            fullResolutionShortEdge = request.fullResolutionShortEdge,
             allowHalfFloat = true
         ) { target ->
             target.bind()
@@ -236,7 +242,6 @@ internal class PreviewPassPipeline {
             scaleY = scaleY,
             offsetX = request.canvas.offsetX,
             offsetY = request.canvas.offsetY,
-            aspect = frame.aspect,
             effects = request.state.effectsParams,
             passBDraw = passBDrawParams(request, frame, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f)
         )

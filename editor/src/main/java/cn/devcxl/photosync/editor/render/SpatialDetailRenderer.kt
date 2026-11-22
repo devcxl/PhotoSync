@@ -3,6 +3,7 @@ package cn.devcxl.photosync.editor.render
 import android.opengl.GLES20
 import android.opengl.GLES30
 
+import cn.devcxl.photosync.editor.domain.PassDEffectsMath
 import cn.devcxl.photosync.editor.domain.SpatialDetailParams
 import cn.devcxl.photosync.editor.domain.SpatialDetailPlanner
 
@@ -60,25 +61,26 @@ internal class SpatialDetailRenderer {
         revision: Int,
         targetWidth: Int,
         targetHeight: Int,
+        fullResolutionShortEdge: Int,
         allowHalfFloat: Boolean,
         drawPassB: (OffscreenColorTarget) -> Boolean
     ): Int {
         lastDrawCalls = 0
         val requested = SpatialDetailPlanner.plan(params, prepassAvailable = true)
         if (requested.stages.isEmpty() || !isReady) return 0
-        passBTarget.ensureSize(targetWidth, targetHeight, allowHalfFloat)
-        if (!passBTarget.isReady) return 0
-        if (!drawPassB(passBTarget)) return 0
         val prepassReady = !requested.prepassRequired ||
             analyzer.ensureAnalysis(revision, aspect, allowHalfFloat) { target ->
                 drawPassB(target)
             }
         val resolved = SpatialDetailPlanner.plan(params, prepassAvailable = prepassReady)
         if (resolved.stages.isEmpty()) return 0
+        passBTarget.ensureSize(targetWidth, targetHeight, allowHalfFloat)
+        if (!passBTarget.isReady || !drawPassB(passBTarget)) return 0
         val output = chain.run(
             inputTextureId = passBTarget.textureId,
             width = targetWidth,
             height = targetHeight,
+            fullResolutionShortEdge = fullResolutionShortEdge,
             params = params,
             plan = resolved,
             prepassTextureId = analyzer.textureId,
@@ -88,7 +90,7 @@ internal class SpatialDetailRenderer {
         return output
     }
 
-    /** Presents [textureId] directly onto the default framebuffer using the canvas transform. */
+    /** Presents [textureId] onto the default 8-bit framebuffer with `1/255` triangular dither. */
     fun present(
         textureId: Int,
         viewportWidth: Int,
@@ -100,6 +102,6 @@ internal class SpatialDetailRenderer {
     ) {
         GLES20.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
         GLES20.glViewport(0, 0, viewportWidth, viewportHeight)
-        presentProgram.draw(textureId, scaleX, scaleY, offsetX, offsetY)
+        presentProgram.draw(textureId, scaleX, scaleY, offsetX, offsetY, PassDEffectsMath.DITHER_AMPLITUDE)
     }
 }

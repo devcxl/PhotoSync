@@ -44,6 +44,7 @@ internal object DetailShaderSources {
         uniform vec3 uDehazeA;
         uniform vec2 uClarityTexture;
         uniform vec4 uSharpen;
+        uniform float uDitherAmp;
 
         const vec3 LUMA_WEIGHTS = vec3(0.2126, 0.7152, 0.0722);
         const float HIGHPASS_LIMIT = 0.08;
@@ -77,6 +78,12 @@ internal object DetailShaderSources {
 
         float transmission(float raw) {
             return max(raw, TRANSMISSION_FLOOR);
+        }
+
+        float triDither(vec2 position) {
+            float n1 = fract(sin(dot(position, vec2(12.9898, 78.233))) * 43758.5453);
+            float n2 = fract(sin(dot(position + vec2(1.0, 1.0), vec2(39.346, 11.135))) * 43758.5453);
+            return (n1 - n2) * uDitherAmp;
         }
 
         float chromaTapWeight(int offset) {
@@ -214,7 +221,8 @@ internal object DetailShaderSources {
             } else if (uStage == 4) {
                 result = unsharpMask(source.rgb);
             }
-            fragColor = vec4(result, source.a);
+            float dither = triDither(gl_FragCoord.xy);
+            fragColor = vec4(clamp(result + vec3(dither), 0.0, 1.0), source.a);
         }
     """.trimIndent()
 }

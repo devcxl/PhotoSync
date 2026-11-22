@@ -72,15 +72,12 @@ internal object EffectsOutputShaderSources {
                 }
                 return c000 + f.b * (c001 - c000) + f.r * (c101 - c001) + f.g * (c111 - c101);
             }
-            if (f.g >= f.r) {
-                if (f.r > f.b) {
-                    return c000 + f.g * (c010 - c000) + f.r * (c110 - c010) + f.b * (c111 - c110);
-                } else if (f.g > f.b) {
-                    return c000 + f.g * (c010 - c000) + f.b * (c011 - c010) + f.r * (c111 - c011);
-                }
-                return c000 + f.b * (c001 - c000) + f.g * (c011 - c001) + f.r * (c111 - c011);
+            if (f.r > f.b) {
+                return c000 + f.g * (c010 - c000) + f.r * (c110 - c010) + f.b * (c111 - c110);
+            } else if (f.g > f.b) {
+                return c000 + f.g * (c010 - c000) + f.b * (c011 - c010) + f.r * (c111 - c011);
             }
-            return c000;
+            return c000 + f.b * (c001 - c000) + f.g * (c011 - c001) + f.r * (c111 - c011);
         }
 
         float grainOffset(vec2 uv, float luminance) {

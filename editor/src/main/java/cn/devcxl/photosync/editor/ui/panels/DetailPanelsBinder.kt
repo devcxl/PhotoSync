@@ -14,38 +14,35 @@ import cn.devcxl.photosync.editor.ui.widgets.SharpenPanelView
 /**
  * Binds the two Pass C multi-row panels (`SharpenPanelView` and `NoiseReductionPanelView`) to
  * [EditorUndoController] so [EditorPanelController] stays a thin router.
- *
- * Each panel keeps its own undo bucket: dragging any row of the sharpening panel coalesces into
- * `DETAIL_SHARPEN`, and the noise-reduction rows into `DETAIL_NOISE_REDUCTION`.
  */
 internal class DetailPanelsBinder(
     binding: ActivityEditorBinding,
-    private val undoController: EditorUndoController,
-    private val onEdited: (EditGraph, EditParameterKey) -> Unit,
-    private val onCommitted: (EditGraph, EditParameterKey) -> Unit
+    undoController: EditorUndoController,
+    onEdited: (EditGraph, EditParameterKey) -> Unit,
+    onCommitted: (EditGraph, EditParameterKey) -> Unit
 ) {
 
     private val panels = binding.detailPanels
+    private val dispatcher = PanelEditDispatcher(undoController, onEdited, onCommitted)
 
     init {
         panels.sharpenPanelView.listener = object : SharpenPanelView.Listener {
             override fun onSharpenChanged(sharpen: SharpenOps) =
-                pushChange(EditParameterKey.DETAIL_SHARPEN) {
+                dispatcher.pushChange(EditParameterKey.DETAIL_SHARPEN) {
                     it.copy(detail = it.detail.copy(sharpen = sharpen))
                 }
 
-            override fun onStopTrackingTouch() = commitRelease(EditParameterKey.DETAIL_SHARPEN)
+            override fun onStopTrackingTouch() = dispatcher.commitRelease(EditParameterKey.DETAIL_SHARPEN)
         }
-        panels.noiseReductionPanelView.listener =
-            object : NoiseReductionPanelView.Listener {
-                override fun onNoiseReductionChanged(noiseReduction: NoiseReductionOps) =
-                    pushChange(EditParameterKey.DETAIL_NOISE_REDUCTION) {
-                        it.copy(detail = it.detail.copy(nr = noiseReduction))
-                    }
+        panels.noiseReductionPanelView.listener = object : NoiseReductionPanelView.Listener {
+            override fun onNoiseReductionChanged(noiseReduction: NoiseReductionOps) =
+                dispatcher.pushChange(EditParameterKey.DETAIL_NOISE_REDUCTION) {
+                    it.copy(detail = it.detail.copy(nr = noiseReduction))
+                }
 
-                override fun onStopTrackingTouch() =
-                    commitRelease(EditParameterKey.DETAIL_NOISE_REDUCTION)
-            }
+            override fun onStopTrackingTouch() =
+                dispatcher.commitRelease(EditParameterKey.DETAIL_NOISE_REDUCTION)
+        }
     }
 
     /** Shows the Pass C panel matching [style] and hides the other. */
@@ -63,15 +60,5 @@ internal class DetailPanelsBinder(
     fun refresh(graph: EditGraph) {
         panels.sharpenPanelView.setSharpenOps(graph.detail.sharpen)
         panels.noiseReductionPanelView.setNoiseReductionOps(graph.detail.nr)
-    }
-
-    private fun pushChange(key: EditParameterKey, transform: (EditGraph) -> EditGraph) {
-        val applied = undoController.onParameterDrag(transform(undoController.currentGraph), key)
-        onEdited(applied, key)
-    }
-
-    private fun commitRelease(key: EditParameterKey) {
-        undoController.onParameterRelease()
-        onCommitted(undoController.currentGraph, key)
     }
 }

@@ -53,7 +53,10 @@ internal class GeometryCaGlProgram {
 
     fun init(): Boolean {
         programId = GlShaderCompiler.buildProgram(VERTEX_SHADER, FRAGMENT_SHADER)
-        if (programId == 0) return false
+        if (programId == 0) {
+            GlCapabilities.markMinimalFallback("Pass A GeometryCa")
+            return false
+        }
         aPositionLoc = GLES20.glGetAttribLocation(programId, "aPosition")
         aTexCoordLoc = GLES20.glGetAttribLocation(programId, "aTexCoord")
         uTextureLoc = GLES20.glGetUniformLocation(programId, "uTex0")

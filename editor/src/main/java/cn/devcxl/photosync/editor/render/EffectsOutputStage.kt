@@ -18,7 +18,6 @@ internal data class EffectsStageRequest(
     val scaleY: Float,
     val offsetX: Float,
     val offsetY: Float,
-    val aspect: Float,
     val effects: PassDEffectsParams,
     val passBDraw: ExposureDrawParams
 )
@@ -42,12 +41,9 @@ internal class EffectsOutputStage(private val exposureProgram: ExposureGlProgram
     val isReady: Boolean
         get() = program.isReady
 
-    /** Samples per axis of the uploaded LUT, or `0` when none is bound. */
-    val lutSampleSize: Int
-        get() = lutTexture.sampleSize
-
     /** Compiles Pass D; skipped on ES 2.0 contexts, which never expose `sampler3D`. */
     fun init(preferEs3: Boolean) {
+        program.release()
         stagingTarget.release()
         stagingTarget.resetDisableFlag()
         lutTexture.invalidate()
@@ -64,13 +60,6 @@ internal class EffectsOutputStage(private val exposureProgram: ExposureGlProgram
     /** Uploads the staged LUT if it changed. Must run on the GL thread. */
     fun uploadPending(preferEs3: Boolean) {
         lutTexture.uploadIfNeeded(preferEs3)
-    }
-
-    /** Re-arms the stage after an EGL context recreation. */
-    fun invalidateContext() {
-        lutTexture.invalidate()
-        stagingTarget.release()
-        stagingTarget.resetDisableFlag()
     }
 
     /** Releases every GL object owned by this stage. */

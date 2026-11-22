@@ -25,6 +25,39 @@ internal data class RenderFrameState(
     val outputAspectRatio: Float = 1.0f,
     val liquifyWarp: Boolean = false
 ) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is RenderFrameState) return false
+        return toneParams == other.toneParams &&
+            colorParams == other.colorParams &&
+            spatialParams == other.spatialParams &&
+            effectsParams == other.effectsParams &&
+            baseLook == other.baseLook &&
+            useFastProxy == other.useFastProxy &&
+            geometryActive == other.geometryActive &&
+            geometryInverseMatrix.contentEquals(other.geometryInverseMatrix) &&
+            lateralCaRedK == other.lateralCaRedK &&
+            lateralCaBlueK == other.lateralCaBlueK &&
+            outputAspectRatio == other.outputAspectRatio &&
+            liquifyWarp == other.liquifyWarp
+    }
+
+    override fun hashCode(): Int {
+        var result = toneParams.hashCode()
+        result = 31 * result + colorParams.hashCode()
+        result = 31 * result + spatialParams.hashCode()
+        result = 31 * result + effectsParams.hashCode()
+        result = 31 * result + baseLook.hashCode()
+        result = 31 * result + useFastProxy.hashCode()
+        result = 31 * result + geometryActive.hashCode()
+        result = 31 * result + geometryInverseMatrix.contentHashCode()
+        result = 31 * result + lateralCaRedK.hashCode()
+        result = 31 * result + lateralCaBlueK.hashCode()
+        result = 31 * result + outputAspectRatio.hashCode()
+        result = 31 * result + liquifyWarp.hashCode()
+        return result
+    }
+
     companion object {
         val IDENTITY_MATRIX = floatArrayOf(
             1.0f, 0.0f, 0.0f,
@@ -43,12 +76,14 @@ internal data class CanvasViewportTransform(
 
 /**
  * Everything one preview frame needs: the active source texture, the viewport, the canvas transform,
- * the monotonic graph revision (for Pre-pass caching) and the immutable parameter snapshot.
+ * full-resolution short edge (for sharpening radius scaling), monotonic Pre-pass revision, and the
+ * immutable parameter snapshot.
  */
 internal data class PreviewFrameRequest(
     val sourceTextureId: Int,
     val sourceWidth: Int,
     val sourceHeight: Int,
+    val fullResolutionShortEdge: Int,
     val sourceAspect: Float,
     val isLinearInput: Boolean,
     val autoBrightGain: Float,
@@ -58,16 +93,4 @@ internal data class PreviewFrameRequest(
     val state: RenderFrameState,
     val compareOriginal: Boolean,
     val graphRevision: Int
-)
-
-/**
- * The display-domain source `Pass B` samples: either the uploaded source texture or the `Pass A`
- * intermediate, plus the colour encoding and aspect ratio the later passes need.
- */
-internal data class PassAOutput(
-    val textureId: Int,
-    val isLinear: Boolean,
-    val width: Int,
-    val height: Int,
-    val aspect: Float
 )

@@ -136,7 +136,7 @@ internal object PassDEffectsMath {
         val halfFeather = (params.vignetteFeather * HALF).coerceIn(MIN_FEATHER, HALF)
         val low = params.vignetteMidpoint - halfFeather
         val high = params.vignetteMidpoint + halfFeather
-        val t = smoothStep(low, high, radius)
+        val t = ToneShaderMath.smoothStep(low, high, radius)
         return (1.0f + params.vignetteAmount * t).coerceAtLeast(0.0f)
     }
 
@@ -144,9 +144,15 @@ internal object PassDEffectsMath {
     fun triangularDither(x: Float, y: Float, seed: Int): Float = FilmNoise.triangularDither(x, y, seed)
 
     /**
-     * Applies the full Pass D stack to packed `ARGB_8888` sRGB pixels in place.
+     * Applies the full Pass D stack (3D LUT -> grain -> post-crop vignette -> triangular dither)
+     * to packed `ARGB_8888` sRGB [pixels] in place, returning [pixels].
      *
+     * @param pixels Packed `ARGB_8888` pixel buffer of size `width * height`.
+     * @param width Image width in pixels.
+     * @param height Image height in pixels.
+     * @param params Normalized Pass D effects configuration.
      * @param lut Optional 3D LUT samples; ignored when [PassDEffectsParams.hasLutEffects] is false.
+     * @return The mutated [pixels] array.
      */
     fun applyDisplayEffects(
         pixels: IntArray,
@@ -203,8 +209,13 @@ internal object PassDEffectsMath {
         val grain = grainOffset(u, v, params, luminance)
         val gain = vignetteGain(u, v, params)
         val dither = triangularDither(x.toFloat(), y.toFloat(), params.grainSeed)
-        val offset = grain + dither
-        return Srgb8Packer.packRgb(red * gain + offset, green * gain + offset, blue * gain + offset, pixel)
+        // Grain precedes vignette so darkened corners scale the grain envelope identically to GLSL.
+        return Srgb8Packer.packRgb(
+            (red + grain) * gain + dither,
+            (green + grain) * gain + dither,
+            (blue + grain) * gain + dither,
+            pixel
+        )
     }
 
     private fun tetrahedralChannel(
@@ -246,10 +257,4 @@ internal object PassDEffectsMath {
         component: Int,
         componentsPerSample: Int
     ): Float = lut[((b * size + g) * size + r) * componentsPerSample + component]
-
-    private fun smoothStep(low: Float, high: Float, value: Float): Float {
-        if (high <= low) return if (value >= high) 1.0f else 0.0f
-        val t = ((value - low) / (high - low)).coerceIn(0.0f, 1.0f)
-        return t * t * (3.0f - 2.0f * t)
-    }
 }

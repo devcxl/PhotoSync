@@ -79,6 +79,7 @@ internal object GlCapabilities {
     /** Clears the cached probe so a recreated EGL context re-detects its capabilities. */
     fun invalidate() {
         halfFloatTargets = null
+        tier = Tier.HALF_FLOAT_TARGETS
     }
 
     private fun maxTextureSize(): Int {

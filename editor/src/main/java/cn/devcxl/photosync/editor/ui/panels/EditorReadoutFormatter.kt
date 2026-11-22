@@ -114,7 +114,7 @@ internal class EditorReadoutFormatter(private val context: Context) {
         private const val QUARTER_TURN_DEGREES = 90
         private const val ASPECT_TOLERANCE = 1e-3f
 
-        /** Style applied to a chip that is currently selected. */
+        /** Key of the free-aspect crop preset. */
         const val KEY_FREE = "free"
 
         /**

@@ -1,8 +1,8 @@
-# 0005 — Pass C 空间细节链、1024px 全图 Pre-pass 与 0 Draw Call 短路
+# 0006 — Pass C 空间细节链、1024px 全图 Pre-pass 与 0 Draw Call 短路
 
 - 状态：已采纳
 - 日期：2026-11-22
-- 影响范围：`editor/src/main/java/cn/devcxl/photosync/editor/domain/`（`SpatialDetailParams`、`SpatialDetailPlanner`、`PrepassMath`、`LowFrequencyPyramid`、`GuidedFilter`、`ImageFilters`、`ChromaNoiseReducer`、`PassCDetailMath`、`PreviewDetailPass`）、`render/`（`PrepassAnalyzer`、`PrepassTexture`、`SpatialDetailGlChain`、`SpatialDetailGlProgram`、`DetailShaderSources`、`SpatialDetailRenderer`、`EditorScenePasses`、`PresentGlProgram`、`CanvasLetterbox`）、`ui/`（`EditorSpatialDetailSpecs`、`DetailPanelsBinder`、`SharpenPanelView`、`NoiseReductionPanelView`、`EditorToolChipRow`）
+- 影响范围：`editor/src/main/java/cn/devcxl/photosync/editor/domain/`（`SpatialDetailParams`、`SpatialDetailPlanner`、`PrepassMath`、`LowFrequencyPyramid`、`GuidedFilter`、`ImageFilters`、`ChromaNoiseReducer`、`PassCDetailMath`、`PreviewDetailPass`）、`render/`（`PrepassAnalyzer`、`PrepassTexture`、`SpatialDetailGlChain`、`SpatialDetailGlProgram`、`DetailShaderSources`、`SpatialDetailRenderer`、`PreviewPassPipeline`、`PresentGlProgram`、`CanvasLetterbox`）、`ui/`（`EditorSpatialDetailSpecs`、`DetailPanelsBinder`、`SharpenPanelView`、`NoiseReductionPanelView`、`SubToolChipRow`）
 
 ## 背景
 
@@ -33,7 +33,7 @@ Pass C 需要采样帧边界外的邻居，直接画到默认 framebuffer 会把
 
 ### 5. 短路、代理跳过与可观测计数
 
-- `SpatialDetailParams.isZeroDrawCallShortCircuit` 严格等价于 `skin.smooth == 0 && nr.luma == 0 && nr.chroma == 0 && dehaze == 0 && clarity == 0 && texture == 0 && glow == 0 && sharpen.amount == 0`（`clarity` 已含 `0.20 * glow` 耦合）。
+- `SpatialDetailParams.isZeroDrawCallShortCircuit` 严格等价于 `skin.smooth == 0 && nr.luma == 0 && nr.chroma == 0 && dehaze == 0 && clarity == 0 && texture == 0 && glow == 0 && sharpen.amount == 0`（其中 `glow` 通过 `0.20 * glow` 耦合进 `clarity`）。
 - `SpatialDetailPlanner` 把「计划」与「执行」分离，并显式报告因 Pre-pass 未就绪而跳过的阶段；`EditorGlRenderer.lastPassCDrawCalls` 暴露实际 draw call 数，`isPassCActive` 暴露参数级激活状态，二者共同构成可单测的 0 Draw Call 契约。
 - 拖杆期间（`useFastProxy`）完全跳过 Pass C，沿用规范中「point-operation ≤ 8ms」的代理策略；松手 150ms 后的全清渲染才跑空间链。
 
@@ -41,12 +41,12 @@ Pass C 需要采样帧边界外的邻居，直接画到默认 framebuffer 会把
 
 - 清晰度/纹理高通统一限幅 `clamp(Y - base, -0.08, 0.08)`，并乘以中间调钟形权重 `4y(1-y)`，避免端点溢出与光晕。
 - 透射率下界 `max(t, 0.1)`，`ω` 上限 `0.95`；`A` 逐通道下限 `0.10`，防止深色画面 `I/A` 数值爆炸。
-- 锐化半径按「全清像素」定义：CPU 用工作分辨率按比例缩放后夹到 `0.5..3.0`，GLSL 侧折算为 1..3 texel 的步长，两侧共用 `[0.25, 0.5, 0.25]` 可分离核；阈值膝点 `threshold * 0.10`、边缘蒙版参考梯度 `0.12`。
+- 锐化半径按「全清像素」定义：CPU 与 GPU（`SpatialDetailGlChain`）均用 `workingShortEdge / fullResolutionShortEdge` 按比例缩放后夹到 `0.5..3.0` 再折算核步长，两侧共用 `[0.25, 0.5, 0.25]` 可分离核；阈值膝点 `threshold * 0.10`、边缘蒙版参考梯度 `0.12`。
 - Y 通道锐化乘 `(1 - skinMask)`，`skinMask` 缺省为 `null`（等效 0，不抑制），供工单 12 直接接入。
 
 ## 结果
 
 - 新增纯 Kotlin `PrepassMath` / `LowFrequencyPyramid` / `GuidedFilter` / `ImageFilters` / `ChromaNoiseReducer` / `PassCDetailMath` / `PreviewDetailPass` / `SpatialDetailParams` / `SpatialDetailPlanner`，全部无 `android.*` 导入。
-- GL 侧新增 `PrepassAnalyzer`、`PrepassTexture`、`SpatialDetailGlChain`、`SpatialDetailRenderer`、`PresentGlProgram`；`EditorGlRenderer` 拆出 `EditorScenePasses` 与 `CanvasLetterbox`，保持在 300 行以内。
+- GL 侧新增 `PrepassAnalyzer`、`PrepassTexture`、`SpatialDetailGlChain`、`SpatialDetailRenderer`、`PresentGlProgram`；`PreviewPassPipeline` 与 `CanvasLetterbox` 统一调度 Pass A→B→C→D，保持 `EditorGlRenderer` 在 200 行以内。
 - 画廊预览缓存（`PreviewCacheWriter` 的 Bitmap 与 RAW 两条路径）接入 `PreviewDetailPass`，与画布共用同一套 Pass C。
 - 单测覆盖 Pre-pass 网格/大气光/ω 上限/金字塔平滑度、NR 平滑与边缘保留、透射率下界、`±0.08` 限幅与 `0.20 * glow` 耦合、`1 - skinMask` 抑制、0 Draw Call 判定与 draw plan、工具目录与撤销桶。

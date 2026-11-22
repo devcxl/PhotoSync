@@ -20,46 +20,49 @@ import cn.devcxl.photosync.editor.ui.widgets.VignettePanelView
  */
 internal class EffectsPanelsBinder(
     binding: ActivityEditorBinding,
-    private val undoController: EditorUndoController,
+    undoController: EditorUndoController,
     private val lutStore: CubeLutStore,
     private val onImportRequested: () -> Unit,
-    private val onEdited: (EditGraph, EditParameterKey) -> Unit,
-    private val onCommitted: (EditGraph, EditParameterKey) -> Unit
+    onEdited: (EditGraph, EditParameterKey) -> Unit,
+    onCommitted: (EditGraph, EditParameterKey) -> Unit
 ) {
 
     private val panels = binding.effectPanels
+    private val dispatcher = PanelEditDispatcher(undoController, onEdited, onCommitted)
 
     init {
         panels.lutPanelView.listener = object : LutPanelView.Listener {
             override fun onLutImportRequested() = onImportRequested()
 
-            override fun onLutSelected(id: String?) = pushChange(EditParameterKey.COLOR_LUT) { graph ->
-                val currentStrength = graph.color.lut?.strength ?: DEFAULT_LUT_STRENGTH
-                graph.copy(
-                    color = graph.color.copy(lut = id?.let { LutRef(it, currentStrength) })
-                )
-            }
+            override fun onLutSelected(id: String?) =
+                dispatcher.pushChange(EditParameterKey.COLOR_LUT) { graph ->
+                    val currentStrength = graph.color.lut?.strength ?: DEFAULT_LUT_STRENGTH
+                    graph.copy(color = graph.color.copy(lut = id?.let { LutRef(it, currentStrength) }))
+                }
 
-            override fun onStrengthChanged(strength: Int) = pushChange(EditParameterKey.COLOR_LUT) { graph ->
-                val current = graph.color.lut ?: return@pushChange graph
-                graph.copy(color = graph.color.copy(lut = current.copy(strength = strength)))
-            }
+            override fun onStrengthChanged(strength: Int) =
+                dispatcher.pushChange(EditParameterKey.COLOR_LUT) { graph ->
+                    val current = graph.color.lut ?: return@pushChange graph
+                    graph.copy(color = graph.color.copy(lut = current.copy(strength = strength)))
+                }
 
-            override fun onStopTrackingTouch() = commitRelease(EditParameterKey.COLOR_LUT)
+            override fun onStopTrackingTouch() = dispatcher.commitRelease(EditParameterKey.COLOR_LUT)
         }
         panels.grainPanelView.listener = object : GrainPanelView.Listener {
             override fun onGrainChanged(grain: GrainOps) =
-                pushChange(EditParameterKey.DETAIL_GRAIN) { it.copy(effects = it.effects.copy(grain = grain)) }
+                dispatcher.pushChange(EditParameterKey.DETAIL_GRAIN) {
+                    it.copy(effects = it.effects.copy(grain = grain))
+                }
 
-            override fun onStopTrackingTouch() = commitRelease(EditParameterKey.DETAIL_GRAIN)
+            override fun onStopTrackingTouch() = dispatcher.commitRelease(EditParameterKey.DETAIL_GRAIN)
         }
         panels.vignettePanelView.listener = object : VignettePanelView.Listener {
             override fun onVignetteChanged(vignette: VignetteOps) =
-                pushChange(EditParameterKey.DETAIL_VIGNETTE) {
+                dispatcher.pushChange(EditParameterKey.DETAIL_VIGNETTE) {
                     it.copy(effects = it.effects.copy(vignette = vignette))
                 }
 
-            override fun onStopTrackingTouch() = commitRelease(EditParameterKey.DETAIL_VIGNETTE)
+            override fun onStopTrackingTouch() = dispatcher.commitRelease(EditParameterKey.DETAIL_VIGNETTE)
         }
     }
 
@@ -81,16 +84,6 @@ internal class EffectsPanelsBinder(
         panels.lutPanelView.setLut(graph.color.lut)
         panels.grainPanelView.setGrainOps(graph.effects.grain)
         panels.vignettePanelView.setVignetteOps(graph.effects.vignette)
-    }
-
-    private fun pushChange(key: EditParameterKey, transform: (EditGraph) -> EditGraph) {
-        val applied = undoController.onParameterDrag(transform(undoController.currentGraph), key)
-        onEdited(applied, key)
-    }
-
-    private fun commitRelease(key: EditParameterKey) {
-        undoController.onParameterRelease()
-        onCommitted(undoController.currentGraph, key)
     }
 
     private companion object {

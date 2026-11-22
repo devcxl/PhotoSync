@@ -185,13 +185,8 @@ internal object ExposureShaderSources {
         ${ColorShaderGlsl.UNIFORMS}
     """.trimIndent()
 
-    /** Portable helpers shared by both dialects: `tanh` and the `1/255` output dither. */
-    private val HELPER_GLSL = """
-        float softTanh(float x) {
-            float e2 = exp(clamp(2.0 * x, -20.0, 20.0));
-            return (e2 - 1.0) / (e2 + 1.0);
-        }
-
+    /** `1/255` triangular output dither shared by both GLSL dialects. */
+    private val DITHER_GLSL = """
         float triDither(vec2 position) {
             float n1 = fract(sin(dot(position, vec2(12.9898, 78.233))) * 43758.5453);
             float n2 = fract(sin(dot(position + vec2(1.0, 1.0), vec2(39.346, 11.135))) * 43758.5453);
@@ -206,11 +201,15 @@ internal object ExposureShaderSources {
         out vec4 fragColor;
         $COMMON_UNIFORMS
 
+        float softTanh(float x) {
+            return tanh(x);
+        }
+
         vec4 sampleTex2D(sampler2D s, vec2 uv) {
             return texture(s, uv);
         }
 
-        $HELPER_GLSL
+        $DITHER_GLSL
         $SRGB_GLSL
         $CAMERA_DEFAULT_GLSL
         $TONE_GLSL
@@ -239,11 +238,16 @@ internal object ExposureShaderSources {
         varying vec2 vTexCoord;
         $COMMON_UNIFORMS
 
+        float softTanh(float x) {
+            float e2 = exp(clamp(2.0 * x, -20.0, 20.0));
+            return (e2 - 1.0) / (e2 + 1.0);
+        }
+
         vec4 sampleTex2D(sampler2D s, vec2 uv) {
             return texture2D(s, uv);
         }
 
-        $HELPER_GLSL
+        $DITHER_GLSL
         $SRGB_GLSL
         $CAMERA_DEFAULT_GLSL
         $TONE_GLSL

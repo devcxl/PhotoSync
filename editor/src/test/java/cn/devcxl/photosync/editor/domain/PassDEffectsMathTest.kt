@@ -181,6 +181,34 @@ class PassDEffectsMathTest {
         assertTrue(!params.isIdentity)
     }
 
+    @Test
+    fun shouldApplyGrainBeforeVignetteSoDarkenedCornersScaleGrainEnvelope_whenBothAreActive() {
+        val grainOnly = IntArray(64 * 64) { GRAY_PIXEL }
+        val grainAndVignette = IntArray(64 * 64) { GRAY_PIXEL }
+        PassDEffectsMath.applyDisplayEffects(
+            grainOnly,
+            64,
+            64,
+            grainParams(seed = 42)
+        )
+        PassDEffectsMath.applyDisplayEffects(
+            grainAndVignette,
+            64,
+            64,
+            PassDEffectsParams(
+                grainAmount = 1.0f,
+                grainSize = 0.25f,
+                grainRoughness = 0.5f,
+                grainSeed = 42,
+                vignetteAmount = -1.0f,
+                vignetteMidpoint = 0.2f,
+                vignetteFeather = 0.2f
+            )
+        )
+        // Corner pixel (0,0) gets gain=0 when vignette=-1.0; grain-before-vignette keeps it pure black.
+        assertEquals(0, grainAndVignette[0] and 0xFF)
+    }
+
     private fun identityRamp(size: Int): FloatArray {
         val samples = FloatArray(size * size * size * 3)
         val steps = (size - 1).toFloat()

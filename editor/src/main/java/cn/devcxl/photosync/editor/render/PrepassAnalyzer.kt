@@ -25,6 +25,7 @@ internal class PrepassAnalyzer {
 
     private val sourceTarget = OffscreenColorTarget()
     private val texture = PrepassTexture()
+    private var readbackBuffer: ByteBuffer? = null
 
     @Volatile
     private var analysedRevision: Int = Int.MIN_VALUE
@@ -83,6 +84,7 @@ internal class PrepassAnalyzer {
     fun release() {
         sourceTarget.release()
         texture.release()
+        readbackBuffer = null
         invalidate()
     }
 
@@ -90,19 +92,17 @@ internal class PrepassAnalyzer {
         val width = target.width
         val height = target.height
         if (width <= 0 || height <= 0) return null
-        val buffer = ByteBuffer.allocateDirect(width * height * BYTES_PER_PIXEL)
-            .order(ByteOrder.nativeOrder())
+        val requiredBytes = width * height * BYTES_PER_PIXEL
+        val buffer = readbackBuffer?.takeIf { it.capacity() >= requiredBytes }
+            ?: ByteBuffer.allocateDirect(requiredBytes).order(ByteOrder.nativeOrder())
+                .also { readbackBuffer = it }
+        buffer.rewind()
         target.bind()
         GLES20.glPixelStorei(GLES20.GL_PACK_ALIGNMENT, 1)
         GLES20.glReadPixels(
-            0,
-            0,
-            width,
-            height,
-            GLES20.GL_RGBA,
-            GLES20.GL_UNSIGNED_BYTE,
-            buffer
+            0, 0, width, height, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, buffer
         )
+        GLES20.glPixelStorei(GLES20.GL_PACK_ALIGNMENT, DEFAULT_PACK_ALIGNMENT)
         target.unbind()
         val error = GLES20.glGetError()
         if (error != GLES20.GL_NO_ERROR) {
@@ -134,6 +134,7 @@ internal class PrepassAnalyzer {
         private const val MAX_EDGE_PX = 1024
         private const val CHANNELS = 3
         private const val BYTES_PER_PIXEL = 4
+        private const val DEFAULT_PACK_ALIGNMENT = 4
         private const val BYTE_MASK = 0xFF
         private const val BYTE_SCALE = 255.0f
 

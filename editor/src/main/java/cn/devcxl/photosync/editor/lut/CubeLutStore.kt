@@ -27,18 +27,22 @@ internal data class CubeLutInfo(
  * On-device library of imported `.cube` 3D LUTs stored as pre-compiled `.lut16f` caches under
  * `filesDir/luts/`.
  *
- * Imports parse and resample the whole file once, write the cache atomically, and keep the decoded
- * samples in a single-entry memory cache so switching back to the previous LUT never re-reads disk.
+ * Imports parse and resample the whole file once, write the cache atomically, and retain up to
+ * [MEMORY_CACHE_CAPACITY] recently used LUTs in memory so tapping between LUT chips never drops
+ * an already-loaded LUT on the canvas.
  */
 internal class CubeLutStore(rootDir: File) {
 
     private val lutsDir = File(rootDir, LUTS_DIR_NAME)
 
-    @Volatile
-    private var cachedId: String? = null
-
-    @Volatile
-    private var cachedSamples: Lut3dSamples? = null
+    private val sampleCache = object : LinkedHashMap<String, Lut3dSamples>(
+        MEMORY_CACHE_CAPACITY,
+        0.75f,
+        true
+    ) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Lut3dSamples>?): Boolean =
+            size > MEMORY_CACHE_CAPACITY
+    }
 
     @Volatile
     private var installedCache: List<CubeLutInfo>? = null
@@ -60,25 +64,28 @@ internal class CubeLutStore(rootDir: File) {
     /**
      * Imports the `.cube` document named [fileName] from [input] and pre-bakes it.
      *
-     * @return The installed LUT, or a failure when the document is malformed or cannot be written.
+     * @return The installed LUT, or a failure when the document cannot be read, is malformed or
+     *   cannot be written.
      */
     fun importFromStream(fileName: String, input: InputStream): Result<CubeLutInfo> {
-        val text = readBoundedText(input) ?: return Result.failure(
-            IOException("cube document exceeds $MAX_CUBE_BYTES bytes")
-        )
+        val text = try {
+            readBoundedText(input)
+        } catch (error: IOException) {
+            Timber.e(error, "Failed to read the imported .cube stream")
+            return Result.failure(error)
+        } ?: return Result.failure(IOException("cube document exceeds $MAX_CUBE_BYTES bytes"))
+
         val lut = CubeLutParser.parse(text).getOrElse { return Result.failure(it) }
         val cacheBytes = CubeLutParser.encodeCache(lut)
-        val id = sanitizeId(fileName)
+        val id = uniqueId(sanitizeId(fileName))
         return writeAtomically(id, cacheBytes).map { cacheFile ->
             installedCache = null
             Timber.i("Imported a 3D LUT with %d grid samples", lut.size)
-            CubeLutInfo(id = id, displayName = id, cacheFile = cacheFile)
+            CubeLutInfo(id = id, displayName = lut.title ?: id, cacheFile = cacheFile)
         }
     }
 
-    /**
-     * Loads the decoded samples of [id], using the memory cache when it already holds them.
-     */
+    /** Loads the decoded samples of [id], using the bounded LRU memory cache when warm. */
     fun loadSamples(id: String): Result<Lut3dSamples> {
         cachedSamplesIf(id)?.let { return Result.success(it) }
         val file = cacheFile(id) ?: return Result.failure(FileNotFoundException(id))
@@ -86,8 +93,9 @@ internal class CubeLutStore(rootDir: File) {
             val bytes = file.readBytes()
             val samples = Lut16fCache.samplesFromCache(bytes)
                 ?: return Result.failure(IllegalStateException("LUT cache for $id is not a .lut16f payload"))
-            cachedId = id
-            cachedSamples = samples
+            synchronized(sampleCache) {
+                sampleCache[id] = samples
+            }
             Result.success(samples)
         } catch (error: IOException) {
             Timber.e(error, "Failed to read the imported 3D LUT cache")
@@ -96,8 +104,7 @@ internal class CubeLutStore(rootDir: File) {
     }
 
     /** Returns the cached samples of [id] without touching disk, or `null` when not cached. */
-    fun cachedSamplesIf(id: String): Lut3dSamples? =
-        if (cachedId == id) cachedSamples else null
+    fun cachedSamplesIf(id: String): Lut3dSamples? = synchronized(sampleCache) { sampleCache[id] }
 
     /** Returns the cache file of [id] when [id] is a safe, installed identifier. */
     fun cacheFile(id: String): File? {
@@ -149,14 +156,27 @@ internal class CubeLutStore(rootDir: File) {
         val stem = fileName.substringAfterLast('/').substringAfterLast('\\').substringBeforeLast('.')
         val sanitized = buildString {
             for (character in stem) {
-                append(if (character.isLetterOrDigit() || character == ' ' || character == '-' || character == '_') {
-                    character
-                } else {
-                    '_'
-                })
+                append(
+                    if (character.isLetterOrDigit() || character == ' ' || character == '-' || character == '_') {
+                        character
+                    } else {
+                        '_'
+                    }
+                )
             }
         }.trim().take(MAX_ID_LENGTH)
         return sanitized.ifBlank { DEFAULT_ID }
+    }
+
+    private fun uniqueId(baseId: String): String {
+        if (!File(lutsDir, baseId + CACHE_SUFFIX).exists()) return baseId
+        var suffix = 2
+        while (true) {
+            val suffixTag = "_$suffix"
+            val candidate = baseId.take((MAX_ID_LENGTH - suffixTag.length).coerceAtLeast(1)) + suffixTag
+            if (!File(lutsDir, candidate + CACHE_SUFFIX).exists()) return candidate
+            suffix++
+        }
     }
 
     private companion object {
@@ -167,5 +187,6 @@ internal class CubeLutStore(rootDir: File) {
         private const val MAX_ID_LENGTH = 64
         private const val DEFAULT_ID = "lut"
         private const val READ_CHUNK_BYTES = 8192
+        private const val MEMORY_CACHE_CAPACITY = 8
     }
 }

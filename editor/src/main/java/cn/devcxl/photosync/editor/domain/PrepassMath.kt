@@ -50,6 +50,7 @@ object PrepassMath {
     private const val MIN_GRID = 8
     private const val PACKED_CHANNELS = 4
     private const val CHANNELS = 3
+    private const val HISTOGRAM_BINS = 256
 
     /**
      * Immutable Pre-pass result: the global atmospheric light, the coarse transmission, the two
@@ -114,7 +115,8 @@ object PrepassMath {
         }
         val grid = min(ANALYSIS_GRID, min(width, height)).coerceAtLeast(MIN_GRID)
         val small = ImageFilters.resampleRgb(display, width, height, grid, grid)
-        val atmosphere = atmosphericLight(small, darkChannel(small, grid), grid)
+        val dark = darkChannel(small, grid)
+        val atmosphere = atmosphericLight(display, dark, width, height, grid)
         val transmission = smoothTransmission(small, atmosphere, grid, omega)
         val guides = LowFrequencyPyramid.build(
             ImageFilters.luminance(display),
@@ -139,14 +141,41 @@ object PrepassMath {
         return ImageFilters.minFilter(minimum, grid, grid, DARK_CHANNEL_RADIUS)
     }
 
-    private fun atmosphericLight(rgb: FloatArray, dark: FloatArray, grid: Int): FloatArray {
+    private fun atmosphericLight(
+        fullDisplay: FloatArray,
+        dark: FloatArray,
+        fullWidth: Int,
+        fullHeight: Int,
+        grid: Int
+    ): FloatArray {
         val cells = grid * grid
         val count = ceil(cells * ATMOSPHERIC_PERCENTILE).toInt().coerceIn(1, cells)
-        val candidates = dark.indices.sortedByDescending { dark[it] }.take(count)
+        // Find threshold via 256-bin histogram to avoid sorting 65k boxed Integers on every Pre-pass.
+        val histogram = IntArray(HISTOGRAM_BINS)
+        for (value in dark) {
+            val bin = (value.coerceIn(0.0f, 1.0f) * (HISTOGRAM_BINS - 1)).toInt()
+            histogram[bin]++
+        }
+        var accumulated = 0
+        var thresholdBin = 0
+        for (bin in HISTOGRAM_BINS - 1 downTo 0) {
+            accumulated += histogram[bin]
+            if (accumulated >= count) {
+                thresholdBin = bin
+                break
+            }
+        }
+        val threshold = thresholdBin.toFloat() / (HISTOGRAM_BINS - 1).toFloat()
         val light = FloatArray(CHANNELS) { ATMOSPHERIC_FLOOR }
-        for (cell in candidates) {
+        for (cell in dark.indices) {
+            if (dark[cell] < threshold) continue
+            val gx = cell % grid
+            val gy = cell / grid
+            val fx = ((gx + 0.5f) / grid * fullWidth).toInt().coerceIn(0, fullWidth - 1)
+            val fy = ((gy + 0.5f) / grid * fullHeight).toInt().coerceIn(0, fullHeight - 1)
+            val fullBase = (fy * fullWidth + fx) * CHANNELS
             for (channel in 0 until CHANNELS) {
-                light[channel] = max(light[channel], rgb[cell * CHANNELS + channel])
+                light[channel] = max(light[channel], fullDisplay[fullBase + channel])
             }
         }
         return FloatArray(CHANNELS) { light[it].coerceIn(ATMOSPHERIC_FLOOR, 1.0f) }

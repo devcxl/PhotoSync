@@ -31,7 +31,7 @@ class PassCDrawCallShortCircuitTest {
     }
 
     @Test
-    fun shouldActivatePassC_whenOnlyTheNoiseReductionDetailSliderMoved() {
+    fun shouldNotActivatePassC_whenOnlyTheNoiseReductionDetailSliderMoved() {
         val renderer = EditorGlRenderer()
 
         renderer.applyState(

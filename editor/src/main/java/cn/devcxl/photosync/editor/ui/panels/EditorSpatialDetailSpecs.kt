@@ -23,6 +23,7 @@ internal object EditorSpatialDetailSpecs {
     private const val DEFAULT_NR_DETAIL = 50
     private const val RADIUS_TOLERANCE = 1e-4f
 
+    /** Returns the Pass C spatial-detail tool specs in drawer chip order. */
     fun spatialDetailSpecs(): List<EditorToolSpec> = listOf(
         claritySpec(),
         textureSpec(),

@@ -42,7 +42,7 @@ class LutPanelView @JvmOverloads constructor(
 
     private val density = resources.displayMetrics.density
     private val chipContainer = LinearLayout(context).apply { orientation = HORIZONTAL }
-    private val chipViews = mutableMapOf<String, TextView>()
+    private val chipViews = mutableMapOf<String?, TextView>()
     private var installedLuts: List<CubeLutInfo> = emptyList()
     private var selectedId: String? = null
     private var strength: Int = DEFAULT_STRENGTH
@@ -108,12 +108,12 @@ class LutPanelView @JvmOverloads constructor(
     private fun rebuildChips() {
         chipContainer.removeAllViews()
         chipViews.clear()
-        addChip(NO_LUT_KEY, context.getString(R.string.editor_lut_none))
+        addChip(null, context.getString(R.string.editor_lut_none))
         installedLuts.forEach { lut -> addChip(lut.id, lut.displayName) }
         refreshSelection()
     }
 
-    private fun addChip(key: String, label: CharSequence) {
+    private fun addChip(key: String?, label: CharSequence) {
         val chip = PanelChipFactory.createWithText(
             context = context,
             label = label,
@@ -121,14 +121,14 @@ class LutPanelView @JvmOverloads constructor(
             textSizeSp = 11.0f,
             paddingPx = (CHIP_PADDING_DP * density).toInt()
         )
-        chip.setOnClickListener { listener?.onLutSelected(key.takeUnless { it == NO_LUT_KEY }) }
+        chip.setOnClickListener { listener?.onLutSelected(key) }
         chipViews[key] = chip
         chipContainer.addView(chip)
     }
 
     private fun refreshSelection() {
         chipViews.forEach { (key, chip) ->
-            val selected = if (selectedId == null) key == NO_LUT_KEY else key == selectedId
+            val selected = key == selectedId
             PanelChipFactory.applySelection(context, chip, selected)
             chip.alpha = if (selected) 1.0f else 0.75f
         }
@@ -139,6 +139,5 @@ class LutPanelView @JvmOverloads constructor(
         private const val CHIP_HEIGHT_DP = 30.0f
         private const val CHIP_PADDING_DP = 13.0f
         private const val DEFAULT_STRENGTH = 100
-        private const val NO_LUT_KEY = "::none::"
     }
 }

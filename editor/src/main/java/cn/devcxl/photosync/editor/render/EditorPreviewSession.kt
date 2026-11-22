@@ -64,10 +64,17 @@ internal class EditorPreviewSession(
         return true
     }
 
-    /** Pushes the parameter state a preview draw depends on into [renderer]. */
-    fun applyGraph(graph: EditGraph, useProxy: Boolean = false) {
-        renderer.setLut3d(resolveCachedLut(graph))
+    /**
+     * Pushes the parameter state a preview draw depends on into [renderer].
+     *
+     * @return True if any referenced 3D LUT is already warm in memory (or none is set); false when
+     *   the caller should asynchronously call [preloadLut] and re-request a render.
+     */
+    fun applyGraph(graph: EditGraph, useProxy: Boolean = false): Boolean {
+        val lut = resolveCachedLut(graph)
+        renderer.setLut3d(lut)
         renderer.applyState(graph, useFastProxy = useProxy)
+        return graph.color.lut == null || lut != null
     }
 
     /** Stages the liquify displacement grid the canvas must warp by. */

@@ -9,16 +9,14 @@ import kotlin.math.exp
 internal class ChromaPlanes(val cb: FloatArray, val cr: FloatArray)
 
 /**
- * CbCr `5 x 5` edge-guided chroma noise reduction.
+ * CbCr `5 x 5` edge-guided chroma noise reduction, matching `DetailShaderSources.noiseReduction`
+ * tap for tap.
  *
- * Colour mottling is low-frequency noise, so it can be smoothed far more aggressively than
- * luminance — but not across a real colour edge. Each tap is therefore weighted by a Gaussian of the
- * centre-to-neighbour luminance difference: a flat patch averages its neighbours, while a
- * luma-bounded edge keeps its own chroma.
+ * Each tap `(dx, dy)` in `[-2..2]^2` uses `w(dx) * w(dy) * exp(-(L_tap - L_center)^2 / 2*sigma^2)`,
+ * so diagonal colour edges receive the exact same edge attenuation on CPU and GPU.
  */
 internal object ChromaNoiseReducer {
 
-    /** Width of the separable CbCr kernel, mirrored by the GLSL Pass C contract. */
     const val KERNEL_SIZE = 5
 
     private const val RADIUS = 2
@@ -31,7 +29,6 @@ internal object ChromaNoiseReducer {
     private const val LUMA_B = 0.0722f
     private const val CHANNELS = 3
 
-    /** Binomial `[1, 2, 3, 2, 1]` spatial weights of the separable 5-tap kernel. */
     private val SPATIAL_TAPS = floatArrayOf(1.0f, 2.0f, 3.0f, 2.0f, 1.0f)
 
     /** Splits the interleaved sRGB [srgb] frame into BT.709 CbCr planes. */
@@ -47,16 +44,47 @@ internal object ChromaNoiseReducer {
         return ChromaPlanes(cb, cr)
     }
 
-    /** Separable edge-guided smoothing of [chroma], guided by [luma]. */
+    /** 2D `5 x 5` edge-guided smoothing of [chroma], guided by [luma]. */
     fun smooth(
         chroma: ChromaPlanes,
         luma: FloatArray,
         width: Int,
         height: Int
-    ): ChromaPlanes = ChromaPlanes(
-        cb = separableEdgeGuided(chroma.cb, luma, width, height),
-        cr = separableEdgeGuided(chroma.cr, luma, width, height)
-    )
+    ): ChromaPlanes {
+        val outCb = FloatArray(chroma.cb.size)
+        val outCr = FloatArray(chroma.cr.size)
+        val invTwoSigmaSq = 1.0f / (2.0f * EDGE_SIGMA * EDGE_SIGMA)
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                val centerIndex = y * width + x
+                val centerY = luma[centerIndex]
+                var sumCb = 0.0f
+                var sumCr = 0.0f
+                var weightSum = 0.0f
+                for (dy in -RADIUS..RADIUS) {
+                    val sy = (y + dy).coerceIn(0, height - 1)
+                    val wy = SPATIAL_TAPS[dy + RADIUS]
+                    for (dx in -RADIUS..RADIUS) {
+                        val sx = (x + dx).coerceIn(0, width - 1)
+                        val sampleIndex = sy * width + sx
+                        val diff = luma[sampleIndex] - centerY
+                        val w = wy * SPATIAL_TAPS[dx + RADIUS] * exp(-diff * diff * invTwoSigmaSq)
+                        sumCb += chroma.cb[sampleIndex] * w
+                        sumCr += chroma.cr[sampleIndex] * w
+                        weightSum += w
+                    }
+                }
+                if (weightSum > WEIGHT_EPSILON) {
+                    outCb[centerIndex] = sumCb / weightSum
+                    outCr[centerIndex] = sumCr / weightSum
+                } else {
+                    outCb[centerIndex] = chroma.cb[centerIndex]
+                    outCr[centerIndex] = chroma.cr[centerIndex]
+                }
+            }
+        }
+        return ChromaPlanes(cb = outCb, cr = outCr)
+    }
 
     /** Rebuilds sRGB from [luma], [cb] and [cr], clamping every channel into `[0, 1]`. */
     fun merge(luma: FloatArray, cb: FloatArray, cr: FloatArray, out: FloatArray) {
@@ -70,48 +98,5 @@ internal object ChromaNoiseReducer {
             out[base + 1] = green.coerceIn(0.0f, 1.0f)
             out[base + 2] = blue.coerceIn(0.0f, 1.0f)
         }
-    }
-
-    private fun separableEdgeGuided(
-        plane: FloatArray,
-        luma: FloatArray,
-        width: Int,
-        height: Int
-    ): FloatArray {
-        val horizontal = edgeGuidedPass(plane, luma, width, height, horizontal = true)
-        return edgeGuidedPass(horizontal, luma, width, height, horizontal = false)
-    }
-
-    private fun edgeGuidedPass(
-        plane: FloatArray,
-        luma: FloatArray,
-        width: Int,
-        height: Int,
-        horizontal: Boolean
-    ): FloatArray {
-        val out = FloatArray(plane.size)
-        val inverseTwoSigmaSquared = 1.0f / (2.0f * EDGE_SIGMA * EDGE_SIGMA)
-        for (index in out.indices) {
-            val x = index % width
-            val y = index / width
-            var sum = 0.0f
-            var weight = 0.0f
-            for (tap in -RADIUS..RADIUS) {
-                val sampleX = if (horizontal) (x + tap).coerceIn(0, width - 1) else x
-                val sampleY = if (horizontal) y else (y + tap).coerceIn(0, height - 1)
-                val sampleIndex = sampleY * width + sampleX
-                val difference = luma[sampleIndex] - luma[index]
-                val tapWeight = SPATIAL_TAPS[tap + RADIUS] *
-                    exp(-difference * difference * inverseTwoSigmaSquared)
-                sum += plane[sampleIndex] * tapWeight
-                weight += tapWeight
-            }
-            out[index] = if (weight > WEIGHT_EPSILON) {
-                sum / weight
-            } else {
-                plane[index]
-            }
-        }
-        return out
     }
 }

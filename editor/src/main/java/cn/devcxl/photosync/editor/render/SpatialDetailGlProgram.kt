@@ -25,6 +25,7 @@ internal data class SpatialDetailDrawParams(
     val sharpenMasking: Float = 0.0f,
     val texelWidth: Int = 1,
     val texelHeight: Int = 1,
+    val ditherAmp: Float = 0.0f,
     val guideUvScaleX: Float = 1.0f,
     val guideUvScaleY: Float = 1.0f,
     val guideUvOffsetX: Float = 0.0f,
@@ -52,19 +53,23 @@ internal class SpatialDetailGlProgram {
     private var uDehazeALoc: Int = -1
     private var uClarityTextureLoc: Int = -1
     private var uSharpenLoc: Int = -1
+    private var uDitherAmpLoc: Int = -1
 
     private val quad = QuadMesh()
 
     val isReady: Boolean
         get() = programId != 0
 
-    /** Compiles the Pass C program; returns false when the driver rejects it. */
+    /** Compiles the Pass C program; records Tier 3 minimal fallback when the driver rejects it. */
     fun init(): Boolean {
         programId = GlShaderCompiler.buildProgram(
             DetailShaderSources.VERTEX_SHADER,
             DetailShaderSources.FRAGMENT_SHADER
         )
-        if (programId == 0) return false
+        if (programId == 0) {
+            GlCapabilities.markMinimalFallback("Pass C SpatialDetail")
+            return false
+        }
         resolveLocations()
         return true
     }
@@ -106,6 +111,7 @@ internal class SpatialDetailGlProgram {
             params.sharpenThreshold,
             params.sharpenMasking
         )
+        GLES20.glUniform1f(uDitherAmpLoc, params.ditherAmp)
         quad.draw(aPositionLoc, aTexCoordLoc)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
     }
@@ -141,6 +147,7 @@ internal class SpatialDetailGlProgram {
         uDehazeALoc = GLES20.glGetUniformLocation(programId, "uDehazeA")
         uClarityTextureLoc = GLES20.glGetUniformLocation(programId, "uClarityTexture")
         uSharpenLoc = GLES20.glGetUniformLocation(programId, "uSharpen")
+        uDitherAmpLoc = GLES20.glGetUniformLocation(programId, "uDitherAmp")
     }
 
     private companion object {

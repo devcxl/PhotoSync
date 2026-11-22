@@ -7,7 +7,7 @@ package cn.devcxl.photosync.editor.domain
  * slider. Build instances with [from], which owns the `clarity + 0.20 * glow` coupling so the CPU
  * preview cache and the GLSL chain cannot drift apart.
  */
-class SpatialDetailParams(
+data class SpatialDetailParams(
     /** Clarity in `-1..1`, already including the `0.20 * glow` coupling. */
     val clarity: Float = 0.0f,
     /** Texture in `-1..1`. */

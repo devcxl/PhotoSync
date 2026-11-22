@@ -36,22 +36,16 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
     private var viewportHeight: Int = 1
 
     @Volatile
-    private var graphRevision: Int = 0
+    private var prepassRevision: Int = 0
 
     @Volatile
-    private var imageWidth: Int = 1
+    private var lastPrepassInputSignature: Int = 0
 
-    @Volatile
-    private var imageHeight: Int = 1
-
-    @Volatile
-    private var linearInput: Boolean = false
-
-    @Volatile
-    private var autoBrightGain: Float = 1.0f
-
-    @Volatile
-    private var stagedSource: EditorSource? = null
+    @Volatile private var imageWidth: Int = 1
+    @Volatile private var imageHeight: Int = 1
+    @Volatile private var linearInput: Boolean = false
+    @Volatile private var autoBrightGain: Float = 1.0f
+    @Volatile private var stagedSource: EditorSource? = null
 
     @Volatile
     var preferEs3: Boolean = true
@@ -104,6 +98,7 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
                 sourceTextureId = activeTexture,
                 sourceWidth = srcW,
                 sourceHeight = srcH,
+                fullResolutionShortEdge = minOf(imageWidth, imageHeight),
                 sourceAspect = sourceAspect(),
                 isLinearInput = linearInput,
                 autoBrightGain = autoBrightGain,
@@ -112,7 +107,7 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
                 canvas = canvasTransform,
                 state = state,
                 compareOriginal = compareOriginal,
-                graphRevision = graphRevision
+                graphRevision = prepassRevision
             )
         )
         lastPassCDrawCalls = pipeline.lastPassCDrawCalls
@@ -123,6 +118,8 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
         stagedSource = source
         pipeline.setSource(source)
         applySourceMetadata(source)
+        pipeline.invalidatePrepass()
+        prepassRevision++
     }
 
     /** Clears staged source references when the hosting activity is destroyed. */
@@ -134,6 +131,8 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
     /** Stages the liquify displacement grid for the next frame. */
     fun setLiquifyMesh(mesh: LiquifyMesh?) {
         frameState = frameState.copy(liquifyWarp = pipeline.stageLiquifyMesh(mesh))
+        pipeline.invalidatePrepass()
+        prepassRevision++
     }
 
     /** Stages the imported 3D LUT samples for the next frame, or `null` to unbind it. */
@@ -172,8 +171,22 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
             liquifyWarp = liquifyWarp
         )
         isPassCActive = !useFastProxy && !spatialParams.isZeroDrawCallShortCircuit
-        pipeline.invalidatePrepass()
-        graphRevision++
+        val prepassSig = prepassSignature(graph, liquifyWarp)
+        if (prepassSig != lastPrepassInputSignature) {
+            lastPrepassInputSignature = prepassSig
+            pipeline.invalidatePrepass()
+            prepassRevision++
+        }
+    }
+
+    private fun prepassSignature(graph: EditGraph, liquifyWarp: Boolean): Int {
+        var hash = graph.baseLook.hashCode()
+        hash = 31 * hash + graph.geometry.hashCode()
+        hash = 31 * hash + graph.tone.hashCode()
+        hash = 31 * hash + graph.color.copy(lut = null).hashCode()
+        hash = 31 * hash + graph.effects.ca.hashCode()
+        hash = 31 * hash + liquifyWarp.hashCode()
+        return hash
     }
 
     private fun applySourceMetadata(source: EditorSource?) {

@@ -1,19 +1,22 @@
 package cn.devcxl.photosync.editor.render
 
+import kotlin.math.min
+
 import android.opengl.GLES20
 import timber.log.Timber
 
-import cn.devcxl.photosync.editor.domain.SpatialDetailPlan
+import cn.devcxl.photosync.editor.domain.PassDEffectsMath
 import cn.devcxl.photosync.editor.domain.SpatialDetailParams
+import cn.devcxl.photosync.editor.domain.SpatialDetailPlan
 import cn.devcxl.photosync.editor.domain.SpatialDetailStage
 
 /**
  * Physical `SpatialDetailChain`: runs the planned Pass C sub-passes through a two-target ping-pong so
  * every stage reads a complete frame and never its own write.
  *
- * The chain reports [lastDrawCalls] after each frame, which is the number the renderer publishes as
- * its observable draw-call counter. A fully short-circuited plan issues zero draw calls and hands the
- * input texture straight back, so the default "nothing enabled" path costs exactly nothing.
+ * Scales `sharpenRadiusPx` by `workingShortEdge / fullResolutionShortEdge` to match the full-res
+ * Bake and CPU preview cache, and applies `1/255` triangular dithering whenever writing to a Tier 2
+ * `GL_RGBA8` target.
  */
 internal class SpatialDetailGlChain {
 
@@ -50,6 +53,7 @@ internal class SpatialDetailGlChain {
         inputTextureId: Int,
         width: Int,
         height: Int,
+        fullResolutionShortEdge: Int,
         params: SpatialDetailParams,
         plan: SpatialDetailPlan,
         prepassTextureId: Int,
@@ -57,6 +61,10 @@ internal class SpatialDetailGlChain {
     ): Int {
         lastDrawCalls = 0
         if (!program.isReady || inputTextureId == 0 || plan.stages.isEmpty()) return inputTextureId
+        val resolutionScale = (min(width, height).toFloat() / fullResolutionShortEdge.coerceAtLeast(1).toFloat())
+            .coerceIn(MIN_RESOLUTION_SCALE, 1.0f)
+        val scaledRadiusPx = (params.sharpenRadiusPx * resolutionScale)
+            .coerceIn(SpatialDetailParams.MIN_SHARPEN_RADIUS_PX, SpatialDetailParams.MAX_SHARPEN_RADIUS_PX)
         var current = inputTextureId
         for ((index, stage) in plan.stages.withIndex()) {
             val target = pingPong[index % pingPong.size]
@@ -65,6 +73,7 @@ internal class SpatialDetailGlChain {
                 Timber.w("Pass C target unavailable; spatial detail stops at stage %s", stage)
                 return current
             }
+            val ditherAmp = if (target.isHalfFloatTarget) 0.0f else PassDEffectsMath.DITHER_AMPLITUDE
             target.bind()
             program.draw(
                 SpatialDetailDrawParams(
@@ -79,11 +88,12 @@ internal class SpatialDetailGlChain {
                     nrChroma = params.nrChroma,
                     nrDetail = params.nrDetail,
                     sharpenAmount = params.sharpenAmount,
-                    sharpenRadiusPx = params.sharpenRadiusPx,
+                    sharpenRadiusPx = scaledRadiusPx,
                     sharpenThreshold = params.sharpenThreshold,
                     sharpenMasking = params.sharpenMasking,
                     texelWidth = width,
-                    texelHeight = height
+                    texelHeight = height,
+                    ditherAmp = ditherAmp
                 )
             )
             target.unbind()
@@ -96,4 +106,8 @@ internal class SpatialDetailGlChain {
 
     private fun needsPrepass(stage: SpatialDetailStage): Boolean =
         stage == SpatialDetailStage.DEHAZE || stage == SpatialDetailStage.CLARITY_TEXTURE
+
+    private companion object {
+        private const val MIN_RESOLUTION_SCALE = 0.05f
+    }
 }
