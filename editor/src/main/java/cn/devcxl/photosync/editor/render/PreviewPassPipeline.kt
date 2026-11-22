@@ -235,6 +235,9 @@ internal class PreviewPassPipeline {
 
     private fun buildEffectsRequest(request: PreviewFrameRequest, frame: FrameInput): EffectsStageRequest {
         val (scaleX, scaleY) = letterboxScale(request, frame.aspect)
+        val (targetWidth, targetHeight) = OffscreenColorTarget.targetSizeFor(
+            request.viewportWidth, request.viewportHeight, scaleX, scaleY
+        )
         return EffectsStageRequest(
             viewportWidth = request.viewportWidth,
             viewportHeight = request.viewportHeight,
@@ -243,7 +246,9 @@ internal class PreviewPassPipeline {
             offsetX = request.canvas.offsetX,
             offsetY = request.canvas.offsetY,
             effects = request.state.effectsParams,
-            passBDraw = passBDrawParams(request, frame, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f)
+            passBDraw = passBDrawParams(request, frame, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f),
+            pixelScaleX = targetWidth,
+            pixelScaleY = targetHeight
         )
     }
 

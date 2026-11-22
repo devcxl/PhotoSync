@@ -31,6 +31,10 @@ internal class OffscreenColorTarget {
     private var framebufferId: Int = 0
     private var isDisabled: Boolean = false
 
+    /** Framebuffer object bound by [bind], or `0` when nothing is allocated. */
+    val framebuffer: Int
+        get() = framebufferId
+
     val isReady: Boolean
         get() = framebufferId != 0 && textureId != 0
 

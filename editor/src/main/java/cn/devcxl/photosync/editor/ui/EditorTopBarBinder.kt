@@ -27,6 +27,9 @@ internal class EditorTopBarBinder(
 
         /** The user tapped Done. */
         fun onDoneRequested()
+
+        /** The user asked for a full-resolution bake of the current graph. */
+        fun onExportRequested()
     }
 
     /** Wires every top-bar control and paints its initial state. */
@@ -43,6 +46,7 @@ internal class EditorTopBarBinder(
         }
         binding.baseLookToggle.onLookSelected = host::onBaseLookSelected
         binding.btnDone.setOnClickListener { host.onDoneRequested() }
+        binding.btnExport.setOnClickListener { host.onExportRequested() }
         updateHistoryButtons()
     }
 
@@ -60,6 +64,12 @@ internal class EditorTopBarBinder(
     fun updateBaseLookPill(baseLook: BaseLook, visible: Boolean) {
         binding.baseLookToggle.visibility = if (visible) View.VISIBLE else View.GONE
         binding.baseLookToggle.setLook(baseLook)
+    }
+
+    /** Enables or disables the export button while a bake is running. */
+    fun setExportEnabled(enabled: Boolean) {
+        binding.btnExport.isEnabled = enabled
+        binding.btnExport.alpha = if (enabled) 1.0f else DISABLED_ALPHA
     }
 
     /** Shows or hides the "comparing original" status pill. */

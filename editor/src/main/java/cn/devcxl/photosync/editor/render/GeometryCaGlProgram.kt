@@ -2,6 +2,9 @@ package cn.devcxl.photosync.editor.render
 
 import android.opengl.GLES20
 
+import cn.devcxl.photosync.editor.domain.SourceSliceRect
+import cn.devcxl.photosync.editor.domain.TileUvTransform
+
 /**
  * Immutable per-draw uniforms of the Pass A program.
  */
@@ -14,7 +17,11 @@ internal data class GeometryDrawParams(
     val encodeSrgbWithDither: Boolean,
     val warpTextureId: Int = 0,
     val warpDecodeScale: Float = 1.0f,
-    val warpDecodeOffset: Float = 0.0f
+    val warpDecodeOffset: Float = 0.0f,
+    /** Tier 2 sub-slice of the pre-crop source; `(0, 0, 1, 1)` for a full-frame upload. */
+    val srcSliceRect: SourceSliceRect = SourceSliceRect.FULL,
+    /** Column-band local UV to post-crop global UV; identity for the preview and full frame. */
+    val tileUv: TileUvTransform = TileUvTransform.IDENTITY
 )
 
 /**
@@ -45,6 +52,8 @@ internal class GeometryCaGlProgram {
     private var uCaBlueLoc: Int = -1
     private var uSrcAspectLoc: Int = -1
     private var uEncodeSrgbDitherLoc: Int = -1
+    private var uSrcSliceRectLoc: Int = -1
+    private var uTileUvTransformLoc: Int = -1
 
     private val quad = QuadMesh()
 
@@ -69,7 +78,17 @@ internal class GeometryCaGlProgram {
         uCaBlueLoc = GLES20.glGetUniformLocation(programId, "uCaBlueK")
         uSrcAspectLoc = GLES20.glGetUniformLocation(programId, "uSrcAspect")
         uEncodeSrgbDitherLoc = GLES20.glGetUniformLocation(programId, "uEncodeSrgbWithDither")
+        uSrcSliceRectLoc = GLES20.glGetUniformLocation(programId, "uSrcSliceRect")
+        uTileUvTransformLoc = GLES20.glGetUniformLocation(programId, "uTileUvTransform")
         return true
+    }
+
+    /** Releases the GL program. Safe to call without a live context. */
+    fun release() {
+        if (programId != 0) {
+            GLES20.glDeleteProgram(programId)
+            programId = 0
+        }
     }
 
     fun draw(params: GeometryDrawParams) {
@@ -87,6 +106,8 @@ internal class GeometryCaGlProgram {
             uEncodeSrgbDitherLoc,
             if (params.encodeSrgbWithDither) 1 else 0
         )
+        GLES20.glUniform4fv(uSrcSliceRectLoc, 1, params.srcSliceRect.toVec4(), 0)
+        GLES20.glUniform4fv(uTileUvTransformLoc, 1, params.tileUv.toVec4(), 0)
         quad.draw(aPositionLoc, aTexCoordLoc)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
     }
@@ -127,6 +148,8 @@ internal class GeometryCaGlProgram {
             uniform float uCaBlueK;
             uniform float uSrcAspect;
             uniform int uEncodeSrgbWithDither;
+            uniform vec4 uSrcSliceRect;
+            uniform vec4 uTileUvTransform;
             out vec4 fragColor;
 
             vec3 encodeSrgb(vec3 c) {
@@ -142,8 +165,17 @@ internal class GeometryCaGlProgram {
                 return (n1 + n2) - 1.0;
             }
 
+            // Tier 2 uploads only the band's inverse-mapped sub-slice; a full-frame texture keeps
+            // uSrcSliceRect = (0, 0, 1, 1), which makes this an exact identity.
+            vec2 sliceUv(vec2 preCropUv) {
+                vec2 origin = uSrcSliceRect.xy;
+                vec2 size = max(uSrcSliceRect.zw, vec2(1e-6));
+                return (preCropUv - origin) / size;
+            }
+
             void main() {
-                vec3 mapped = uInverseMatrix * vec3(vTexCoord, 1.0);
+                vec2 globalUv = vTexCoord * uTileUvTransform.xy + uTileUvTransform.zw;
+                vec3 mapped = uInverseMatrix * vec3(globalUv, 1.0);
                 vec2 preCropUv = mapped.xy / mapped.z;
                 // Liquify (and later face/body) inverse-mapping displacement, in pre-crop UV units.
                 if (uHasWarpTex == 1) {
@@ -158,13 +190,13 @@ internal class GeometryCaGlProgram {
 
                 vec4 sampled;
                 if (abs(uCaRedK) < 0.000001 && abs(uCaBlueK) < 0.000001) {
-                    sampled = texture(uTex0, preCropUv);
+                    sampled = texture(uTex0, sliceUv(preCropUv));
                 } else {
                     vec2 redUv = vec2(0.5) + delta * (1.0 + uCaRedK * radiusSquared);
                     vec2 blueUv = vec2(0.5) + delta * (1.0 + uCaBlueK * radiusSquared);
-                    vec4 greenReference = texture(uTex0, preCropUv);
-                    float red = texture(uTex0, redUv).r;
-                    float blue = texture(uTex0, blueUv).b;
+                    vec4 greenReference = texture(uTex0, sliceUv(preCropUv));
+                    float red = texture(uTex0, sliceUv(redUv)).r;
+                    float blue = texture(uTex0, sliceUv(blueUv)).b;
                     sampled = vec4(red, greenReference.g, blue, greenReference.a);
                 }
 

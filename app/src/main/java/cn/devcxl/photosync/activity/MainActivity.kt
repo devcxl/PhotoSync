@@ -26,6 +26,7 @@ import android.util.LruCache
 import android.view.View
 import android.view.ViewGroup
 import android.widget.CheckBox
+import android.widget.PopupMenu
 import android.widget.TextView
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
@@ -67,10 +68,15 @@ import cn.devcxl.photosync.data.entity.PhotoEntity
 import cn.devcxl.photosync.databinding.ActivityMainBinding
 import cn.devcxl.photosync.editor.contract.EditorHostRegistry
 import cn.devcxl.photosync.editor.contract.EditorLaunchArgs
-import cn.devcxl.photosync.editor.contract.PhotoEditRecord
-import cn.devcxl.photosync.editor.ui.EditorActivity
 import cn.devcxl.photosync.editor.contract.GallerySink
-import cn.devcxl.photosync.export.ExifCopier
+import cn.devcxl.photosync.editor.contract.PhotoEditRecord
+import cn.devcxl.photosync.editor.domain.EditGraph
+import cn.devcxl.photosync.editor.domain.EditGraphJsonCodec
+import cn.devcxl.photosync.editor.export.BakeExporter
+import cn.devcxl.photosync.editor.export.BakeRequest
+import cn.devcxl.photosync.editor.export.BakeResult
+import cn.devcxl.photosync.editor.export.ExifCopier
+import cn.devcxl.photosync.editor.ui.EditorActivity
 import cn.devcxl.photosync.export.MediaStoreGallerySink
 import cn.devcxl.photosync.ptp.manager.UsbPtpConnectionState
 import cn.devcxl.photosync.ptp.manager.cameraDeleteBlockedBy
@@ -97,6 +103,8 @@ class MainActivity : AppCompatActivity() {
         private const val JPEG_EXPORT_QUALITY = 95
         private const val PREFS_NAME = "photosync_prefs"
         private const val PREF_DELETE_ON_CAMERA = "delete_on_camera"
+        private const val MENU_EXPORT_BAKED = 1
+        private const val MENU_EXPORT_ORIGINAL = 2
         private val exportDateFormat = ThreadLocal.withInitial {
             SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
         }
@@ -105,6 +113,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var adapter: PhotoPagerAdapter
     private lateinit var filmstripAdapter: FilmstripAdapter
     private var pendingExportIndex: Int? = null
+    private var pendingExportBake: Boolean = false
 
     private lateinit var binding: ActivityMainBinding
 
@@ -807,6 +816,10 @@ class MainActivity : AppCompatActivity() {
     private fun setupButtons() {
         binding.editButton.setOnClickListener { openEditorForCurrentPhoto() }
         binding.exportButton.setOnClickListener { exportCurrent() }
+        binding.exportButton.setOnLongClickListener {
+            showExportMenu()
+            true
+        }
         binding.deleteButton.setOnClickListener { showDeleteConfirmDialog() }
         binding.connectButton.setOnClickListener { onConnectButtonClick() }
         binding.emptyActionButton.setOnClickListener {
@@ -1185,6 +1198,31 @@ class MainActivity : AppCompatActivity() {
             return
         }
         val index = binding.viewPager.currentItem.coerceIn(0, adapter.itemCount - 1)
+        // Short press: an edited photo bakes the full-resolution look, an unedited one keeps the
+        // zero-copy JPEG / legacy RAW export path.
+        requestExport(index, bakeEdited = editedGraphFor(index) != null)
+    }
+
+    private fun showExportMenu() {
+        if (adapter.itemCount == 0) {
+            showInlineFeedback(getString(R.string.toast_no_exportable_photos))
+            return
+        }
+        val index = binding.viewPager.currentItem.coerceIn(0, adapter.itemCount - 1)
+        val menu = PopupMenu(this, binding.exportButton)
+        menu.menu.add(0, MENU_EXPORT_BAKED, 0, R.string.export_menu_edited)
+        menu.menu.add(0, MENU_EXPORT_ORIGINAL, 1, R.string.export_menu_original)
+        menu.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                MENU_EXPORT_BAKED -> requestExport(index, bakeEdited = true)
+                MENU_EXPORT_ORIGINAL -> requestExport(index, bakeEdited = false)
+            }
+            true
+        }
+        menu.show()
+    }
+
+    private fun requestExport(index: Int, bakeEdited: Boolean) {
         if (Build.VERSION.SDK_INT <= 28) {
             val granted = ContextCompat.checkSelfPermission(
                 this,
@@ -1192,6 +1230,7 @@ class MainActivity : AppCompatActivity() {
             ) == PackageManager.PERMISSION_GRANTED
             if (!granted) {
                 pendingExportIndex = index
+                pendingExportBake = bakeEdited
                 ActivityCompat.requestPermissions(
                     this,
                     arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
@@ -1200,11 +1239,53 @@ class MainActivity : AppCompatActivity() {
                 return
             }
         }
-        exportIndex(index)
+        exportIndex(index, bakeEdited)
     }
 
-    private fun exportIndex(index: Int) {
+    private fun editedGraphFor(index: Int): EditGraph? {
+        val entity = adapter.getItem(index) ?: return null
+        val record = editedPhotoMap[entity.id] ?: return null
+        return EditGraphJsonCodec.decode(record.graphJson)
+    }
+
+    private fun bakeEditedPhoto(entity: PhotoEntity, graph: EditGraph) {
+        val displayEntityName = entity.name ?: getString(R.string.photo_default_name)
+        showInlineFeedback(getString(R.string.toast_baking_export, displayEntityName))
+        lifecycleScope.launch {
+            val sink = EditorHostRegistry.gallerySink ?: gallerySink
+            val result = BakeExporter(this@MainActivity, sink, filesDir).bake(
+                BakeRequest(
+                    sourcePath = entity.path,
+                    displayName = makeBakedName(entity.name),
+                    isRaw = isRawPath(entity.path),
+                    graph = graph
+                )
+            )
+            when (result) {
+                is BakeResult.Success -> {
+                    result.uri?.let { uri ->
+                        try {
+                            dao.updateUriString(entity.id, uri.toString())
+                        } catch (e: Exception) {
+                            Timber.w(e, "Failed to persist baked uriString for photo id=%d", entity.id)
+                        }
+                    }
+                    showInlineFeedback(getString(R.string.toast_baked_saved, result.displayName))
+                }
+                is BakeResult.Failure -> {
+                    Timber.w(result.cause, "Bake export failed: %s", result.reason)
+                    showInlineFeedback(getString(R.string.toast_bake_failed))
+                }
+            }
+        }
+    }
+
+    private fun exportIndex(index: Int, bakeEdited: Boolean = false) {
         val entity = adapter.getItem(index) ?: return
+        if (bakeEdited) {
+            bakeEditedPhoto(entity, editedGraphFor(index) ?: EditGraph())
+            return
+        }
         val displayEntityName = entity.name ?: getString(R.string.photo_default_name)
         showInlineFeedback(getString(R.string.toast_exporting, displayEntityName))
 
@@ -1277,12 +1358,23 @@ class MainActivity : AppCompatActivity() {
         if (requestCode == REQ_WRITE_STORAGE) {
             val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
             val idx = pendingExportIndex
+            val bakeEdited = pendingExportBake
             pendingExportIndex = null
+            pendingExportBake = false
             if (granted && idx != null) {
-                exportIndex(idx)
+                exportIndex(idx, bakeEdited)
             } else if (!granted) {
                 showInlineFeedback(getString(R.string.toast_storage_permission_denied))
             }
+        }
+    }
+
+    private fun makeBakedName(name: String?): String {
+        return if (!name.isNullOrBlank()) {
+            name.substringBeforeLast('.') + "_edited.jpg"
+        } else {
+            val timestamp = exportDateFormat.get()?.format(Date()) ?: System.currentTimeMillis()
+            "IMG_${timestamp}_edited.jpg"
         }
     }
 
@@ -1290,8 +1382,8 @@ class MainActivity : AppCompatActivity() {
         return if (!name.isNullOrBlank()) {
             name.substringBeforeLast('.') + "_export.jpg"
         } else {
-            val ts = exportDateFormat.get()!!.format(Date())
-            "IMG_${ts}.jpg"
+            val timestamp = exportDateFormat.get()?.format(Date()) ?: System.currentTimeMillis()
+            "IMG_${timestamp}.jpg"
         }
     }
 

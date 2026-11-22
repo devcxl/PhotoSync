@@ -9,6 +9,7 @@ import cn.devcxl.photosync.editor.domain.PassDEffectsMath
 import cn.devcxl.photosync.editor.domain.SpatialDetailParams
 import cn.devcxl.photosync.editor.domain.SpatialDetailPlan
 import cn.devcxl.photosync.editor.domain.SpatialDetailStage
+import cn.devcxl.photosync.editor.domain.TileUvTransform
 
 /**
  * Physical `SpatialDetailChain`: runs the planned Pass C sub-passes through a two-target ping-pong so
@@ -57,7 +58,8 @@ internal class SpatialDetailGlChain {
         params: SpatialDetailParams,
         plan: SpatialDetailPlan,
         prepassTextureId: Int,
-        atmosphericLight: FloatArray
+        atmosphericLight: FloatArray,
+        guideTransform: TileUvTransform = TileUvTransform.IDENTITY
     ): Int {
         lastDrawCalls = 0
         if (!program.isReady || inputTextureId == 0 || plan.stages.isEmpty()) return inputTextureId
@@ -93,7 +95,11 @@ internal class SpatialDetailGlChain {
                     sharpenMasking = params.sharpenMasking,
                     texelWidth = width,
                     texelHeight = height,
-                    ditherAmp = ditherAmp
+                    ditherAmp = ditherAmp,
+                    guideUvScaleX = guideTransform.scaleX,
+                    guideUvScaleY = guideTransform.scaleY,
+                    guideUvOffsetX = guideTransform.offsetX,
+                    guideUvOffsetY = guideTransform.offsetY
                 )
             )
             target.unbind()

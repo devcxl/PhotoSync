@@ -26,6 +26,8 @@ internal object EffectsOutputShaderSources {
         uniform vec4 uVignette;
         uniform float uAspect;
         uniform float uDitherAmp;
+        uniform vec4 uTileUvTransform;
+        uniform vec2 uTilePixelScale;
 
         const vec3 LUMA_WEIGHTS = vec3(0.2126, 0.7152, 0.0722);
         const float GRAIN_FINE_FREQUENCY = 1400.0;
@@ -110,14 +112,22 @@ internal object EffectsOutputShaderSources {
                 fragColor = vec4(srgb, src.a);
                 return;
             }
+            // Global post-crop UV: a column band renders only a sub-rectangle, but grain, vignette
+            // and dither must evaluate the same whole-image coordinates for zero visible seams.
+            vec2 globalUv = vTexCoord * uTileUvTransform.xy + uTileUvTransform.zw;
+            vec2 pixelScale = max(uTilePixelScale, vec2(1.0));
+            // Snap to the integer output pixel so the grain lattice is bit-identical whether the
+            // frame was rendered in one pass or as column bands with slightly different UV math.
+            vec2 pixelIndex = floor(globalUv * pixelScale);
+            vec2 snappedUv = (pixelIndex + vec2(0.5)) / pixelScale;
             if (uLutActive == 1 && uLutSize >= 2.0) {
                 srgb = mix(srgb, tetrahedralLut(srgb), uLutStrength);
             }
             float luminance = dot(srgb, LUMA_WEIGHTS);
-            srgb += vec3(grainOffset(vTexCoord, luminance));
-            srgb *= vec3(vignetteGain(vTexCoord));
-            float ditherX = hash21(floor(gl_FragCoord.xy), uGrain.w);
-            float ditherY = hash21(floor(gl_FragCoord.xy), uGrain.w + 31.0);
+            srgb += vec3(grainOffset(snappedUv, luminance));
+            srgb *= vec3(vignetteGain(globalUv));
+            float ditherX = hash21(pixelIndex, uGrain.w);
+            float ditherY = hash21(pixelIndex, uGrain.w + 31.0);
             float dither = (ditherX - ditherY) * uDitherAmp;
             fragColor = vec4(clamp(srgb + vec3(dither), 0.0, 1.0), src.a);
         }

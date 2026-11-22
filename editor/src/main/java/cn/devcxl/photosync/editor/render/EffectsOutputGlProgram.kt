@@ -5,6 +5,7 @@ import android.opengl.GLES30
 import timber.log.Timber
 
 import cn.devcxl.photosync.editor.domain.PassDEffectsParams
+import cn.devcxl.photosync.editor.domain.TileUvTransform
 
 /**
  * Uniform bundle for a single Pass D draw.
@@ -18,7 +19,10 @@ internal data class EffectsDrawParams(
     val offsetX: Float,
     val offsetY: Float,
     val effects: PassDEffectsParams,
-    val ditherAmp: Float
+    val ditherAmp: Float,
+    val tileUv: TileUvTransform = TileUvTransform.IDENTITY,
+    val pixelScaleX: Float = 1.0f,
+    val pixelScaleY: Float = 1.0f
 )
 
 /**
@@ -45,6 +49,8 @@ internal class EffectsOutputGlProgram {
     private var uDitherAmpLoc: Int = -1
     private var uScaleLoc: Int = -1
     private var uOffsetLoc: Int = -1
+    private var uTileUvTransformLoc: Int = -1
+    private var uTilePixelScaleLoc: Int = -1
 
     private val quad = QuadMesh()
 
@@ -115,6 +121,8 @@ internal class EffectsOutputGlProgram {
         )
         GLES20.glUniform1f(uAspectLoc, effects.aspectRatio)
         GLES20.glUniform1f(uDitherAmpLoc, params.ditherAmp)
+        GLES20.glUniform4fv(uTileUvTransformLoc, 1, params.tileUv.toVec4(), 0)
+        GLES20.glUniform2f(uTilePixelScaleLoc, params.pixelScaleX, params.pixelScaleY)
     }
 
     private fun resolveLocations() {
@@ -132,5 +140,7 @@ internal class EffectsOutputGlProgram {
         uDitherAmpLoc = GLES20.glGetUniformLocation(programId, "uDitherAmp")
         uScaleLoc = GLES20.glGetUniformLocation(programId, "uScale")
         uOffsetLoc = GLES20.glGetUniformLocation(programId, "uOffset")
+        uTileUvTransformLoc = GLES20.glGetUniformLocation(programId, "uTileUvTransform")
+        uTilePixelScaleLoc = GLES20.glGetUniformLocation(programId, "uTilePixelScale")
     }
 }
