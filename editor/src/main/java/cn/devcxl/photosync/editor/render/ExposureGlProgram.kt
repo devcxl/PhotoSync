@@ -1,9 +1,5 @@
 package cn.devcxl.photosync.editor.render
 
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.nio.FloatBuffer
-
 import android.opengl.GLES20
 import timber.log.Timber
 
@@ -22,19 +18,13 @@ internal class ExposureGlProgram {
     private var uExposureEvLoc: Int = -1
     private var uCompareOriginalLoc: Int = -1
     private var uScaleLoc: Int = -1
+    private var uOffsetLoc: Int = -1
 
-    private val quadBuffer: FloatBuffer = ByteBuffer
-        .allocateDirect(QUAD_VERTICES.size * 4)
-        .order(ByteOrder.nativeOrder())
-        .asFloatBuffer()
-        .apply {
-            put(QUAD_VERTICES)
-            position(0)
-        }
+    private val quad = QuadMesh()
 
     fun init(preferEs3: Boolean = true) {
         programId = if (preferEs3) {
-            buildProgram(VERTEX_SHADER_ES3, FRAGMENT_SHADER_ES3).also { id ->
+            GlShaderCompiler.buildProgram(VERTEX_SHADER_ES3, FRAGMENT_SHADER_ES3).also { id ->
                 if (id == 0) {
                     Timber.w("GLES 3.0 shader compile failed; falling back to GLES 2.0 shader")
                 }
@@ -43,7 +33,7 @@ internal class ExposureGlProgram {
             0
         }
         if (programId == 0) {
-            programId = buildProgram(VERTEX_SHADER_ES2, FRAGMENT_SHADER_ES2)
+            programId = GlShaderCompiler.buildProgram(VERTEX_SHADER_ES2, FRAGMENT_SHADER_ES2)
         }
         if (programId == 0) {
             Timber.e("Failed to compile both GLES 3.0 and fallback exposure shaders")
@@ -55,6 +45,7 @@ internal class ExposureGlProgram {
         uExposureEvLoc = GLES20.glGetUniformLocation(programId, "uExposureEv")
         uCompareOriginalLoc = GLES20.glGetUniformLocation(programId, "uCompareOriginal")
         uScaleLoc = GLES20.glGetUniformLocation(programId, "uScale")
+        uOffsetLoc = GLES20.glGetUniformLocation(programId, "uOffset")
     }
 
     fun draw(
@@ -62,7 +53,9 @@ internal class ExposureGlProgram {
         exposureEv: Float,
         compareOriginal: Boolean,
         scaleX: Float,
-        scaleY: Float
+        scaleY: Float,
+        offsetX: Float = 0.0f,
+        offsetY: Float = 0.0f
     ) {
         if (programId == 0 || textureId == 0) return
         GLES20.glUseProgram(programId)
@@ -73,79 +66,21 @@ internal class ExposureGlProgram {
         GLES20.glUniform1f(uExposureEvLoc, exposureEv)
         GLES20.glUniform1i(uCompareOriginalLoc, if (compareOriginal) 1 else 0)
         GLES20.glUniform2f(uScaleLoc, scaleX, scaleY)
+        GLES20.glUniform2f(uOffsetLoc, offsetX, offsetY)
 
-        quadBuffer.position(0)
-        GLES20.glEnableVertexAttribArray(aPositionLoc)
-        GLES20.glVertexAttribPointer(aPositionLoc, 2, GLES20.GL_FLOAT, false, 16, quadBuffer)
-
-        quadBuffer.position(2)
-        GLES20.glEnableVertexAttribArray(aTexCoordLoc)
-        GLES20.glVertexAttribPointer(aTexCoordLoc, 2, GLES20.GL_FLOAT, false, 16, quadBuffer)
-
-        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
-
-        GLES20.glDisableVertexAttribArray(aPositionLoc)
-        GLES20.glDisableVertexAttribArray(aTexCoordLoc)
-    }
-
-    private fun buildProgram(vertexSrc: String, fragmentSrc: String): Int {
-        val vs = compileShader(GLES20.GL_VERTEX_SHADER, vertexSrc)
-        if (vs == 0) return 0
-        val fs = compileShader(GLES20.GL_FRAGMENT_SHADER, fragmentSrc)
-        if (fs == 0) {
-            GLES20.glDeleteShader(vs)
-            return 0
-        }
-        val program = GLES20.glCreateProgram()
-        GLES20.glAttachShader(program, vs)
-        GLES20.glAttachShader(program, fs)
-        GLES20.glLinkProgram(program)
-        GLES20.glDeleteShader(vs)
-        GLES20.glDeleteShader(fs)
-
-        val linkStatus = IntArray(1)
-        GLES20.glGetProgramiv(program, GLES20.GL_LINK_STATUS, linkStatus, 0)
-        if (linkStatus[0] == 0) {
-            val info = GLES20.glGetProgramInfoLog(program)
-            Timber.e("Shader program link failed: %s", info)
-            GLES20.glDeleteProgram(program)
-            return 0
-        }
-        return program
-    }
-
-    private fun compileShader(type: Int, source: String): Int {
-        val shader = GLES20.glCreateShader(type)
-        if (shader == 0) return 0
-        GLES20.glShaderSource(shader, source)
-        GLES20.glCompileShader(shader)
-        val status = IntArray(1)
-        GLES20.glGetShaderiv(shader, GLES20.GL_COMPILE_STATUS, status, 0)
-        if (status[0] == 0) {
-            val info = GLES20.glGetShaderInfoLog(shader)
-            Timber.w("Shader compile failed (type=%d): %s", type, info)
-            GLES20.glDeleteShader(shader)
-            return 0
-        }
-        return shader
+        quad.draw(aPositionLoc, aTexCoordLoc)
     }
 
     companion object {
-        private val QUAD_VERTICES = floatArrayOf(
-            -1.0f, -1.0f, 0.0f, 1.0f,
-             1.0f, -1.0f, 1.0f, 1.0f,
-            -1.0f,  1.0f, 0.0f, 0.0f,
-             1.0f,  1.0f, 1.0f, 0.0f
-        )
-
         private val VERTEX_SHADER_ES3 = """
             #version 300 es
             in vec2 aPosition;
             in vec2 aTexCoord;
             uniform vec2 uScale;
+            uniform vec2 uOffset;
             out vec2 vTexCoord;
             void main() {
-                gl_Position = vec4(aPosition * uScale, 0.0, 1.0);
+                gl_Position = vec4(aPosition * uScale + uOffset, 0.0, 1.0);
                 vTexCoord = aTexCoord;
             }
         """.trimIndent()
@@ -196,9 +131,10 @@ internal class ExposureGlProgram {
             attribute vec2 aPosition;
             attribute vec2 aTexCoord;
             uniform vec2 uScale;
+            uniform vec2 uOffset;
             varying vec2 vTexCoord;
             void main() {
-                gl_Position = vec4(aPosition * uScale, 0.0, 1.0);
+                gl_Position = vec4(aPosition * uScale + uOffset, 0.0, 1.0);
                 vTexCoord = aTexCoord;
             }
         """.trimIndent()
