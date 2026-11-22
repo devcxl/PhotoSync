@@ -23,6 +23,7 @@ import cn.devcxl.photosync.wrapper.RawWrapper
 internal object EditorBitmapLoader {
 
     private const val EDITOR_PREVIEW_MAX_EDGE_PX = 2048
+    private const val PROXY_MAX_EDGE_PX = 1024
 
     fun loadUprightPreviewBitmap(sourcePath: String, isRaw: Boolean): Bitmap? {
         val file = File(sourcePath)
@@ -40,6 +41,16 @@ internal object EditorBitmapLoader {
             Timber.e(e, "Failed to load editor preview bitmap")
             null
         }
+    }
+
+    /** Scales [source] down to a 1024px drag proxy, returning it unchanged when it already fits. */
+    fun createProxyBitmap(source: Bitmap): Bitmap {
+        val maxEdge = maxOf(source.width, source.height)
+        if (maxEdge <= PROXY_MAX_EDGE_PX) return source
+        val scale = PROXY_MAX_EDGE_PX.toFloat() / maxEdge.toFloat()
+        val width = (source.width * scale).roundToInt().coerceAtLeast(1)
+        val height = (source.height * scale).roundToInt().coerceAtLeast(1)
+        return Bitmap.createScaledBitmap(source, width, height, true)
     }
 
     private fun loadRawPreview(sourcePath: String): Bitmap? {

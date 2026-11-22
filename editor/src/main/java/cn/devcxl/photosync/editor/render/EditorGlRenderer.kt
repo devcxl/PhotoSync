@@ -2,35 +2,43 @@ package cn.devcxl.photosync.editor.render
 
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
-import kotlin.math.roundToInt
 
-import android.graphics.Bitmap
 import android.opengl.GLES20
 import android.opengl.GLSurfaceView
-import android.opengl.GLUtils
+
+import cn.devcxl.photosync.editor.domain.BaseLook
+import cn.devcxl.photosync.wrapper.LinearRawBuffer
 
 /**
  * GLES 3.0 renderer for the editor preview canvas.
  *
- * Maintains both a `1024px` drag-proxy texture (`PROXY_1024_FAST`) and a full-preview
- * texture (`IDLE_FULL_16F`). Retains bitmap references across EGL context/surface
- * recreations so returning from background never leaves a black canvas.
+ * Maintains both a `1024px` drag-proxy texture (`PROXY_1024_FAST`) and a full-preview texture
+ * (`IDLE_FULL_16F`). RAW sources are 16-bit linear `GL_RGBA16F` textures so the shader keeps
+ * the full dynamic range; JPEG sources stay 8-bit sRGB. The staged [EditorSource] is retained
+ * across EGL surface recreation so returning from the background never leaves a black canvas.
  */
 internal class EditorGlRenderer : GLSurfaceView.Renderer {
 
     private val program = ExposureGlProgram()
     private var proxyTextureId: Int = 0
     private var fullTextureId: Int = 0
-    private var imageWidth: Int = 1
-    private var imageHeight: Int = 1
     private var viewportWidth: Int = 1
     private var viewportHeight: Int = 1
 
     @Volatile
-    private var stagedFullBitmap: Bitmap? = null
+    private var imageWidth: Int = 1
 
     @Volatile
-    private var stagedProxyBitmap: Bitmap? = null
+    private var imageHeight: Int = 1
+
+    @Volatile
+    private var linearInput: Boolean = false
+
+    @Volatile
+    private var autoBrightGain: Float = 1.0f
+
+    @Volatile
+    private var stagedSource: EditorSource? = null
 
     @Volatile
     private var needsFullUpload: Boolean = false
@@ -50,13 +58,18 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
     @Volatile
     var useFastProxy: Boolean = false
 
+    @Volatile
+    var baseLook: BaseLook = BaseLook.CAMERA_DEFAULT
+
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         GLES20.glClearColor(0.0f, 0.0f, 0.0f, 1.0f)
         program.init(preferEs3)
         proxyTextureId = 0
         fullTextureId = 0
-        needsFullUpload = stagedFullBitmap != null
-        needsProxyUpload = stagedProxyBitmap != null
+        val source = stagedSource
+        needsFullUpload = source != null
+        needsProxyUpload = source != null
+        applySourceMetadata(source)
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
@@ -66,7 +79,7 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
     }
 
     override fun onDrawFrame(gl: GL10?) {
-        uploadPendingBitmapsIfNeeded()
+        uploadPendingTextures()
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
 
         val activeTex = if (useFastProxy && proxyTextureId != 0) {
@@ -78,85 +91,78 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
 
         val (scaleX, scaleY) = computeLetterboxScale()
         program.draw(
-            textureId = activeTex,
-            exposureEv = exposureEv,
-            compareOriginal = compareOriginal,
-            scaleX = scaleX,
-            scaleY = scaleY
+            ExposureDrawParams(
+                textureId = activeTex,
+                exposureEv = exposureEv,
+                compareOriginal = compareOriginal,
+                scaleX = scaleX,
+                scaleY = scaleY,
+                isLinearInput = linearInput,
+                baseLook = baseLook,
+                autoBrightGain = autoBrightGain
+            )
         )
     }
 
     /**
-     * Stages a decoded full-preview bitmap and its 1024px proxy for upload on the GL thread.
+     * Stages [source] for upload on the GL thread and adopts its dimensions and gain metadata.
      */
-    fun setSourceBitmaps(fullBitmap: Bitmap, proxyBitmap: Bitmap) {
-        imageWidth = fullBitmap.width.coerceAtLeast(1)
-        imageHeight = fullBitmap.height.coerceAtLeast(1)
-        stagedFullBitmap = fullBitmap
-        stagedProxyBitmap = proxyBitmap
+    fun setSource(source: EditorSource) {
+        stagedSource = source
+        applySourceMetadata(source)
         needsFullUpload = true
         needsProxyUpload = true
     }
 
     /**
-     * Clears bitmap references when the hosting activity is destroyed so recycled bitmaps are
-     * never touched on a late GL draw.
+     * Clears staged source references when the hosting activity is destroyed so recycled
+     * bitmaps are never touched on a late GL draw.
      */
-    fun clearBitmaps() {
-        stagedFullBitmap = null
-        stagedProxyBitmap = null
+    fun releaseSource() {
+        stagedSource = null
         needsFullUpload = false
         needsProxyUpload = false
     }
 
-    private fun uploadPendingBitmapsIfNeeded() {
+    private fun applySourceMetadata(source: EditorSource?) {
+        if (source == null) return
+        imageWidth = source.width.coerceAtLeast(1)
+        imageHeight = source.height.coerceAtLeast(1)
+        linearInput = source.isLinear
+        autoBrightGain = (source as? EditorSource.LinearRawSource)?.autoBrightGain ?: 1.0f
+    }
+
+    private fun uploadPendingTextures() {
+        val source = stagedSource ?: return
         if (needsFullUpload) {
-            val full = stagedFullBitmap
             needsFullUpload = false
-            if (full != null && !full.isRecycled) {
-                fullTextureId = uploadTexture(full, fullTextureId)
-            }
+            fullTextureId = upload(source, fullFrame = true)
         }
         if (needsProxyUpload) {
-            val proxy = stagedProxyBitmap
             needsProxyUpload = false
-            if (proxy != null && !proxy.isRecycled) {
-                proxyTextureId = uploadTexture(proxy, proxyTextureId)
+            proxyTextureId = upload(source, fullFrame = false)
+        }
+    }
+
+    private fun upload(source: EditorSource, fullFrame: Boolean): Int {
+        val existing = if (fullFrame) fullTextureId else proxyTextureId
+        return when (source) {
+            is EditorSource.BitmapSource -> {
+                val bitmap = if (fullFrame) source.full else source.proxy
+                EditorTextureUploader.uploadBitmap(bitmap, existing)
+            }
+            is EditorSource.LinearRawSource -> {
+                val buffer = if (fullFrame) source.full else source.proxy
+                uploadLinear(buffer, existing)
             }
         }
     }
 
-    private fun uploadTexture(bitmap: Bitmap, existingTexId: Int): Int {
-        val texIds = IntArray(1)
-        if (existingTexId != 0) {
-            texIds[0] = existingTexId
-        } else {
-            GLES20.glGenTextures(1, texIds, 0)
-        }
-        val texId = texIds[0]
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texId)
-        GLES20.glTexParameteri(
-            GLES20.GL_TEXTURE_2D,
-            GLES20.GL_TEXTURE_MIN_FILTER,
-            GLES20.GL_LINEAR
-        )
-        GLES20.glTexParameteri(
-            GLES20.GL_TEXTURE_2D,
-            GLES20.GL_TEXTURE_MAG_FILTER,
-            GLES20.GL_LINEAR
-        )
-        GLES20.glTexParameteri(
-            GLES20.GL_TEXTURE_2D,
-            GLES20.GL_TEXTURE_WRAP_S,
-            GLES20.GL_CLAMP_TO_EDGE
-        )
-        GLES20.glTexParameteri(
-            GLES20.GL_TEXTURE_2D,
-            GLES20.GL_TEXTURE_WRAP_T,
-            GLES20.GL_CLAMP_TO_EDGE
-        )
-        GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bitmap, 0)
-        return texId
+    private fun uploadLinear(buffer: LinearRawBuffer, existing: Int): Int {
+        val halfFloatTexture = EditorTextureUploader.uploadLinearHalfFloat(buffer, existing)
+        if (halfFloatTexture != 0) return halfFloatTexture
+        // The rejected half-float attempt already deleted `existing`, so allocate a new name.
+        return EditorTextureUploader.uploadLinearAsBytes(buffer, existingTextureId = 0)
     }
 
     private fun computeLetterboxScale(): Pair<Float, Float> {
@@ -166,19 +172,6 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
             1.0f to (viewAspect / imgAspect)
         } else {
             (imgAspect / viewAspect) to 1.0f
-        }
-    }
-
-    companion object {
-        private const val PROXY_MAX_EDGE_PX = 1024
-
-        fun createProxyBitmap(source: Bitmap): Bitmap {
-            val maxEdge = maxOf(source.width, source.height)
-            if (maxEdge <= PROXY_MAX_EDGE_PX) return source
-            val scale = PROXY_MAX_EDGE_PX.toFloat() / maxEdge.toFloat()
-            val w = (source.width * scale).roundToInt().coerceAtLeast(1)
-            val h = (source.height * scale).roundToInt().coerceAtLeast(1)
-            return Bitmap.createScaledBitmap(source, w, h, true)
         }
     }
 }

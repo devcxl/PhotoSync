@@ -4,11 +4,12 @@
 #include <android/log.h>
 #include "libraw.h"
 #include "jni_raii_guards.h"
+#include "raw_autobright.h"
+#include "raw_log.h"
 #include "raw_postprocess.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-#include <ctime>
 #include <memory>
 #include <cstdint>
 #include <inttypes.h>
@@ -32,12 +33,6 @@ using photosync::jni::ImageGuard;
 using photosync::jni::LibRawGuard;
 using photosync::jni::PathGuard;
 
-// Safe libraw_strerror wrapper – returns a static string on null
-static const char* safe_strerror(int ret) {
-    const char* s = libraw_strerror(ret);
-    return s ? s : "unknown error";
-}
-
 // 解码缩略图。JPEG 格式直接返回原始字节，BITMAP 格式返回 [w:4][h:4][R,G,B...]
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_cn_devcxl_photosync_wrapper_RawWrapper_decodeThumbnail(JNIEnv* env, jobject /*thiz*/, jstring jpath) {
@@ -52,13 +47,13 @@ Java_cn_devcxl_photosync_wrapper_RawWrapper_decodeThumbnail(JNIEnv* env, jobject
 
     int ret = proc.open_file(cpath);
     if(ret != LIBRAW_SUCCESS) {
-        ALOGE("open_file failed (%d): %s for %s", ret, safe_strerror(ret), cpath);
+        ALOGE("open_file failed (%d): %s for %s", ret, photosync::raw::safeLibRawError(ret), cpath);
         return nullptr;
     }
 
     ret = proc.unpack_thumb();
     if(ret != LIBRAW_SUCCESS) {
-        ALOGE("unpack_thumb failed (%d): %s for %s", ret, safe_strerror(ret), cpath);
+        ALOGE("unpack_thumb failed (%d): %s for %s", ret, photosync::raw::safeLibRawError(ret), cpath);
         return nullptr;
     }
 
@@ -122,60 +117,6 @@ Java_cn_devcxl_photosync_wrapper_RawWrapper_decodeThumbnail(JNIEnv* env, jobject
     return out;
 }
 
-static int64_t monotonicMillis() {
-    struct timespec ts{};
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return static_cast<int64_t>(ts.tv_sec) * 1000LL + ts.tv_nsec / 1000000LL;
-}
-
-/**
- * Caps LibRaw's histogram auto-brightening gain so low-key / night photos do not get
- * pushed past +2.0 EV (4.0x) into heavy shadow noise, and returns the effective gain.
- */
-static float clampAutoBrightGain(LibRaw& proc, libraw_output_params_t& params) {
-    libraw_internal_data_t* internal = proc.get_internal_data_pointer();
-    if (!internal || !internal->output_data.histogram) {
-        return 1.0f;
-    }
-
-    const int width = proc.imgdata.sizes.width;
-    const int height = proc.imgdata.sizes.height;
-    const int colors = proc.imgdata.idata.colors;
-    int perc = static_cast<int>(static_cast<double>(width) * static_cast<double>(height) * params.auto_bright_thr);
-    if (internal->internal_output_params.fuji_width) {
-        perc /= 2;
-    }
-
-    int t_white = 0;
-    for (int c = 0; c < colors && c < 4; ++c) {
-        int val = 0x2000;
-        int total = 0;
-        while (--val > 32) {
-            if ((total += internal->output_data.histogram[c][val]) > perc) {
-                break;
-            }
-        }
-        if (t_white < val) {
-            t_white = val;
-        }
-    }
-
-    constexpr int kMinAutoBrightWhite = 2048; // 8192 / 2048 = 4.0x (+2.0 EV cap)
-    constexpr float kMaxAutoBrightGain = 4.0f;
-    if (t_white > 0 && t_white < kMinAutoBrightWhite) {
-        params.no_auto_bright = 1;
-        params.bright = kMaxAutoBrightGain;
-        ALOGI("Auto-bright capped: t_white=%d -> bright=%.2fx (+2.0 EV max)", t_white, params.bright);
-        return kMaxAutoBrightGain;
-    }
-    if (t_white > 0) {
-        const float gain = std::max(1.0f, 8192.0f / static_cast<float>(t_white));
-        ALOGI("Auto-bright active: t_white=%d (gain=%.2fx)", t_white, gain);
-        return gain;
-    }
-    return 1.0f;
-}
-
 /**
  * Configures LibRaw output parameters, unpacks, and runs dcraw_process() into a
  * 16-bit sRGB in-memory bitmap image for high-precision tone mapping.
@@ -224,13 +165,13 @@ static libraw_processed_image_t* processRawToMemImage(
 
     int ret = proc.open_file(cpath);
     if (ret != LIBRAW_SUCCESS) {
-        ALOGE("open_file failed (%d): %s for %s", ret, safe_strerror(ret), cpath);
+        ALOGE("open_file failed (%d): %s for %s", ret, photosync::raw::safeLibRawError(ret), cpath);
         return nullptr;
     }
 
     ret = proc.unpack();
     if (ret != LIBRAW_SUCCESS) {
-        ALOGE("unpack failed (%d): %s for %s", ret, safe_strerror(ret), cpath);
+        ALOGE("unpack failed (%d): %s for %s", ret, photosync::raw::safeLibRawError(ret), cpath);
         return nullptr;
     }
 
@@ -241,11 +182,11 @@ static libraw_processed_image_t* processRawToMemImage(
 
     ret = proc.dcraw_process();
     if (ret != LIBRAW_SUCCESS) {
-        ALOGE("dcraw_process failed (%d): %s for %s", ret, safe_strerror(ret), cpath);
+        ALOGE("dcraw_process failed (%d): %s for %s", ret, photosync::raw::safeLibRawError(ret), cpath);
         return nullptr;
     }
 
-    const float brightGain = clampAutoBrightGain(proc, params);
+    const float brightGain = photosync::raw::clampAutoBrightGain(proc, params);
     const float baseIso = proc.imgdata.other.iso_speed > 0.0f ? proc.imgdata.other.iso_speed : 100.0f;
     outEffectiveIso = baseIso * brightGain;
 
@@ -253,7 +194,7 @@ static libraw_processed_image_t* processRawToMemImage(
     libraw_processed_image_t* img = proc.dcraw_make_mem_image(&imgRet);
     if (!img || imgRet != LIBRAW_SUCCESS) {
         ALOGE("dcraw_make_mem_image failed (%d): %s for %s",
-              imgRet, safe_strerror(imgRet), cpath);
+              imgRet, photosync::raw::safeLibRawError(imgRet), cpath);
         if (img) LibRaw::dcraw_clear_mem(img);
         return nullptr;
     }
@@ -315,7 +256,7 @@ Java_cn_devcxl_photosync_wrapper_RawWrapper_decodeToRGB(JNIEnv* env, jobject /*t
     }
     PathGuard pathGuard{env, jpath, cpath};
 
-    const int64_t tStart = monotonicMillis();
+    const int64_t tStart = photosync::raw::monotonicMillis();
     LibRaw proc;
     LibRawGuard procGuard(&proc);
 
@@ -371,7 +312,7 @@ Java_cn_devcxl_photosync_wrapper_RawWrapper_decodeToRGB(JNIEnv* env, jobject /*t
     }
 
     ALOGI("Successfully decoded RAW %ux%u (%" PRIu64 " bytes) in %" PRId64 " ms from %s",
-          width, height, static_cast<uint64_t>(totalBytes), monotonicMillis() - tStart, cpath);
+          width, height, static_cast<uint64_t>(totalBytes), photosync::raw::monotonicMillis() - tStart, cpath);
 
     return out;
 }
@@ -385,7 +326,7 @@ Java_cn_devcxl_photosync_wrapper_RawWrapper_decodeToBitmapNative(JNIEnv* env, jo
     if (!cpath) return nullptr;
     PathGuard pathGuard{env, jpath, cpath};
 
-    const int64_t tStart = monotonicMillis();
+    const int64_t tStart = photosync::raw::monotonicMillis();
     LibRaw proc;
     LibRawGuard procGuard(&proc);
 
@@ -454,6 +395,6 @@ Java_cn_devcxl_photosync_wrapper_RawWrapper_decodeToBitmapNative(JNIEnv* env, jo
     }
 
     ALOGI("Successfully decoded RAW Bitmap %ux%u (effectiveISO=%.0f) in %" PRId64 " ms from %s",
-          width, height, effectiveIso, monotonicMillis() - tStart, cpath);
+          width, height, effectiveIso, photosync::raw::monotonicMillis() - tStart, cpath);
     return bitmap;
 }

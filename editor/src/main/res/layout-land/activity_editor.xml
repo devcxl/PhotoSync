@@ -65,6 +65,15 @@
             android:textSize="12sp"
             android:textStyle="bold" />
 
+        <cn.devcxl.photosync.editor.ui.widgets.BaseLookToggleView
+            android:id="@+id/baseLookToggle"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/editor_top_btn_height"
+            android:layout_marginStart="8dp"
+            android:background="@color/editor_accent_blue_pill"
+            android:visibility="gone"
+            tools:visibility="visible" />
+
         <Space
             android:layout_width="0dp"
             android:layout_height="0dp"

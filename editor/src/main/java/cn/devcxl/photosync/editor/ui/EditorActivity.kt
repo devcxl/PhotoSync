@@ -5,11 +5,8 @@ import kotlin.math.abs
 
 import android.annotation.SuppressLint
 import android.app.Activity
-import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
-import android.graphics.Bitmap
-import android.opengl.GLSurfaceView
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -28,22 +25,23 @@ import cn.devcxl.photosync.editor.R
 import cn.devcxl.photosync.editor.contract.EditorHostRegistry
 import cn.devcxl.photosync.editor.contract.EditorLaunchArgs
 import cn.devcxl.photosync.editor.databinding.ActivityEditorBinding
+import cn.devcxl.photosync.editor.domain.BaseLook
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.EditGraphJsonCodec
 import cn.devcxl.photosync.editor.domain.EditParameterKey
 import cn.devcxl.photosync.editor.domain.EditorUndoController
-import cn.devcxl.photosync.editor.render.EditorBitmapLoader
 import cn.devcxl.photosync.editor.render.EditorGlRenderer
-import cn.devcxl.photosync.editor.render.PreviewCacheWriter
-import cn.devcxl.photosync.editor.ui.widgets.DialSeekBar
+import cn.devcxl.photosync.editor.render.EditorPreviewSession
 
 /**
- * Full-screen non-destructive photo editor activity (Tracer-Bullet Slice: Exposure + Undo/Redo +
- * Before/After Compare + GLES 3.0 1024px Proxy Throttling).
+ * Full-screen non-destructive photo editor (Tracer-Bullet Slice: Exposure + RAW BaseLook +
+ * Undo/Redo + Before/After Compare + GLES 3.0 1024px Proxy Throttling).
  */
 class EditorActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityEditorBinding
+    private lateinit var previewSession: EditorPreviewSession
+    private lateinit var saveCoordinator: EditorSaveCoordinator
     private val renderer = EditorGlRenderer()
     private val undoController = EditorUndoController()
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -51,8 +49,7 @@ class EditorActivity : AppCompatActivity() {
     private var photoId: Long = 0L
     private var sourcePath: String = ""
     private var isRaw: Boolean = false
-    private var fullPreviewBitmap: Bitmap? = null
-    private var proxyPreviewBitmap: Bitmap? = null
+    private var preferLinearSource: Boolean = false
 
     private val settleFullQualityRunnable = Runnable {
         renderer.useFastProxy = false
@@ -67,6 +64,8 @@ class EditorActivity : AppCompatActivity() {
         photoId = intent.getLongExtra(EXTRA_PHOTO_ID, 0L)
         sourcePath = intent.getStringExtra(EXTRA_SOURCE_PATH).orEmpty()
         isRaw = intent.getBooleanExtra(EXTRA_IS_RAW, false)
+        previewSession = EditorPreviewSession(renderer, cacheDir, photoId)
+        saveCoordinator = EditorSaveCoordinator(photoId, previewSession)
 
         setupGlSurfaceView()
         setupExposureSlider()
@@ -87,70 +86,44 @@ class EditorActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         mainHandler.removeCallbacks(settleFullQualityRunnable)
-        renderer.clearBitmaps()
-        recyclePreviewBitmaps()
+        previewSession.release()
         super.onDestroy()
     }
 
-    @SuppressLint("ClickableViewAccessibility")
     private fun setupGlSurfaceView() {
-        val am = getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
-        val supportsEs3 = (am?.deviceConfigurationInfo?.reqGlEsVersion ?: 0) >= 0x30000
-        renderer.preferEs3 = supportsEs3
-        binding.glSurfaceView.setEGLContextClientVersion(if (supportsEs3) 3 else 2)
-        binding.glSurfaceView.setRenderer(renderer)
-        binding.glSurfaceView.renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
-
-        val canvasGestureDetector = GestureDetector(
-            this,
-            object : GestureDetector.SimpleOnGestureListener() {
-                override fun onDown(e: MotionEvent): Boolean = true
-                override fun onLongPress(e: MotionEvent) {
-                    setCompareOriginal(true)
-                }
-            }
-        )
-        binding.glSurfaceView.setOnTouchListener { _, event ->
-            canvasGestureDetector.onTouchEvent(event)
-            if (event.actionMasked == MotionEvent.ACTION_UP ||
-                event.actionMasked == MotionEvent.ACTION_CANCEL
-            ) {
-                if (renderer.compareOriginal) {
-                    setCompareOriginal(false)
-                }
-            }
-            true
-        }
+        preferLinearSource = EditorCanvasSetup.supportsEs3(this)
+        EditorCanvasSetup.configure(
+            context = this,
+            surfaceView = binding.glSurfaceView,
+            renderer = renderer,
+            supportsEs3 = preferLinearSource
+        ) { comparing -> setCompareOriginal(comparing) }
     }
 
     private fun setupExposureSlider() {
-        binding.dialSeekBar.minValue = -5.0f
-        binding.dialSeekBar.maxValue = 5.0f
-        binding.dialSeekBar.stepSize = 0.05f
-        binding.dialSeekBar.zeroSnapThreshold = 0.10f
-        binding.dialSeekBar.listener = object : DialSeekBar.OnDialChangeListener {
-            override fun onValueChanged(value: Float, fromUser: Boolean) {
-                if (!fromUser) return
-                mainHandler.removeCallbacks(settleFullQualityRunnable)
-                val current = undoController.currentGraph
-                val updated = current.copy(tone = current.tone.copy(exposure = value))
-                val sanitized = undoController.onParameterDrag(
-                    updated,
-                    EditParameterKey.TONE_EXPOSURE
-                )
-                renderer.useFastProxy = true
-                renderer.exposureEv = sanitized.tone.exposure
-                binding.glSurfaceView.requestRender()
-                updateControlsUi()
-            }
+        ExposureSliderBinder.bind(
+            seekBar = binding.dialSeekBar,
+            onExposureChanged = ::onExposureChanged,
+            onExposureReleased = ::onExposureReleased
+        )
+    }
 
-            override fun onStopTrackingTouch() {
-                undoController.onParameterRelease()
-                mainHandler.removeCallbacks(settleFullQualityRunnable)
-                mainHandler.postDelayed(settleFullQualityRunnable, SETTLE_DELAY_MS)
-                updateControlsUi()
-            }
-        }
+    private fun onExposureChanged(value: Float) {
+        mainHandler.removeCallbacks(settleFullQualityRunnable)
+        val current = undoController.currentGraph
+        val updated = current.copy(tone = current.tone.copy(exposure = value))
+        val sanitized = undoController.onParameterDrag(updated, EditParameterKey.TONE_EXPOSURE)
+        renderer.useFastProxy = true
+        renderer.exposureEv = sanitized.tone.exposure
+        binding.glSurfaceView.requestRender()
+        updateControlsUi()
+    }
+
+    private fun onExposureReleased() {
+        undoController.onParameterRelease()
+        mainHandler.removeCallbacks(settleFullQualityRunnable)
+        mainHandler.postDelayed(settleFullQualityRunnable, SETTLE_DELAY_MS)
+        updateControlsUi()
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -182,37 +155,31 @@ class EditorActivity : AppCompatActivity() {
             }
             false
         }
+        binding.baseLookToggle.onLookSelected = ::selectBaseLook
         binding.btnDone.setOnClickListener { saveEditAndFinish() }
-        val upcomingTabs = listOf(
-            binding.tabPreset,
-            binding.tabGeometry,
-            binding.tabColor,
-            binding.tabDetail,
-            binding.tabPortrait
+        EditorCategoryTabs.bindComingSoon(
+            this,
+            listOf(
+                binding.tabPreset,
+                binding.tabGeometry,
+                binding.tabColor,
+                binding.tabDetail,
+                binding.tabPortrait
+            )
         )
-        upcomingTabs.forEach { tab ->
-            tab.setOnClickListener {
-                Toast.makeText(this, R.string.editor_tool_coming_soon, Toast.LENGTH_SHORT).show()
-            }
-        }
         updateControlsUi()
     }
 
     private fun loadInitialPhotoAndEditState() {
         lifecycleScope.launch {
-            val (loadedGraph, bmp, proxy) = withContext(Dispatchers.IO) {
-                val existingRecord = EditorHostRegistry.editStore?.getEditForPhoto(photoId)
-                val graph = existingRecord?.graphJson?.let { json ->
-                    EditGraphJsonCodec.decode(json) ?: run {
-                        Timber.w("Corrupt EditGraph JSON for photoId=%d; resetting to neutral", photoId)
-                        EditGraph()
-                    }
-                } ?: EditGraph()
-                val fullBmp = EditorBitmapLoader.loadUprightPreviewBitmap(sourcePath, isRaw)
-                val proxyBmp = fullBmp?.let { EditorGlRenderer.createProxyBitmap(it) }
-                Triple(graph, fullBmp, proxyBmp)
+            val loadedGraph = withContext(Dispatchers.IO) {
+                readPersistedGraph() to previewSession.loadSource(
+                    sourcePath = sourcePath,
+                    isRaw = isRaw,
+                    preferLinear = preferLinearSource
+                )
             }
-            if (bmp == null || proxy == null) {
+            if (loadedGraph.second == null) {
                 Toast.makeText(
                     this@EditorActivity,
                     R.string.editor_source_missing,
@@ -221,12 +188,30 @@ class EditorActivity : AppCompatActivity() {
                 finish()
                 return@launch
             }
-            fullPreviewBitmap = bmp
-            proxyPreviewBitmap = proxy
-            undoController.resetTo(loadedGraph)
-            renderer.setSourceBitmaps(bmp, proxy)
+            undoController.resetTo(loadedGraph.first)
             applyGraphToRendererAndUi(undoController.currentGraph)
         }
+    }
+
+    private suspend fun readPersistedGraph(): EditGraph {
+        val existingRecord = EditorHostRegistry.editStore?.getEditForPhoto(photoId)
+        return existingRecord?.graphJson?.let { json ->
+            EditGraphJsonCodec.decode(json) ?: run {
+                Timber.w("Corrupt EditGraph JSON for photoId=%d; resetting to neutral", photoId)
+                EditGraph()
+            }
+        } ?: EditGraph()
+    }
+
+    private fun selectBaseLook(baseLook: BaseLook) {
+        val current = undoController.currentGraph
+        if (current.baseLook == baseLook) return
+        undoController.onParameterDrag(
+            current.copy(baseLook = baseLook),
+            EditParameterKey.BASE_LOOK
+        )
+        undoController.onParameterRelease()
+        applyGraphToRendererAndUi(undoController.currentGraph)
     }
 
     private fun resetExposureToZero() {
@@ -239,8 +224,7 @@ class EditorActivity : AppCompatActivity() {
     }
 
     private fun applyGraphToRendererAndUi(graph: EditGraph) {
-        renderer.useFastProxy = false
-        renderer.exposureEv = graph.tone.exposure
+        previewSession.applyGraph(graph)
         binding.dialSeekBar.setValue(graph.tone.exposure, notify = false)
         binding.glSurfaceView.requestRender()
         updateControlsUi()
@@ -253,7 +237,8 @@ class EditorActivity : AppCompatActivity() {
     }
 
     private fun updateControlsUi() {
-        val exposure = undoController.currentGraph.tone.exposure
+        val graph = undoController.currentGraph
+        val exposure = graph.tone.exposure
         binding.activeValueText.text = String.format(
             Locale.US,
             getString(R.string.editor_exposure_value_fmt),
@@ -267,55 +252,32 @@ class EditorActivity : AppCompatActivity() {
         binding.btnRedo.isEnabled = undoController.canRedo
         binding.btnUndo.alpha = if (undoController.canUndo) 1.0f else 0.4f
         binding.btnRedo.alpha = if (undoController.canRedo) 1.0f else 0.4f
+        updateBaseLookPill(graph.baseLook)
+    }
+
+    /**
+     * The pill is only actionable when the staged source is 16-bit linear: an 8-bit RAW fallback
+     * already has the browse look baked into its texels, so switching the baseline would lie.
+     */
+    private fun updateBaseLookPill(baseLook: BaseLook) {
+        binding.baseLookToggle.visibility =
+            if (isRaw && previewSession.supportsBaseLook) View.VISIBLE else View.GONE
+        binding.baseLookToggle.setLook(baseLook)
     }
 
     private fun saveEditAndFinish() {
         binding.btnDone.isEnabled = false
         val finalGraph = undoController.currentGraph
-        val srcBitmap = fullPreviewBitmap
         lifecycleScope.launch {
-            withContext(Dispatchers.IO) {
-                val previewPath = if (!finalGraph.isIdentity() && srcBitmap != null) {
-                    PreviewCacheWriter.writePreviewCache(
-                        source = srcBitmap,
-                        exposureEv = finalGraph.tone.exposure,
-                        cacheDir = cacheDir,
-                        photoId = photoId
-                    )
-                } else {
-                    null
-                }
-                val store = EditorHostRegistry.editStore
-                if (store == null) {
-                    Timber.e("EditorHostRegistry.editStore is null; edit cannot be persisted")
-                } else {
-                    store.saveEditForPhoto(
-                        photoId = photoId,
-                        graph = finalGraph,
-                        previewCachePath = previewPath
-                    )
-                }
-            }
-            val resultIntent = Intent().apply {
-                putExtra(EXTRA_PHOTO_ID, photoId)
-                putExtra(EXTRA_SOURCE_PATH, sourcePath)
-            }
-            setResult(Activity.RESULT_OK, resultIntent)
+            withContext(Dispatchers.IO) { saveCoordinator.persist(finalGraph) }
+            setResult(Activity.RESULT_OK, resultIntent())
             finish()
         }
     }
 
-    private fun recyclePreviewBitmaps() {
-        val full = fullPreviewBitmap
-        val proxy = proxyPreviewBitmap
-        fullPreviewBitmap = null
-        proxyPreviewBitmap = null
-        if (proxy != null && proxy !== full && !proxy.isRecycled) {
-            proxy.recycle()
-        }
-        if (full != null && !full.isRecycled) {
-            full.recycle()
-        }
+    private fun resultIntent(): Intent = Intent().apply {
+        putExtra(EXTRA_PHOTO_ID, photoId)
+        putExtra(EXTRA_SOURCE_PATH, sourcePath)
     }
 
     companion object {

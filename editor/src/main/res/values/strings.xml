@@ -17,4 +17,8 @@
     <string name="editor_double_tap_reset_hint">双击标签重置</string>
     <string name="editor_tool_coming_soon">该工具组将在后续迭代开放</string>
     <string name="editor_source_missing">源文件已清理，请重新连接相机同步</string>
+    <string name="editor_base_look_label">RAW:</string>
+    <string name="editor_base_look_camera_default">默认观感</string>
+    <string name="editor_base_look_linear_neutral">线性中性</string>
+    <string name="editor_base_look_separator">|</string>
 </resources>

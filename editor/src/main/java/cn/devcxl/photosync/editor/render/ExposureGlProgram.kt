@@ -7,11 +7,32 @@ import java.nio.FloatBuffer
 import android.opengl.GLES20
 import timber.log.Timber
 
+import cn.devcxl.photosync.editor.domain.BaseLook
+
 /**
- * Compiles and executes the linear-light exposure and soft-shoulder GLSL shader program.
+ * Uniform bundle for a single preview draw.
+ */
+internal data class ExposureDrawParams(
+    val textureId: Int,
+    val exposureEv: Float,
+    val compareOriginal: Boolean,
+    val scaleX: Float,
+    val scaleY: Float,
+    val isLinearInput: Boolean,
+    val baseLook: BaseLook,
+    val autoBrightGain: Float
+)
+
+/**
+ * Compiles and executes the exposure + RAW base-look GLSL program.
  *
- * Uses `#version 300 es` when [preferEs3] is true, and falls back to `#version 100` with
- * identical piecewise sRGB and `tanh` soft-shoulder math if ES 3.0 is unavailable or fails.
+ * Two input flavours share one shader: sRGB texels (JPEG) are decoded before exposure, while
+ * `GL_RGBA16F` RAW texels are already scene-linear so they only receive the auto-bright gain.
+ * With [BaseLook.CAMERA_DEFAULT] the shader reproduces the browse-page tone curve and vibrance
+ * (`camera_default`), so a zero-parameter edit looks identical to the gallery decode.
+ *
+ * Uses `#version 300 es` when [init] is called with ES 3.0 enabled and falls back to
+ * `#version 100` with the same piecewise sRGB, soft-shoulder and base-look math.
  */
 internal class ExposureGlProgram {
 
@@ -22,6 +43,9 @@ internal class ExposureGlProgram {
     private var uExposureEvLoc: Int = -1
     private var uCompareOriginalLoc: Int = -1
     private var uScaleLoc: Int = -1
+    private var uIsLinearInputLoc: Int = -1
+    private var uBaseLookLoc: Int = -1
+    private var uAutoBrightGainLoc: Int = -1
 
     private val quadBuffer: FloatBuffer = ByteBuffer
         .allocateDirect(QUAD_VERTICES.size * 4)
@@ -34,7 +58,10 @@ internal class ExposureGlProgram {
 
     fun init(preferEs3: Boolean = true) {
         programId = if (preferEs3) {
-            buildProgram(VERTEX_SHADER_ES3, FRAGMENT_SHADER_ES3).also { id ->
+            buildProgram(
+                ExposureShaderSources.VERTEX_SHADER_ES3,
+                ExposureShaderSources.FRAGMENT_SHADER_ES3
+            ).also { id ->
                 if (id == 0) {
                     Timber.w("GLES 3.0 shader compile failed; falling back to GLES 2.0 shader")
                 }
@@ -43,7 +70,10 @@ internal class ExposureGlProgram {
             0
         }
         if (programId == 0) {
-            programId = buildProgram(VERTEX_SHADER_ES2, FRAGMENT_SHADER_ES2)
+            programId = buildProgram(
+                ExposureShaderSources.VERTEX_SHADER_ES2,
+                ExposureShaderSources.FRAGMENT_SHADER_ES2
+            )
         }
         if (programId == 0) {
             Timber.e("Failed to compile both GLES 3.0 and fallback exposure shaders")
@@ -55,24 +85,27 @@ internal class ExposureGlProgram {
         uExposureEvLoc = GLES20.glGetUniformLocation(programId, "uExposureEv")
         uCompareOriginalLoc = GLES20.glGetUniformLocation(programId, "uCompareOriginal")
         uScaleLoc = GLES20.glGetUniformLocation(programId, "uScale")
+        uIsLinearInputLoc = GLES20.glGetUniformLocation(programId, "uIsLinearInput")
+        uBaseLookLoc = GLES20.glGetUniformLocation(programId, "uBaseLook")
+        uAutoBrightGainLoc = GLES20.glGetUniformLocation(programId, "uAutoBrightGain")
     }
 
-    fun draw(
-        textureId: Int,
-        exposureEv: Float,
-        compareOriginal: Boolean,
-        scaleX: Float,
-        scaleY: Float
-    ) {
-        if (programId == 0 || textureId == 0) return
+    fun draw(params: ExposureDrawParams) {
+        if (programId == 0 || params.textureId == 0) return
         GLES20.glUseProgram(programId)
 
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, textureId)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, params.textureId)
         GLES20.glUniform1i(uTextureLoc, 0)
-        GLES20.glUniform1f(uExposureEvLoc, exposureEv)
-        GLES20.glUniform1i(uCompareOriginalLoc, if (compareOriginal) 1 else 0)
-        GLES20.glUniform2f(uScaleLoc, scaleX, scaleY)
+        GLES20.glUniform1f(uExposureEvLoc, params.exposureEv)
+        GLES20.glUniform1i(uCompareOriginalLoc, if (params.compareOriginal) 1 else 0)
+        GLES20.glUniform2f(uScaleLoc, params.scaleX, params.scaleY)
+        GLES20.glUniform1i(uIsLinearInputLoc, if (params.isLinearInput) 1 else 0)
+        GLES20.glUniform1i(
+            uBaseLookLoc,
+            if (params.baseLook == BaseLook.CAMERA_DEFAULT) 1 else 0
+        )
+        GLES20.glUniform1f(uAutoBrightGainLoc, params.autoBrightGain)
 
         quadBuffer.position(0)
         GLES20.glEnableVertexAttribArray(aPositionLoc)
@@ -137,115 +170,5 @@ internal class ExposureGlProgram {
             -1.0f,  1.0f, 0.0f, 0.0f,
              1.0f,  1.0f, 1.0f, 0.0f
         )
-
-        private val VERTEX_SHADER_ES3 = """
-            #version 300 es
-            in vec2 aPosition;
-            in vec2 aTexCoord;
-            uniform vec2 uScale;
-            out vec2 vTexCoord;
-            void main() {
-                gl_Position = vec4(aPosition * uScale, 0.0, 1.0);
-                vTexCoord = aTexCoord;
-            }
-        """.trimIndent()
-
-        private val FRAGMENT_SHADER_ES3 = """
-            #version 300 es
-            precision highp float;
-            in vec2 vTexCoord;
-            uniform sampler2D uTex0;
-            uniform float uExposureEv;
-            uniform int uCompareOriginal;
-            out vec4 fragColor;
-
-            vec3 decodeSrgb(vec3 c) {
-                vec3 lo = c / 12.92;
-                vec3 hi = pow((c + 0.055) / 1.055, vec3(2.4));
-                return mix(lo, hi, step(vec3(0.04045), c));
-            }
-
-            vec3 encodeSrgb(vec3 c) {
-                vec3 lo = c * 12.92;
-                vec3 hi = 1.055 * pow(max(c, vec3(0.0)), vec3(1.0 / 2.4)) - 0.055;
-                return mix(lo, hi, step(vec3(0.0031308), c));
-            }
-
-            vec3 softShoulder(vec3 c) {
-                const float t0 = 0.85;
-                const float span = 0.15;
-                vec3 over = max(c - vec3(t0), vec3(0.0)) / span;
-                vec3 rolled = vec3(t0) + span * tanh(over);
-                return mix(c, rolled, step(vec3(t0), c));
-            }
-
-            void main() {
-                vec4 src = texture(uTex0, vTexCoord);
-                if (uCompareOriginal == 1 || abs(uExposureEv) < 0.0001) {
-                    fragColor = src;
-                    return;
-                }
-                vec3 lin = decodeSrgb(src.rgb) * exp2(uExposureEv);
-                vec3 rolled = softShoulder(max(lin, vec3(0.0)));
-                vec3 outSrgb = clamp(encodeSrgb(rolled), 0.0, 1.0);
-                fragColor = vec4(outSrgb, src.a);
-            }
-        """.trimIndent()
-
-        private val VERTEX_SHADER_ES2 = """
-            attribute vec2 aPosition;
-            attribute vec2 aTexCoord;
-            uniform vec2 uScale;
-            varying vec2 vTexCoord;
-            void main() {
-                gl_Position = vec4(aPosition * uScale, 0.0, 1.0);
-                vTexCoord = aTexCoord;
-            }
-        """.trimIndent()
-
-        private val FRAGMENT_SHADER_ES2 = """
-            precision highp float;
-            varying vec2 vTexCoord;
-            uniform sampler2D uTex0;
-            uniform float uExposureEv;
-            uniform int uCompareOriginal;
-
-            vec3 decodeSrgb(vec3 c) {
-                vec3 lo = c / 12.92;
-                vec3 hi = pow((c + 0.055) / 1.055, vec3(2.4));
-                return mix(lo, hi, step(vec3(0.04045), c));
-            }
-
-            vec3 encodeSrgb(vec3 c) {
-                vec3 lo = c * 12.92;
-                vec3 hi = 1.055 * pow(max(c, vec3(0.0)), vec3(1.0 / 2.4)) - 0.055;
-                return mix(lo, hi, step(vec3(0.0031308), c));
-            }
-
-            vec3 tanhApprox(vec3 x) {
-                vec3 e2 = exp(clamp(2.0 * x, vec3(-20.0), vec3(20.0)));
-                return (e2 - vec3(1.0)) / (e2 + vec3(1.0));
-            }
-
-            vec3 softShoulder(vec3 c) {
-                float t0 = 0.85;
-                float span = 0.15;
-                vec3 over = max(c - vec3(t0), vec3(0.0)) / span;
-                vec3 rolled = vec3(t0) + span * tanhApprox(over);
-                return mix(c, rolled, step(vec3(t0), c));
-            }
-
-            void main() {
-                vec4 src = texture2D(uTex0, vTexCoord);
-                if (uCompareOriginal == 1 || abs(uExposureEv) < 0.0001) {
-                    gl_FragColor = src;
-                    return;
-                }
-                vec3 lin = decodeSrgb(src.rgb) * pow(2.0, uExposureEv);
-                vec3 rolled = softShoulder(max(lin, vec3(0.0)));
-                vec3 outSrgb = clamp(encodeSrgb(rolled), 0.0, 1.0);
-                gl_FragColor = vec4(outSrgb, src.a);
-            }
-        """.trimIndent()
     }
 }

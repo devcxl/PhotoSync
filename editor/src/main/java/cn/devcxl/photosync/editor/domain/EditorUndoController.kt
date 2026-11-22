@@ -4,7 +4,8 @@ package cn.devcxl.photosync.editor.domain
  * Typed parameter keys for [EditorUndoController] coalescing windows.
  */
 enum class EditParameterKey {
-    TONE_EXPOSURE
+    TONE_EXPOSURE,
+    BASE_LOOK
 }
 
 /**
