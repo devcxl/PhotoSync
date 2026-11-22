@@ -3,12 +3,9 @@ package cn.devcxl.photosync.editor.render
 /**
  * GLSL ES sources for [ExposureGlProgram].
  *
- * The ES 3.00 and ES 1.00 variants intentionally implement identical math: sRGB transfer
- * functions, the broadband `camera_default` base look transcribed from
- * `libraw/src/main/cpp/raw_postprocess.cpp`, and the Pass B upper half (D65-anchored Bradford
- * white balance, linear exposure / brightness / highlight trims, soft shoulder, blacks toe,
- * piecewise contrast and the first two Ambiance Glow terms). The same math lives in
- * `ToneShaderMath` for the CPU preview cache; keep the two in lock-step when editing either side.
+ * The ES 3.00 and ES 1.00 variants implement identical math: sRGB transfer functions, the broadband
+ * `camera_default` base look, Pass B1 (`ToneShaderMath`), and Pass B2 (`PassBColorMath` via
+ * [ColorShaderGlsl]). Keep both CPU references and GLSL in lock-step when editing either side.
  */
 internal object ExposureShaderSources {
 
@@ -87,9 +84,7 @@ internal object ExposureShaderSources {
         }
     """.trimIndent()
 
-    /**
-     * Pass B upper half. Mirrors `ToneShaderMath` stage for stage; the constants must not drift.
-     */
+    /** Pass B upper half. Mirrors `ToneShaderMath` stage for stage. */
     private val TONE_GLSL = """
         const vec3 LUMA_WEIGHTS = vec3(0.2126, 0.7152, 0.0722);
 
@@ -115,8 +110,6 @@ internal object ExposureShaderSources {
             return exp(-0.5 * ratio * ratio);
         }
 
-        // Linear stage: white balance -> exposure -> middle-gray brightness -> highlight trims.
-        // Every trim runs before the [0, 1] clip so negative values still see Y > 1 headroom.
         vec3 toneLinear(vec3 c) {
             if (uHasWb == 1) {
                 c = uWb * c;
@@ -135,7 +128,6 @@ internal object ExposureShaderSources {
             return c;
         }
 
-        // Display stage: shoulder, sRGB encode, blacks toe, piecewise contrast, glow stages 1-2.
         float displayLuminance(float linearLuminance) {
             float y = encodeSrgbScalar(softShoulder(linearLuminance));
             y = y + 0.18 * uBlacks * y * (1.0 - y) * (1.0 - y);
@@ -152,8 +144,6 @@ internal object ExposureShaderSources {
             return clamp(glow, 0.0, 1.0);
         }
 
-        // Hue-preserving recombine: scale by the new luminance, then compress over-range channels
-        // towards the luminance so a lifted saturated shadow desaturates instead of hue-shifting.
         vec3 toneDisplay(vec3 linearRgb) {
             float y = max(luminance(linearRgb), 0.0);
             float display = displayLuminance(y);
@@ -167,10 +157,7 @@ internal object ExposureShaderSources {
         }
     """.trimIndent()
 
-    val FRAGMENT_SHADER_ES3 = """
-        #version 300 es
-        precision highp float;
-        in vec2 vTexCoord;
+    private val COMMON_UNIFORMS = """
         uniform sampler2D uTex0;
         uniform int uCompareOriginal;
         uniform int uIsLinearInput;
@@ -187,74 +174,79 @@ internal object ExposureShaderSources {
         uniform float uShadows;
         uniform float uWhites;
         uniform float uBlacks;
+        ${ColorShaderGlsl.UNIFORMS}
+    """.trimIndent()
+
+    val FRAGMENT_SHADER_ES3 = """
+        #version 300 es
+        precision highp float;
+        in vec2 vTexCoord;
         out vec4 fragColor;
+        $COMMON_UNIFORMS
 
         float softTanh(float x) {
             return tanh(x);
         }
 
+        vec4 sampleTex2D(sampler2D s, vec2 uv) {
+            return texture(s, uv);
+        }
+
         $SRGB_GLSL
         $CAMERA_DEFAULT_GLSL
         $TONE_GLSL
+        ${ColorShaderGlsl.FUNCTIONS}
 
         void main() {
             vec4 src = texture(uTex0, vTexCoord);
-            vec3 linear;
-            if (uIsLinearInput == 1) {
-                linear = applyBaseLook(max(src.rgb, vec3(0.0)) * uAutoBrightGain);
-            } else {
-                linear = decodeSrgb(src.rgb);
-            }
-            if (uCompareOriginal == 1 || uToneActive == 0) {
+            vec3 linear = (uIsLinearInput == 1)
+                ? applyBaseLook(max(src.rgb, vec3(0.0)) * uAutoBrightGain)
+                : decodeSrgb(src.rgb);
+            if (uCompareOriginal == 1 || (uToneActive == 0 && uPassB2Active == 0)) {
                 fragColor = vec4(encodeSrgb(linear), src.a);
                 return;
             }
-            fragColor = vec4(toneDisplay(toneLinear(linear)), src.a);
+            vec3 srgb = (uToneActive == 1) ? toneDisplay(toneLinear(linear)) : encodeSrgb(linear);
+            if (uPassB2Active == 1) {
+                srgb = applyColorGrading(srgb);
+            }
+            fragColor = vec4(srgb, src.a);
         }
     """.trimIndent()
 
     val FRAGMENT_SHADER_ES2 = """
         precision highp float;
         varying vec2 vTexCoord;
-        uniform sampler2D uTex0;
-        uniform int uCompareOriginal;
-        uniform int uIsLinearInput;
-        uniform int uBaseLook;
-        uniform float uAutoBrightGain;
-        uniform int uToneActive;
-        uniform int uHasWb;
-        uniform mat3 uWb;
-        uniform float uExposureEv;
-        uniform float uBrightness;
-        uniform float uContrast;
-        uniform float uGlow;
-        uniform float uHighlights;
-        uniform float uShadows;
-        uniform float uWhites;
-        uniform float uBlacks;
+        $COMMON_UNIFORMS
 
         float softTanh(float x) {
             float e2 = exp(clamp(2.0 * x, -20.0, 20.0));
             return (e2 - 1.0) / (e2 + 1.0);
         }
 
+        vec4 sampleTex2D(sampler2D s, vec2 uv) {
+            return texture2D(s, uv);
+        }
+
         $SRGB_GLSL
         $CAMERA_DEFAULT_GLSL
         $TONE_GLSL
+        ${ColorShaderGlsl.FUNCTIONS}
 
         void main() {
             vec4 src = texture2D(uTex0, vTexCoord);
-            vec3 linear;
-            if (uIsLinearInput == 1) {
-                linear = applyBaseLook(max(src.rgb, vec3(0.0)) * uAutoBrightGain);
-            } else {
-                linear = decodeSrgb(src.rgb);
-            }
-            if (uCompareOriginal == 1 || uToneActive == 0) {
+            vec3 linear = (uIsLinearInput == 1)
+                ? applyBaseLook(max(src.rgb, vec3(0.0)) * uAutoBrightGain)
+                : decodeSrgb(src.rgb);
+            if (uCompareOriginal == 1 || (uToneActive == 0 && uPassB2Active == 0)) {
                 gl_FragColor = vec4(encodeSrgb(linear), src.a);
                 return;
             }
-            gl_FragColor = vec4(toneDisplay(toneLinear(linear)), src.a);
+            vec3 srgb = (uToneActive == 1) ? toneDisplay(toneLinear(linear)) : encodeSrgb(linear);
+            if (uPassB2Active == 1) {
+                srgb = applyColorGrading(srgb);
+            }
+            gl_FragColor = vec4(srgb, src.a);
         }
     """.trimIndent()
 }

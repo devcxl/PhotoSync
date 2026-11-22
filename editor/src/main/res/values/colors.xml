@@ -15,4 +15,16 @@
     <color name="editor_crop_scrim">#A6000000</color>
     <color name="editor_overlay_line">#E6F4F5F7</color>
     <color name="editor_overlay_grid">#59F4F5F7</color>
+    <color name="editor_curve_r">#EF4444</color>
+    <color name="editor_curve_g">#22C55E</color>
+    <color name="editor_curve_b">#3B82F6</color>
+    <color name="editor_curve_delete">#EF4444</color>
+    <color name="editor_hsl_red">#EF4444</color>
+    <color name="editor_hsl_orange">#F97316</color>
+    <color name="editor_hsl_yellow">#EAB308</color>
+    <color name="editor_hsl_green">#22C55E</color>
+    <color name="editor_hsl_aqua">#06B6D4</color>
+    <color name="editor_hsl_blue">#3B82F6</color>
+    <color name="editor_hsl_purple">#A855F7</color>
+    <color name="editor_hsl_magenta">#EC4899</color>
 </resources>

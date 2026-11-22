@@ -195,6 +195,10 @@
             android:layout_height="40dp"
             android:layout_marginTop="4dp" />
 
+        <include
+            android:id="@+id/colorPanels"
+            layout="@layout/editor_color_panels" />
+
         <!-- Tier 2: Sub-tool chip row -->
         <HorizontalScrollView
             android:layout_width="match_parent"

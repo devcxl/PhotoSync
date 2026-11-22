@@ -22,6 +22,22 @@ internal class EditorSourceTextures {
     fun activeTexture(useFastProxy: Boolean): Int =
         if (useFastProxy && proxyTextureId != 0) proxyTextureId else fullTextureId
 
+    /** Pixel dimensions of the texture selected by [activeTexture]. */
+    fun activeDimensions(useFastProxy: Boolean): Pair<Int, Int> {
+        val source = staged ?: return 1 to 1
+        val usingProxy = useFastProxy && proxyTextureId != 0
+        return when (source) {
+            is EditorSource.BitmapSource -> {
+                val bmp = if (usingProxy) source.proxy else source.full
+                bmp.width.coerceAtLeast(1) to bmp.height.coerceAtLeast(1)
+            }
+            is EditorSource.LinearRawSource -> {
+                val buf = if (usingProxy) source.proxy else source.full
+                buf.width.coerceAtLeast(1) to buf.height.coerceAtLeast(1)
+            }
+        }
+    }
+
     /** Stages [source] for upload on the next frame. */
     fun stage(source: EditorSource) {
         staged = source

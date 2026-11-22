@@ -8,6 +8,7 @@ import android.opengl.GLSurfaceView
 import timber.log.Timber
 
 import cn.devcxl.photosync.editor.domain.BaseLook
+import cn.devcxl.photosync.editor.domain.ColorGradingParams
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.GeometryMath
 import cn.devcxl.photosync.editor.domain.LiquifyMesh
@@ -15,10 +16,11 @@ import cn.devcxl.photosync.editor.domain.ToneShaderParams
 
 /**
  * Immutable snapshot of all per-frame render uniforms so the GL thread never observes a torn
- * combination of homography, output aspect ratio, CA coefficients, liquify warp and tone parameters.
+ * combination of geometry, liquify warp, Pass B1 tone and Pass B2 display color parameters.
  */
 internal data class RenderFrameState(
     val toneParams: ToneShaderParams = ToneShaderParams(),
+    val colorParams: ColorGradingParams = ColorGradingParams(),
     val baseLook: BaseLook = BaseLook.CAMERA_DEFAULT,
     val useFastProxy: Boolean = false,
     val geometryActive: Boolean = false,
@@ -37,9 +39,7 @@ internal data class RenderFrameState(
     }
 }
 
-/**
- * Immutable snapshot of canvas pan/zoom transforms.
- */
+/** Immutable snapshot of canvas pan/zoom transforms. */
 internal data class CanvasViewportTransform(
     val scale: Float = 1.0f,
     val offsetX: Float = 0.0f,
@@ -47,15 +47,8 @@ internal data class CanvasViewportTransform(
 )
 
 /**
- * GLES 3.0 renderer for the editor preview canvas.
- *
- * Runs the physical two-pass preview pipeline:
- * 1. **Pass A** ([GeometryCaGlProgram]) renders the upright source (`GL_RGBA16F` for RAW,
- *    `GL_RGBA8` for JPEG) through `H^-1` and the liquify `uWarpTex` into an offscreen target sized
- *    to the cropped aspect ratio, applying aspect-corrected circular pre-crop lateral CA resampling.
- * 2. **Pass B** ([ExposureGlProgram]) applies RAW `BaseLook` compensation, the D65-anchored
- *    Bradford white balance, linear exposure / brightness / highlight trims, the soft-shoulder
- *    roll-off, display-domain blacks / contrast / glow, and canvas pan/zoom.
+ * GLES 3.0 renderer for the editor preview canvas (Pass A geometry/liquify/lateral CA + Pass B
+ * tone, curve LUT, OKLCH saturation/vibrance/HSL, OKLab split toning, defringe and fade).
  */
 internal class EditorGlRenderer : GLSurfaceView.Renderer {
 
@@ -64,37 +57,22 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
     private val geometryTarget = PassAFrameBuffer()
     private val textures = EditorSourceTextures()
     private val warpTexture = LiquifyWarpTexture()
+    private val curveLutTexture = CurveLutTexture()
 
     private var viewportWidth: Int = 1
     private var viewportHeight: Int = 1
     private var geometryFallbackLogged: Boolean = false
 
-    @Volatile
-    private var imageWidth: Int = 1
+    @Volatile private var imageWidth: Int = 1
+    @Volatile private var imageHeight: Int = 1
+    @Volatile private var linearInput: Boolean = false
+    @Volatile private var autoBrightGain: Float = 1.0f
+    @Volatile private var stagedSource: EditorSource? = null
 
-    @Volatile
-    private var imageHeight: Int = 1
-
-    @Volatile
-    private var linearInput: Boolean = false
-
-    @Volatile
-    private var autoBrightGain: Float = 1.0f
-
-    @Volatile
-    private var stagedSource: EditorSource? = null
-
-    @Volatile
-    var preferEs3: Boolean = true
-
-    @Volatile
-    var compareOriginal: Boolean = false
-
-    @Volatile
-    var frameState: RenderFrameState = RenderFrameState()
-
-    @Volatile
-    var canvasTransform: CanvasViewportTransform = CanvasViewportTransform()
+    @Volatile var preferEs3: Boolean = true
+    @Volatile var compareOriginal: Boolean = false
+    @Volatile var frameState: RenderFrameState = RenderFrameState()
+    @Volatile var canvasTransform: CanvasViewportTransform = CanvasViewportTransform()
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         GLES20.glClearColor(0.0f, 0.0f, 0.0f, 1.0f)
@@ -103,9 +81,9 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
         geometryTarget.resetDisableFlag()
         geometryFallbackLogged = false
         warpTexture.invalidate()
+        curveLutTexture.invalidate()
         textures.invalidateContext()
-        val source = stagedSource
-        applySourceMetadata(source)
+        applySourceMetadata(stagedSource)
         if (preferEs3) {
             PassAFrameBuffer.cacheCapabilities()
             geometryProgram.init()
@@ -123,6 +101,7 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
         if (warpTexture.uploadIfNeeded()) {
             frameState = frameState.copy(liquifyWarp = false)
         }
+        curveLutTexture.uploadIfNeeded(preferEs3)
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
 
         val state = frameState
@@ -130,79 +109,55 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
         val activeTexture = textures.activeTexture(state.useFastProxy)
         if (activeTexture == 0) return
 
+        val (srcW, srcH) = textures.activeDimensions(state.useFastProxy)
         if (compareOriginal) {
-            drawExposure(
-                textureId = activeTexture,
-                state = state,
-                viewport = viewport,
-                comparingOriginal = true,
-                aspect = sourceAspect(),
-                inputIsLinear = linearInput
-            )
+            drawExposure(activeTexture, state, viewport, true, sourceAspect(), linearInput, srcW, srcH)
             return
         }
         if (drawGeometryPass(activeTexture, state, viewport)) return
-        drawExposure(
-            textureId = activeTexture,
-            state = state,
-            viewport = viewport,
-            comparingOriginal = false,
-            aspect = sourceAspect(),
-            inputIsLinear = linearInput
-        )
+        drawExposure(activeTexture, state, viewport, false, sourceAspect(), linearInput, srcW, srcH)
     }
 
-    /**
-     * Stages [source] for upload on the GL thread and adopts its dimensions and gain metadata.
-     */
+    /** Stages [source] for upload on the GL thread and adopts its dimensions and gain metadata. */
     fun setSource(source: EditorSource) {
         stagedSource = source
         textures.stage(source)
         applySourceMetadata(source)
     }
 
-    /**
-     * Clears staged source references when the hosting activity is destroyed.
-     */
+    /** Clears staged source references when the hosting activity is destroyed. */
     fun releaseSource() {
         stagedSource = null
         textures.clear()
     }
 
-    /**
-     * Stages the liquify displacement grid for the next frame.
-     */
+    /** Stages the liquify displacement grid for the next frame. */
     fun setLiquifyMesh(mesh: LiquifyMesh?) {
         warpTexture.stage(mesh)
         frameState = frameState.copy(liquifyWarp = warpTexture.isWarpActive)
     }
 
-    /**
-     * Width/height ratio of the upright source texture, used when geometry is neutral.
-     */
+    /** Width/height ratio of the upright source texture, used when geometry is neutral. */
     fun sourceAspect(): Float = imageWidth.toFloat() / imageHeight.toFloat()
 
-    /**
-     * Atomically compiles and publishes all render parameters for [graph].
-     */
+    /** Atomically compiles and publishes all render parameters for [graph]. */
     fun applyState(graph: EditGraph, useFastProxy: Boolean) {
         val aspect = sourceAspect()
         val geometry = graph.geometry
         val aberration = graph.effects.ca
         val liquifyWarp = warpTexture.isWarpActive
-        val geometryActive = !geometry.isIdentity() || !aberration.isIdentity() || liquifyWarp
-        val outputAspect = if (geometryActive) {
-            GeometryMath.outputAspect(geometry, aspect)
-        } else {
-            aspect
-        }
+        val geometryActive = !geometry.isIdentity() || aberration.redCyan != 0 ||
+            aberration.blueYellow != 0 || liquifyWarp
+        val outputAspect = if (geometryActive) GeometryMath.outputAspect(geometry, aspect) else aspect
         val inverseMatrix = if (geometryActive) {
             GeometryMath.buildPassAInverseMatrix(geometry, aspect).toColumnMajorFloatArray()
         } else {
             RenderFrameState.IDENTITY_MATRIX
         }
+        curveLutTexture.stage(graph.color.curve)
         frameState = RenderFrameState(
             toneParams = ToneShaderParams.from(graph),
+            colorParams = ColorGradingParams.from(graph),
             baseLook = graph.baseLook,
             useFastProxy = useFastProxy,
             geometryActive = geometryActive,
@@ -268,7 +223,9 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
             viewport = viewport,
             comparingOriginal = false,
             aspect = aspect,
-            inputIsLinear = linearInput && geometryTarget.isHalfFloatTarget
+            inputIsLinear = linearInput && geometryTarget.isHalfFloatTarget,
+            texelWidth = geometryTarget.width,
+            texelHeight = geometryTarget.height
         )
         return true
     }
@@ -279,7 +236,9 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
         viewport: CanvasViewportTransform,
         comparingOriginal: Boolean,
         aspect: Float,
-        inputIsLinear: Boolean
+        inputIsLinear: Boolean,
+        texelWidth: Int,
+        texelHeight: Int
     ) {
         val (scaleX, scaleY) = computeLetterboxScale(aspect, viewport.scale)
         exposureProgram.draw(
@@ -293,7 +252,11 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
                 isLinearInput = inputIsLinear,
                 baseLook = state.baseLook,
                 autoBrightGain = autoBrightGain,
-                toneParams = state.toneParams
+                toneParams = state.toneParams,
+                colorParams = state.colorParams,
+                curveTextureId = curveLutTexture.textureId,
+                texelWidth = texelWidth,
+                texelHeight = texelHeight
             )
         )
     }

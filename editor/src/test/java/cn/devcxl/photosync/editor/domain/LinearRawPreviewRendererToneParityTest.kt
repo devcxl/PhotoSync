@@ -130,8 +130,10 @@ class LinearRawPreviewRendererToneParityTest {
                 linear[channel] = (sample[channel] * gain).coerceAtLeast(0.0f)
             }
         }
+        val colorParams = ColorGradingParams.from(graph)
+        val curveLut = if (colorParams.hasCurve) CurveLutBuilder.buildFloatLut(graph.color.curve) else null
         val out = FloatArray(3)
-        ToneShaderMath.apply(params, linear, out)
+        PassBColorMath.apply(params, colorParams, curveLut, linear, out)
         return out
     }
 
@@ -163,6 +165,36 @@ class LinearRawPreviewRendererToneParityTest {
             "Recovered highlight (${redOf(rescued[1])}) must exceed recovered diffuse white (${redOf(rescued[0])})",
             redOf(rescued[1]) > redOf(rescued[0])
         )
+    }
+
+    @Test
+    fun shouldMatchPassBColorMath_whenCurveVibranceHslSplitAndFadeAreCombined() {
+        val source = gradientBuffer(SIZE)
+        val graph = EditGraph(
+            baseLook = BaseLook.LINEAR_NEUTRAL,
+            color = ColorOps(
+                saturation = 15,
+                vibrance = 35,
+                hsl = HslOps(blue = HslBandShift(hue = 10, saturation = 20, luminance = -15)),
+                curve = CurveOps(
+                    rgb = listOf(CurvePoint(0.0f, 0.0f), CurvePoint(0.5f, 0.58f), CurvePoint(1.0f, 1.0f))
+                ),
+                split = SplitToningOps(hiHue = 45, hiSat = 25, shHue = 210, shSat = 20, balance = 10),
+                fade = 20
+            )
+        )
+        val pixels = LinearRawPreviewRenderer.renderArgb(source, graph)
+        val params = ToneShaderParams.from(graph)
+        val sample = FloatArray(4)
+        for (index in pixels.indices) {
+            source.readPixel(index, sample)
+            assertPixelMatches(
+                "passB2",
+                index,
+                referenceDisplay(sample, source.autoBrightGain, graph, params),
+                pixels[index]
+            )
+        }
     }
 
     private fun assertPixelMatches(context: String, index: Int, reference: FloatArray, pixel: Int) {

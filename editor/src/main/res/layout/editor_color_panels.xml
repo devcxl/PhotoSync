@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/colorPanelsRoot"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="4dp"
+    android:visibility="gone">
+
+    <cn.devcxl.photosync.editor.ui.widgets.CurveEditorView
+        android:id="@+id/curveEditorView"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:visibility="gone" />
+
+    <cn.devcxl.photosync.editor.ui.widgets.HslPanelView
+        android:id="@+id/hslPanelView"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:visibility="gone" />
+
+    <cn.devcxl.photosync.editor.ui.widgets.SplitToningPanelView
+        android:id="@+id/splitToningPanelView"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:visibility="gone" />
+
+</FrameLayout>

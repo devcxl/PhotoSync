@@ -24,12 +24,8 @@ import cn.devcxl.photosync.editor.ui.widgets.DialSeekBar
 
 /**
  * Binds the three-tier bottom drawer to the edit graph: six category tabs, the sub-tool chips of the
- * active category, the tier-1 control block, the crop aspect-ratio lock chips and the value read-out.
- *
- * Every interaction funnels through [EditorUndoController], so a continuous drag coalesces into a
- * single undo step per [EditParameterKey] and the host only re-renders what changed. The liquify
- * control block is delegated to [LiquifyBrushPanelController] and the aspect chips to
- * [CropAspectChipRow].
+ * active category, the tier-1 control slot (`DialSeekBar`, `CurveEditorView`, `HslPanelView`,
+ * `SplitToningPanelView` or `LiquifyBrushPanel`), the crop aspect chips and the value read-out.
  */
 internal class EditorPanelController(
     private val context: Context,
@@ -38,26 +34,13 @@ internal class EditorPanelController(
     private val host: Host
 ) {
 
-    /**
-     * Host callbacks that keep the preview canvas in sync with the drawer.
-     */
+    /** Host callbacks that keep the preview canvas in sync with the drawer. */
     interface Host {
-        /** The active sub-tool changed; the canvas overlay must follow. */
         fun onEditorToolChanged(tool: EditorTool)
-
-        /** The graph changed through a continuous drawer interaction. */
         fun onGraphEdited(graph: EditGraph, parameterKey: EditParameterKey)
-
-        /** A discrete edit that seals its own undo step. */
         fun onGraphCommitted(graph: EditGraph, parameterKey: EditParameterKey)
-
-        /** Width/height ratio of the frame the preview canvas is currently showing. */
         fun previewAspect(): Float
-
-        /** The liquify brush mode, size or strength changed. */
         fun onLiquifySettingsChanged(settings: LiquifyBrushSettings)
-
-        /** The user asked to clear every liquify displacement. */
         fun onLiquifyResetRequested()
     }
 
@@ -77,13 +60,22 @@ internal class EditorPanelController(
         context = context,
         binding = binding,
         host = object : LiquifyBrushPanelController.Host {
-            override fun onLiquifySettingsChanged(settings: LiquifyBrushSettings) {
+            override fun onLiquifySettingsChanged(settings: LiquifyBrushSettings) =
                 host.onLiquifySettingsChanged(settings)
-            }
 
-            override fun onLiquifyResetRequested() {
-                host.onLiquifyResetRequested()
-            }
+            override fun onLiquifyResetRequested() = host.onLiquifyResetRequested()
+        }
+    )
+    private val colorPanels = ColorPanelsBinder(
+        binding = binding,
+        undoController = undoController,
+        onEdited = { graph, key ->
+            refreshHeaderReadout(graph)
+            host.onGraphEdited(graph, key)
+        },
+        onCommitted = { graph, key ->
+            host.onGraphCommitted(graph, key)
+            refresh()
         }
     )
     private val aspectRow = CropAspectChipRow(context, binding, ::applyAspectPreset)
@@ -102,28 +94,24 @@ internal class EditorPanelController(
         tabViews.forEach { (group, view) -> view.setOnClickListener { selectGroup(group) } }
         setupDial()
         liquifyPanel.setVisible(false)
+        colorPanels.showFor(null)
         aspectRow.setVisible(false)
     }
 
-    /**
-     * Re-reads the graph and refreshes every chip state and read-out.
-     */
+    /** Re-reads the graph and refreshes every chip state, panel and read-out. */
     fun refresh() {
         val graph = undoController.currentGraph
         chipViews.forEach { (tool, view) -> bindChip(graph, tool, view) }
         dialTool?.let { tool ->
             EditorToolCatalog.specFor(tool)?.let { binding.dialSeekBar.setValue(it.readValue(graph)) }
         }
-        if (currentTool != EditorTool.NONE) {
-            binding.activeValueText.text = formatter.valueText(currentTool, graph, host.previewAspect())
-        }
+        colorPanels.refresh(graph)
+        refreshHeaderReadout(graph)
         aspectRow.setVisible(currentTool == EditorTool.CROP)
         aspectRow.refresh(lockedAspect, host.previewAspect())
     }
 
-    /**
-     * Selects a category tab and, when it has tools, its first sub-tool.
-     */
+    /** Selects a category tab and, when it has tools, its first sub-tool. */
     fun selectGroup(group: EditorGroup) {
         currentGroup = group
         tabViews.forEach { (candidate, view) -> bindTab(view, candidate == group) }
@@ -136,9 +124,7 @@ internal class EditorPanelController(
         selectTool(tools.first().tool, applyInstantAction = false)
     }
 
-    /**
-     * Selects a sub-tool, applying its one-tap action when [applyInstantAction] is true.
-     */
+    /** Selects a sub-tool, applying its one-tap action when [applyInstantAction] is true. */
     fun selectTool(tool: EditorTool, applyInstantAction: Boolean = true) {
         val spec = EditorToolCatalog.specFor(tool) ?: return
         currentTool = tool
@@ -152,9 +138,7 @@ internal class EditorPanelController(
         host.onEditorToolChanged(tool)
     }
 
-    /**
-     * Releases or installs the crop aspect lock and re-fits the crop rectangle.
-     */
+    /** Releases or installs the crop aspect lock and re-fits the crop rectangle. */
     fun applyAspectPreset(preset: CropAspectPreset) {
         val frameAspect = host.previewAspect().takeIf { it.isFinite() && it > 0.0f } ?: 1.0f
         val aspect = preset.aspectOf(frameAspect)
@@ -170,15 +154,21 @@ internal class EditorPanelController(
         refresh()
     }
 
+    private fun refreshHeaderReadout(graph: EditGraph) {
+        if (currentTool != EditorTool.NONE) {
+            binding.activeValueText.text = formatter.valueText(currentTool, graph, host.previewAspect())
+        }
+    }
+
     private fun enterUnavailableGroup(group: EditorGroup) {
         currentTool = EditorTool.NONE
         dialTool = null
         buildChips(emptyList())
         binding.dialSeekBar.visibility = View.GONE
         liquifyPanel.setVisible(false)
+        colorPanels.showFor(null)
         aspectRow.setVisible(false)
-        val tabLabel = tabViews[group]?.text
-        binding.activeToolLabel.text = tabLabel
+        binding.activeToolLabel.text = tabViews[group]?.text
         binding.activeValueText.setText(R.string.editor_tool_coming_soon)
         Toast.makeText(context, R.string.editor_tool_coming_soon, Toast.LENGTH_SHORT).show()
         host.onEditorToolChanged(EditorTool.NONE)
@@ -253,6 +243,7 @@ internal class EditorPanelController(
 
     private fun configureTierOneControl(spec: EditorToolSpec) {
         liquifyPanel.setVisible(spec.controlStyle == EditorControlStyle.LIQUIFY)
+        colorPanels.showFor(spec.controlStyle)
         val dial = spec.dial
         dialTool = if (dial == null) null else spec.tool
         if (dial == null) {

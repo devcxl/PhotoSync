@@ -40,11 +40,37 @@ class ToneColorToolCatalogTest {
     }
 
     @Test
-    fun shouldOfferTemperatureAndTint_whenColourGroupIsSelected() {
+    fun shouldOfferColorToolsInOrder_whenColourGroupIsSelected() {
         val tools = EditorToolCatalog.toolsFor(EditorGroup.COLOR).map { it.tool }
 
-        assertEquals(listOf(EditorTool.TEMPERATURE, EditorTool.TINT), tools)
+        assertEquals(
+            listOf(
+                EditorTool.TEMPERATURE,
+                EditorTool.TINT,
+                EditorTool.SATURATION,
+                EditorTool.VIBRANCE,
+                EditorTool.CURVE,
+                EditorTool.HSL,
+                EditorTool.SPLIT_TONING,
+                EditorTool.FADE
+            ),
+            tools
+        )
         assertEquals(EditorTool.TEMPERATURE, EditorToolCatalog.defaultToolFor(EditorGroup.COLOR))
+    }
+
+    @Test
+    fun shouldOfferCaAndDefringeTools_whenDetailGroupIsSelected() {
+        val tools = EditorToolCatalog.toolsFor(EditorGroup.DETAIL).map { it.tool }
+
+        assertEquals(
+            listOf(
+                EditorTool.DISPERSION_RED_CYAN,
+                EditorTool.DISPERSION_BLUE_YELLOW,
+                EditorTool.DEFRINGE
+            ),
+            tools
+        )
     }
 
     @Test
@@ -61,6 +87,12 @@ class ToneColorToolCatalogTest {
         assertTrue(keys.contains(EditParameterKey.TONE_BLACKS))
         assertTrue(keys.contains(EditParameterKey.COLOR_TEMP))
         assertTrue(keys.contains(EditParameterKey.COLOR_TINT))
+        assertTrue(keys.contains(EditParameterKey.COLOR_SATURATION))
+        assertTrue(keys.contains(EditParameterKey.COLOR_VIBRANCE))
+        assertTrue(keys.contains(EditParameterKey.COLOR_CURVE))
+        assertTrue(keys.contains(EditParameterKey.COLOR_HSL))
+        assertTrue(keys.contains(EditParameterKey.COLOR_SPLIT_TONING))
+        assertTrue(keys.contains(EditParameterKey.COLOR_FADE))
     }
 
     @Test
@@ -131,7 +163,7 @@ class ToneColorToolCatalogTest {
 
     @Test
     fun shouldRoundTripEverySliderThroughReadAfterWrite_whenInspectingCatalog() {
-        for (spec in toneAndColourSpecs()) {
+        for (spec in toneAndColourSpecs().filter { it.controlStyle == EditorControlStyle.DIAL }) {
             val written = spec.writeValue(EditGraph(), 37.0f)
 
             assertEquals(spec.tool.name, 37.0f, spec.readValue(written), 1e-4f)
@@ -148,7 +180,15 @@ class ToneColorToolCatalogTest {
         assertEquals(-5.0f, exposure.min, 1e-4f)
         assertEquals(5.0f, exposure.max, 1e-4f)
 
-        for (spec in toneAndColourSpecs().filter { it.tool != EditorTool.EXPOSURE }) {
+        val fade = EditorToolCatalog.specFor(EditorTool.FADE)!!.dial!!
+        assertEquals(0.0f, fade.min, 1e-4f)
+        assertEquals(100.0f, fade.max, 1e-4f)
+
+        for (spec in toneAndColourSpecs().filter {
+            it.controlStyle == EditorControlStyle.DIAL &&
+                it.tool != EditorTool.EXPOSURE &&
+                it.tool != EditorTool.FADE
+        }) {
             val dial = spec.dial
             assertNotNull("${spec.tool} must have a dial", dial)
             assertEquals("${spec.tool} min", -100.0f, dial!!.min, 1e-4f)

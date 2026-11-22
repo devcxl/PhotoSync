@@ -7,11 +7,14 @@ import kotlin.math.roundToInt
 import android.graphics.Bitmap
 
 import cn.devcxl.photosync.editor.contract.EditorCachePaths
+import cn.devcxl.photosync.editor.domain.ColorGradingParams
+import cn.devcxl.photosync.editor.domain.CurveLutBuilder
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.ExposureShaderMath
 import cn.devcxl.photosync.editor.domain.GeometryMath
 import cn.devcxl.photosync.editor.domain.LinearRawPreviewRenderer
 import cn.devcxl.photosync.editor.domain.LiquifyMesh
+import cn.devcxl.photosync.editor.domain.PassBColorMath
 import cn.devcxl.photosync.editor.domain.Srgb8Packer
 import cn.devcxl.photosync.editor.domain.ToneShaderMath
 import cn.devcxl.photosync.editor.domain.ToneShaderParams
@@ -59,7 +62,8 @@ internal object PreviewCacheWriter {
         val outputAspect = GeometryMath.outputAspect(graph.geometry, sourceAspect)
         val (outW, outH) = previewSize(outputAspect)
         val geometryActive = !graph.geometry.isIdentity() ||
-            !graph.effects.ca.isIdentity() ||
+            graph.effects.ca.redCyan != 0 ||
+            graph.effects.ca.blueYellow != 0 ||
             liquifyMesh != null
         val linearFrame = if (geometryActive) {
             val ca = graph.effects.ca
@@ -104,16 +108,31 @@ internal object PreviewCacheWriter {
             caBlueK = GeometryMath.lateralCaKFromSlider(ca.blueYellow),
             liquifyMesh = liquifyMesh
         )
-        applyToneToDisplayPixels(resampled, ToneShaderParams.from(graph))
+        applyPassBToDisplayPixels(resampled, graph)
         return resampled
     }
 
-    private fun applyToneToDisplayPixels(bitmap: Bitmap, params: ToneShaderParams) {
-        if (params.isIdentity) return
+    private fun applyPassBToDisplayPixels(bitmap: Bitmap, graph: EditGraph) {
+        val toneParams = ToneShaderParams.from(graph)
+        val colorParams = ColorGradingParams.from(graph)
+        if (toneParams.isIdentity && colorParams.isIdentity) return
+        val curveLut = if (colorParams.hasCurve) CurveLutBuilder.buildFloatLut(graph.color.curve) else null
         val width = bitmap.width
         val height = bitmap.height
         val pixels = IntArray(width * height)
         bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+        val lumaMap = if (colorParams.defringe > 0.0f) {
+            FloatArray(pixels.size) { i ->
+                val p = pixels[i]
+                ToneShaderMath.luminance(
+                    ((p ushr 16) and 0xFF) / 255.0f,
+                    ((p ushr 8) and 0xFF) / 255.0f,
+                    (p and 0xFF) / 255.0f
+                )
+            }
+        } else {
+            null
+        }
         val linear = FloatArray(CHANNELS_RGB)
         val display = FloatArray(CHANNELS_RGB)
         for (index in pixels.indices) {
@@ -121,7 +140,8 @@ internal object PreviewCacheWriter {
             linear[0] = ExposureShaderMath.decodeSrgb(((pixel ushr 16) and 0xFF) / 255.0f)
             linear[1] = ExposureShaderMath.decodeSrgb(((pixel ushr 8) and 0xFF) / 255.0f)
             linear[2] = ExposureShaderMath.decodeSrgb((pixel and 0xFF) / 255.0f)
-            ToneShaderMath.apply(params, linear, display)
+            val grad = lumaMap?.let { Srgb8Packer.neighborGradient(it, width, height, index) } ?: 0.0f
+            PassBColorMath.apply(toneParams, colorParams, curveLut, linear, display, grad)
             pixels[index] = Srgb8Packer.packRgb(
                 display[0],
                 display[1],

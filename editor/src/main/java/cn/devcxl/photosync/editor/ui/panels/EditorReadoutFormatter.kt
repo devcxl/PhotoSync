@@ -52,6 +52,27 @@ internal class EditorReadoutFormatter(private val context: Context) {
                     R.string.editor_value_liquify_none
                 }
             )
+            EditorTool.CURVE -> context.getString(
+                if (graph.color.curve.isIdentity()) {
+                    R.string.editor_value_curve_linear
+                } else {
+                    R.string.editor_value_curve_modified
+                }
+            )
+            EditorTool.HSL -> context.getString(
+                if (graph.color.hsl.isIdentity()) {
+                    R.string.editor_value_hsl_none
+                } else {
+                    R.string.editor_value_hsl_modified
+                }
+            )
+            EditorTool.SPLIT_TONING -> context.getString(
+                if (graph.color.split.isIdentity()) {
+                    R.string.editor_value_split_none
+                } else {
+                    R.string.editor_value_split_modified
+                }
+            )
             else -> ""
         }
     }

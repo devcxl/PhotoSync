@@ -72,7 +72,13 @@ class DialSeekBar @JvmOverloads constructor(
         val trackRight = (width - padX).coerceAtLeast(trackLeft + 1f)
         val trackWidth = trackRight - trackLeft
         val cy = height / 2f
-        val centerX = trackLeft + trackWidth * 0.5f
+        val hasNegativeRange = minValue < 0.0f && maxValue > 0.0f
+        val anchorFraction = if (hasNegativeRange) {
+            (-minValue / (maxValue - minValue)).coerceIn(0f, 1f)
+        } else {
+            0.0f
+        }
+        val anchorX = trackLeft + trackWidth * anchorFraction
 
         // 1. Draw 21 tick marks across the scale
         val tickCount = 20
@@ -82,13 +88,15 @@ class DialSeekBar @JvmOverloads constructor(
             canvas.drawLine(x, cy - halfH, x, cy + halfH, tickPaint)
         }
 
-        // 2. Draw bidirectional active fill bar from center zero to thumb X
+        // 2. Draw active fill bar from zero/left anchor to thumb X
         val fraction = ((currentValue - minValue) / (maxValue - minValue)).coerceIn(0f, 1f)
         val thumbX = trackLeft + trackWidth * fraction
-        canvas.drawLine(centerX, cy, thumbX, cy, fillPaint)
+        canvas.drawLine(anchorX, cy, thumbX, cy, fillPaint)
 
-        // 3. Draw center zero anchor pin
-        canvas.drawLine(centerX, cy - 11f * density, centerX, cy + 11f * density, zeroPinPaint)
+        // 3. Draw zero anchor pin only when zero sits inside the dial range
+        if (hasNegativeRange) {
+            canvas.drawLine(anchorX, cy - 11f * density, anchorX, cy + 11f * density, zeroPinPaint)
+        }
 
         // 4. Draw thumb circle
         canvas.drawCircle(thumbX, cy, 7.5f * density, thumbPaint)

@@ -24,7 +24,16 @@ internal enum class EditorControlStyle {
     CANVAS,
 
     /** The canvas owns the gesture and the tool needs its own brush control block. */
-    LIQUIFY
+    LIQUIFY,
+
+    /** 4-channel monotone cubic tone curve editor. */
+    CURVE,
+
+    /** 8-band OKLCH HSL mixer panel. */
+    HSL,
+
+    /** Cartesian OKLab split-toning panel. */
+    SPLIT_TONING
 }
 
 /**

@@ -34,8 +34,15 @@ enum class EditorTool {
     GLOW,
     TEMPERATURE,
     TINT,
+    SATURATION,
+    VIBRANCE,
+    CURVE,
+    HSL,
+    SPLIT_TONING,
+    FADE,
     DISPERSION_RED_CYAN,
-    DISPERSION_BLUE_YELLOW
+    DISPERSION_BLUE_YELLOW,
+    DEFRINGE
 }
 
 /**

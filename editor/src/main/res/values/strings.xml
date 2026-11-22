@@ -58,12 +58,59 @@
     <string name="editor_tool_temperature_modified">色温 •</string>
     <string name="editor_tool_tint">色调</string>
     <string name="editor_tool_tint_modified">色调 •</string>
+    <string name="editor_tool_saturation">饱和度</string>
+    <string name="editor_tool_saturation_modified">饱和度 •</string>
+    <string name="editor_tool_vibrance">自然饱和度</string>
+    <string name="editor_tool_vibrance_modified">自然饱和度 •</string>
+    <string name="editor_tool_curve">曲线</string>
+    <string name="editor_tool_curve_modified">曲线 •</string>
+    <string name="editor_tool_hsl">HSL</string>
+    <string name="editor_tool_hsl_modified">HSL •</string>
+    <string name="editor_tool_split_toning">色调分离</string>
+    <string name="editor_tool_split_toning_modified">色调分离 •</string>
+    <string name="editor_tool_fade">褪色</string>
+    <string name="editor_tool_fade_modified">褪色 •</string>
+
+    <!-- Curve editor -->
+    <string name="editor_curve_channel_rgb">RGB</string>
+    <string name="editor_curve_channel_r">R</string>
+    <string name="editor_curve_channel_g">G</string>
+    <string name="editor_curve_channel_b">B</string>
+    <string name="editor_curve_reset">重置曲线</string>
+    <string name="editor_value_curve_modified">已调整</string>
+    <string name="editor_value_curve_linear">线性</string>
+
+    <!-- HSL panel -->
+    <string name="editor_hsl_hue">色相</string>
+    <string name="editor_hsl_saturation">饱和度</string>
+    <string name="editor_hsl_luminance">明度</string>
+    <string name="editor_hsl_band_red">红</string>
+    <string name="editor_hsl_band_orange">橙</string>
+    <string name="editor_hsl_band_yellow">黄</string>
+    <string name="editor_hsl_band_green">绿</string>
+    <string name="editor_hsl_band_aqua">青</string>
+    <string name="editor_hsl_band_blue">蓝</string>
+    <string name="editor_hsl_band_purple">紫</string>
+    <string name="editor_hsl_band_magenta">洋红</string>
+    <string name="editor_value_hsl_modified">已调色</string>
+    <string name="editor_value_hsl_none">—</string>
+
+    <!-- Split toning panel -->
+    <string name="editor_split_highlights">高光</string>
+    <string name="editor_split_shadows">阴影</string>
+    <string name="editor_split_hue">色相</string>
+    <string name="editor_split_saturation">饱和度</string>
+    <string name="editor_split_balance">平衡</string>
+    <string name="editor_value_split_modified">已着色</string>
+    <string name="editor_value_split_none">—</string>
 
     <!-- Detail sub-tools -->
     <string name="editor_tool_ca_red_cyan">色散 R/C</string>
     <string name="editor_tool_ca_red_cyan_modified">色散 R/C •</string>
     <string name="editor_tool_ca_blue_yellow">色散 B/Y</string>
     <string name="editor_tool_ca_blue_yellow_modified">色散 B/Y •</string>
+    <string name="editor_tool_defringe">去紫边</string>
+    <string name="editor_tool_defringe_modified">去紫边 •</string>
 
     <!-- Liquify tool -->
     <string name="editor_tool_liquify">液化</string>
@@ -80,6 +127,7 @@
     <string name="editor_value_degrees_fmt">%1$+.1f°</string>
     <string name="editor_value_plain_degrees_fmt">%1$.0f°</string>
     <string name="editor_value_signed_fmt">%1$+.0f</string>
+    <string name="editor_value_unsigned_fmt">%1$.0f</string>
     <string name="editor_value_aspect_fmt">%1$.2f : 1</string>
     <string name="editor_value_on">开</string>
     <string name="editor_value_off">关</string>
