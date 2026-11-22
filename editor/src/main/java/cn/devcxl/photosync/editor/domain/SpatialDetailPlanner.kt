@@ -4,6 +4,9 @@ package cn.devcxl.photosync.editor.domain
  * One physical sub-pass of `SpatialDetailChain`.
  */
 enum class SpatialDetailStage {
+    /** Portrait skin frequency separation (smooth / texture / even tone) weighted by `skinMask`. */
+    SKIN_SMOOTHING,
+
     /** Luminance guided NR + CbCr edge-guided chroma NR. */
     NOISE_REDUCTION,
 
@@ -30,7 +33,7 @@ class SpatialDetailPlan(
     val prepassRequired: Boolean,
     /** Whether a Pre-pass result was available when the plan was resolved. */
     val prepassAvailable: Boolean,
-    /** Parameterised stages that were dropped because the Pre-pass was not ready yet. */
+    /** Parameterised stages that were dropped because their inputs were not ready yet. */
     val skippedStages: List<SpatialDetailStage>
 ) {
 
@@ -47,16 +50,26 @@ class SpatialDetailPlan(
  * Resolves the physical Pass C draw plan from a normalized parameter bundle.
  *
  * Dehaze and Clarity/Texture are global operations: without the Pre-pass guide they would have to
- * invent a base layer, which is exactly the per-tile seam the Pre-pass exists to prevent. They are
- * therefore dropped (and reported in [SpatialDetailPlan.skippedStages]) instead of being faked.
+ * invent a base layer, which is exactly the per-tile seam the Pre-pass exists to prevent. Skin
+ * smoothing likewise needs the analysis `skinMask`, because smoothing the whole frame on a guess
+ * would blur hair and background. Missing inputs therefore drop their stage (and report it in
+ * [SpatialDetailPlan.skippedStages]) instead of being faked.
  */
 object SpatialDetailPlanner {
 
     /**
      * @param prepassAvailable True once the 1024px Pre-pass texture for the current graph exists.
+     * @param skinMaskAvailable True when the portrait analysis produced a `skinMask` for this photo.
      */
-    fun plan(params: SpatialDetailParams, prepassAvailable: Boolean): SpatialDetailPlan {
+    fun plan(
+        params: SpatialDetailParams,
+        prepassAvailable: Boolean,
+        skinMaskAvailable: Boolean = true
+    ): SpatialDetailPlan {
         val stages = mutableListOf<SpatialDetailStage>()
+        if (params.hasSkinFrequencySeparation && skinMaskAvailable) {
+            stages += SpatialDetailStage.SKIN_SMOOTHING
+        }
         if (params.hasNoiseReduction) stages += SpatialDetailStage.NOISE_REDUCTION
         if (params.hasDehaze && prepassAvailable) stages += SpatialDetailStage.DEHAZE
         if (params.hasClarityTexture && prepassAvailable) {
@@ -64,6 +77,9 @@ object SpatialDetailPlanner {
         }
         if (params.hasSharpen) stages += SpatialDetailStage.SHARPEN
         val skipped = mutableListOf<SpatialDetailStage>()
+        if (params.hasSkinFrequencySeparation && !skinMaskAvailable) {
+            skipped += SpatialDetailStage.SKIN_SMOOTHING
+        }
         if (params.hasDehaze && !prepassAvailable) skipped += SpatialDetailStage.DEHAZE
         if (params.hasClarityTexture && !prepassAvailable) {
             skipped += SpatialDetailStage.CLARITY_TEXTURE

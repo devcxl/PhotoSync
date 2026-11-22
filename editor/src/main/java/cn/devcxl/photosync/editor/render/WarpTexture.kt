@@ -8,9 +8,11 @@ import android.opengl.GLES30
 import timber.log.Timber
 
 import cn.devcxl.photosync.editor.domain.LiquifyMesh
+import cn.devcxl.photosync.editor.domain.WarpDisplacementField
 
 /**
- * The Pass A `uWarpTex`: the `128 x 128` liquify displacement grid uploaded as `GL_RG16F`.
+ * The Pass A `uWarpTex`: one `128 x 128` displacement grid that already contains the face MLS warp,
+ * the body warp and the liquify brush.
  *
  * Tier 1 uploads the half-float grid directly, which keeps the displacement precise to ~1/2048 of a
  * frame. Drivers that reject `GL_RG16F` get a Tier 2 `GL_RGBA8` fallback whose two channels are
@@ -18,9 +20,9 @@ import cn.devcxl.photosync.editor.domain.LiquifyMesh
  * shader which encoding it is looking at, so the fragment shader stays branch-free.
  *
  * Both tiers use `GL_LINEAR` filtering and `GL_CLAMP_TO_EDGE` wrapping so the CPU resampler's
- * bilinear [LiquifyMesh.displacementAt] produces the same warp as the GPU.
+ * bilinear [WarpDisplacementField.displacementAt] produces the same warp as the GPU.
  */
-internal class LiquifyWarpTexture {
+internal class WarpTexture {
 
     /** GL texture name, or `0` when nothing has been uploaded yet. */
     var textureId: Int = 0
@@ -34,12 +36,12 @@ internal class LiquifyWarpTexture {
     var decodeOffset: Float = 0.0f
         private set
 
-    /** True when a staged, non-zero mesh should be sampled by the next Pass A draw. */
+    /** True when a staged, non-zero field should be sampled by the next Pass A draw. */
     val isWarpActive: Boolean
-        get() = !uploadFailed && activeMesh?.let { !it.isZero() } == true
+        get() = !uploadFailed && activeField?.let { !it.isZero() } == true
 
     @Volatile
-    private var activeMesh: LiquifyMesh? = null
+    private var activeField: WarpDisplacementField? = null
 
     @Volatile
     private var needsUpload: Boolean = false
@@ -52,47 +54,36 @@ internal class LiquifyWarpTexture {
     private var quantizedBytes: ByteBuffer? = null
 
     /**
-     * Stages [mesh] for the next frame and returns whether a warp is now requested.
+     * Stages [field] for the next frame and returns whether a warp is now requested.
      */
-    fun stage(mesh: LiquifyMesh?): Boolean {
-        activeMesh = mesh
-        needsUpload = mesh != null
+    fun stage(field: WarpDisplacementField?): Boolean {
+        activeField = field
+        needsUpload = field != null
         uploadFailed = false
         return isWarpActive
     }
 
     /**
-     * Uploads the staged mesh if it changed. Must run on the GL thread.
+     * Uploads the staged field if it changed. Must run on the GL thread.
      *
      * @return True when the upload failed and the warp must stay disabled.
      */
     fun uploadIfNeeded(): Boolean {
         if (!needsUpload) return false
         needsUpload = false
-        val mesh = activeMesh
-        if (mesh == null) {
+        val field = activeField
+        if (field == null) {
             release()
             return false
         }
-        uploadFailed = !upload(mesh)
+        uploadFailed = !upload(field)
         return uploadFailed
-    }
-
-    private fun upload(mesh: LiquifyMesh): Boolean {
-        ensureTexture()
-        bindParameters()
-        if (uploadHalfFloat(mesh)) {
-            decodeScale = 1.0f
-            decodeOffset = 0.0f
-            return true
-        }
-        return uploadQuantized(mesh)
     }
 
     /** Forgets the GL name after the EGL context was recreated. */
     fun invalidate() {
         textureId = 0
-        needsUpload = activeMesh != null
+        needsUpload = activeField != null
     }
 
     /** Deletes the texture; safe to call without a live context only via [invalidate]. */
@@ -101,6 +92,17 @@ internal class LiquifyWarpTexture {
             GLES20.glDeleteTextures(1, intArrayOf(textureId), 0)
             textureId = 0
         }
+    }
+
+    private fun upload(field: WarpDisplacementField): Boolean {
+        ensureTexture()
+        bindParameters()
+        if (uploadHalfFloat(field)) {
+            decodeScale = 1.0f
+            decodeOffset = 0.0f
+            return true
+        }
+        return uploadQuantized(field)
     }
 
     private fun ensureTexture() {
@@ -118,13 +120,16 @@ internal class LiquifyWarpTexture {
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
     }
 
-    private fun uploadHalfFloat(mesh: LiquifyMesh): Boolean {
-        val bits = floatBits ?: ShortArray(LiquifyMesh.COMPONENT_COUNT).also { floatBits = it }
-        mesh.readHalfFloatBitsInto(bits)
-        val bytes = halfFloatBytes ?: ByteBuffer
-            .allocateDirect(LiquifyMesh.COMPONENT_COUNT * BYTES_PER_HALF)
-            .order(ByteOrder.nativeOrder())
-            .also { halfFloatBytes = it }
+    private fun uploadHalfFloat(field: WarpDisplacementField): Boolean {
+        val componentCount = field.gridSize * field.gridSize * CHANNELS
+        val bits = floatBits?.takeIf { it.size == componentCount }
+            ?: ShortArray(componentCount).also { floatBits = it }
+        field.readHalfFloatBitsInto(bits)
+        val bytes = halfFloatBytes?.takeIf { it.capacity() == componentCount * BYTES_PER_HALF }
+            ?: ByteBuffer
+                .allocateDirect(componentCount * BYTES_PER_HALF)
+                .order(ByteOrder.nativeOrder())
+                .also { halfFloatBytes = it }
         bytes.rewind()
         for (value in bits) {
             bytes.putShort(value)
@@ -135,8 +140,8 @@ internal class LiquifyWarpTexture {
             GLES20.GL_TEXTURE_2D,
             0,
             GLES30.GL_RG16F,
-            mesh.gridSize,
-            mesh.gridSize,
+            field.gridSize,
+            field.gridSize,
             0,
             GLES30.GL_RG,
             GLES30.GL_HALF_FLOAT,
@@ -144,21 +149,23 @@ internal class LiquifyWarpTexture {
         )
         val error = GLES20.glGetError()
         if (error == GLES20.GL_NO_ERROR) return true
-        Timber.w("GL_RG16F liquify mesh rejected (error=0x%x); falling back to RGBA8", error)
+        Timber.w("GL_RG16F warp texture rejected (error=0x%x); falling back to RGBA8", error)
         bindParameters()
         return false
     }
 
-    private fun uploadQuantized(mesh: LiquifyMesh): Boolean {
-        val bytes = quantizedBytes ?: ByteBuffer
-            .allocateDirect(LiquifyMesh.CELL_COUNT * BYTES_PER_RGBA8_TEXEL)
-            .order(ByteOrder.nativeOrder())
-            .also { quantizedBytes = it }
+    private fun uploadQuantized(field: WarpDisplacementField): Boolean {
+        val cellCount = field.gridSize * field.gridSize
+        val bytes = quantizedBytes?.takeIf { it.capacity() == cellCount * BYTES_PER_RGBA8_TEXEL }
+            ?: ByteBuffer
+                .allocateDirect(cellCount * BYTES_PER_RGBA8_TEXEL)
+                .order(ByteOrder.nativeOrder())
+                .also { quantizedBytes = it }
         bytes.rewind()
         val quantum = 1.0f / (2.0f * LiquifyMesh.MAX_DISPLACEMENT)
-        for (cell in 0 until LiquifyMesh.CELL_COUNT) {
-            val dx = mesh.displacementRaw(cell * LiquifyMesh.CHANNELS)
-            val dy = mesh.displacementRaw(cell * LiquifyMesh.CHANNELS + 1)
+        for (cell in 0 until cellCount) {
+            val dx = field.displacementRaw(cell * CHANNELS)
+            val dy = field.displacementRaw(cell * CHANNELS + 1)
             bytes.put(toByte(0.5f + dx * quantum))
             bytes.put(toByte(0.5f + dy * quantum))
             bytes.put(OPAQUE_BYTE)
@@ -169,8 +176,8 @@ internal class LiquifyWarpTexture {
             GLES20.GL_TEXTURE_2D,
             0,
             GLES20.GL_RGBA,
-            mesh.gridSize,
-            mesh.gridSize,
+            field.gridSize,
+            field.gridSize,
             0,
             GLES20.GL_RGBA,
             GLES20.GL_UNSIGNED_BYTE,
@@ -181,7 +188,7 @@ internal class LiquifyWarpTexture {
             decodeOffset = -LiquifyMesh.MAX_DISPLACEMENT
             return true
         }
-        Timber.e("Liquify mesh could not be uploaded; the warp stays disabled")
+        Timber.e("The warp texture could not be uploaded; the warp stays disabled")
         decodeScale = 1.0f
         decodeOffset = 0.0f
         return false
@@ -191,6 +198,7 @@ internal class LiquifyWarpTexture {
         (normalized.coerceIn(0.0f, 1.0f) * 255.0f + 0.5f).toInt().toByte()
 
     private companion object {
+        private const val CHANNELS = 2
         private const val BYTES_PER_HALF = 2
         private const val BYTES_PER_RGBA8_TEXEL = 4
         private const val OPAQUE_BYTE: Byte = 0xFF.toByte()

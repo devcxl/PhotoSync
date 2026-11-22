@@ -88,6 +88,18 @@ internal class EditorReadoutFormatter(private val context: Context) {
                 spec?.isModified?.invoke(graph) == true,
                 R.string.editor_value_nr_modified
             )
+            EditorTool.SKIN_SMOOTH -> panelStatusText(
+                spec?.isModified?.invoke(graph) == true,
+                R.string.editor_value_skin_modified
+            )
+            EditorTool.FACE_RESHAPE -> panelStatusText(
+                spec?.isModified?.invoke(graph) == true,
+                R.string.editor_value_reshape_modified
+            )
+            EditorTool.BODY_RESHAPE -> panelStatusText(
+                spec?.isModified?.invoke(graph) == true,
+                R.string.editor_value_body_modified
+            )
             else -> ""
         }
     }

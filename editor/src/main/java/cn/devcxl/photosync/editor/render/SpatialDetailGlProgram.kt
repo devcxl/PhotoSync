@@ -23,6 +23,9 @@ internal data class SpatialDetailDrawParams(
     val sharpenRadiusPx: Float = 1.0f,
     val sharpenThreshold: Float = 0.0f,
     val sharpenMasking: Float = 0.0f,
+    val skinSmooth: Float = 0.0f,
+    val skinTexture: Float = 0.5f,
+    val skinEvenTone: Float = 0.0f,
     val texelWidth: Int = 1,
     val texelHeight: Int = 1,
     val ditherAmp: Float = 0.0f,
@@ -53,6 +56,7 @@ internal class SpatialDetailGlProgram {
     private var uDehazeALoc: Int = -1
     private var uClarityTextureLoc: Int = -1
     private var uSharpenLoc: Int = -1
+    private var uSkinParamsLoc: Int = -1
     private var uDitherAmpLoc: Int = -1
 
     private val quad = QuadMesh()
@@ -111,6 +115,7 @@ internal class SpatialDetailGlProgram {
             params.sharpenThreshold,
             params.sharpenMasking
         )
+        GLES20.glUniform3f(uSkinParamsLoc, params.skinSmooth, params.skinTexture, params.skinEvenTone)
         GLES20.glUniform1f(uDitherAmpLoc, params.ditherAmp)
         quad.draw(aPositionLoc, aTexCoordLoc)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
@@ -147,6 +152,7 @@ internal class SpatialDetailGlProgram {
         uDehazeALoc = GLES20.glGetUniformLocation(programId, "uDehazeA")
         uClarityTextureLoc = GLES20.glGetUniformLocation(programId, "uClarityTexture")
         uSharpenLoc = GLES20.glGetUniformLocation(programId, "uSharpen")
+        uSkinParamsLoc = GLES20.glGetUniformLocation(programId, "uSkinParams")
         uDitherAmpLoc = GLES20.glGetUniformLocation(programId, "uDitherAmp")
     }
 

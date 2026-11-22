@@ -40,6 +40,17 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
+    <!-- Body guide overlay: draggable waist / hip lines for Body Reshaping -->
+    <cn.devcxl.photosync.editor.ui.widgets.BodyGuideOverlayView
+        android:id="@+id/bodyGuideOverlayView"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone"
+        app:layout_constraintBottom_toTopOf="@id/bottomPanel"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
     <!-- Compare-original status pill -->
     <TextView
         android:id="@+id/compareStatusPill"
@@ -206,6 +217,10 @@
         <include
             android:id="@+id/effectPanels"
             layout="@layout/editor_effect_panels" />
+
+        <include
+            android:id="@+id/portraitPanels"
+            layout="@layout/editor_portrait_panels" />
 
         <!-- Tier 2: Sub-tool chip row -->
         <HorizontalScrollView

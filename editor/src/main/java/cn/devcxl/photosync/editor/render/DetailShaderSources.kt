@@ -3,9 +3,9 @@ package cn.devcxl.photosync.editor.render
 /**
  * GLSL ES 3.00 sources of `SpatialDetailChain` (physical Pass C).
  *
- * One program serves all four sub-passes; `uStage` selects the math so every stage shares the same
+ * One program serves all five sub-passes; `uStage` selects the math so every stage shares the same
  * uniform block and the chain only has to swap the bound texture:
- * `1 = noise reduction`, `2 = dehaze`, `3 = clarity/texture`, `4 = sharpen`.
+ * `1 = skin smoothing`, `2 = noise reduction`, `3 = dehaze`, `4 = clarity/texture`, `5 = sharpen`.
  *
  * Each branch mirrors `PassCDetailMath` expression for expression, and Clarity/Texture/Dehaze sample
  * the packed Pre-pass texture through `uTileUvTransform`, so a column-band bake can offset the guide
@@ -44,6 +44,7 @@ internal object DetailShaderSources {
         uniform vec3 uDehazeA;
         uniform vec2 uClarityTexture;
         uniform vec4 uSharpen;
+        uniform vec3 uSkinParams;
         uniform float uDitherAmp;
 
         const vec3 LUMA_WEIGHTS = vec3(0.2126, 0.7152, 0.0722);
@@ -56,6 +57,9 @@ internal object DetailShaderSources {
         const float TEXTURE_GAIN = 1.0;
         const float CB_SCALE = 1.8556;
         const float CR_SCALE = 1.5748;
+        const float SKIN_BLUR_STEP = 3.0;
+        const float SKIN_CHROMA_STEP = 8.0;
+        const float EVEN_TONE_CHROMA_GAIN = 0.5;
 
         float luminance(vec3 color) {
             return dot(color, LUMA_WEIGHTS);
@@ -98,6 +102,57 @@ internal object DetailShaderSources {
 
         vec2 guideUv() {
             return vTexCoord * uTileUvTransform.xy + uTileUvTransform.zw;
+        }
+
+        float skinMaskWeight() {
+            return (uHasSkinMask == 1) ? clamp(texture(uSkinMaskTex, vTexCoord).r, 0.0, 1.0) : 0.0;
+        }
+
+        // Stage 0: portrait frequency separation, weighted by the dual-mode skin mask.
+        vec3 skinSmoothing(vec3 srgb) {
+            float mask = skinMaskWeight();
+            if (mask <= 0.0) return srgb;
+            float smoothAmount = clamp(uSkinParams.x, 0.0, 1.0);
+            float textureKeep = clamp(uSkinParams.y, 0.0, 1.0);
+            float toneAmount = clamp(uSkinParams.z, 0.0, 1.0);
+            float y = luminance(srgb);
+            vec2 stepUv = uTexelSize * SKIN_BLUR_STEP;
+            float base = 0.0;
+            float weightSum = 0.0;
+            for (int dy = -2; dy <= 2; dy++) {
+                for (int dx = -2; dx <= 2; dx++) {
+                    float weight = (dx == 0 && dy == 0) ? 4.0
+                        : (((abs(dx) + abs(dy)) <= 1) ? 2.0 : 1.0);
+                    base += luminance(sampleAt(vTexCoord + vec2(float(dx), float(dy)) * stepUv)) * weight;
+                    weightSum += weight;
+                }
+            }
+            base /= weightSum;
+            float retention = 1.0 - smoothAmount * (1.0 - textureKeep);
+            float target = base + (y - base) * retention;
+            vec3 result = clamp(srgb + vec3((target - y) * mask), 0.0, 1.0);
+            if (toneAmount <= 0.0) return result;
+            vec2 wideStep = uTexelSize * SKIN_CHROMA_STEP;
+            vec2 chroma = vec2((result.b - target) / CB_SCALE, (result.r - target) / CR_SCALE);
+            vec2 accum = vec2(0.0);
+            float chromaWeight = 0.0;
+            for (int dy = -1; dy <= 1; dy++) {
+                for (int dx = -1; dx <= 1; dx++) {
+                    vec3 neighbour = sampleAt(vTexCoord + vec2(float(dx), float(dy)) * wideStep);
+                    float neighbourY = luminance(neighbour);
+                    accum += vec2(
+                        (neighbour.b - neighbourY) / CB_SCALE,
+                        (neighbour.r - neighbourY) / CR_SCALE
+                    );
+                    chromaWeight += 1.0;
+                }
+            }
+            vec2 mean = accum / chromaWeight;
+            vec2 blended = mix(chroma, mean, clamp(toneAmount * mask, 0.0, 1.0) * EVEN_TONE_CHROMA_GAIN);
+            float red = target + CR_SCALE * blended.y;
+            float blue = target + CB_SCALE * blended.x;
+            float green = (target - 0.2126 * red - 0.0722 * blue) / 0.7152;
+            return clamp(vec3(red, green, blue), 0.0, 1.0);
         }
 
         // Stage 1: 3x3 guided luma NR with detail blend-back plus 5x5 edge-guided CbCr NR.
@@ -213,12 +268,14 @@ internal object DetailShaderSources {
             vec4 source = texture(uTex0, vTexCoord);
             vec3 result = source.rgb;
             if (uStage == 1) {
-                result = noiseReduction(source.rgb);
+                result = skinSmoothing(source.rgb);
             } else if (uStage == 2) {
-                result = dehaze(source.rgb);
+                result = noiseReduction(source.rgb);
             } else if (uStage == 3) {
-                result = clarityTexture(source.rgb);
+                result = dehaze(source.rgb);
             } else if (uStage == 4) {
+                result = clarityTexture(source.rgb);
+            } else if (uStage == 5) {
                 result = unsharpMask(source.rgb);
             }
             float dither = triDither(gl_FragCoord.xy);

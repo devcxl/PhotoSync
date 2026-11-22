@@ -50,7 +50,10 @@ enum class EditorTool {
     DISPERSION_BLUE_YELLOW,
     DEFRINGE,
     GRAIN,
-    VIGNETTE
+    VIGNETTE,
+    SKIN_SMOOTH,
+    FACE_RESHAPE,
+    BODY_RESHAPE
 }
 
 /**

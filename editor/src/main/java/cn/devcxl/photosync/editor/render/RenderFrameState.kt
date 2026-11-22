@@ -23,7 +23,7 @@ internal data class RenderFrameState(
     val lateralCaRedK: Float = 0.0f,
     val lateralCaBlueK: Float = 0.0f,
     val outputAspectRatio: Float = 1.0f,
-    val liquifyWarp: Boolean = false
+    val warpActive: Boolean = false
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -39,7 +39,7 @@ internal data class RenderFrameState(
             lateralCaRedK == other.lateralCaRedK &&
             lateralCaBlueK == other.lateralCaBlueK &&
             outputAspectRatio == other.outputAspectRatio &&
-            liquifyWarp == other.liquifyWarp
+            warpActive == other.warpActive
     }
 
     override fun hashCode(): Int {
@@ -54,7 +54,7 @@ internal data class RenderFrameState(
         result = 31 * result + lateralCaRedK.hashCode()
         result = 31 * result + lateralCaBlueK.hashCode()
         result = 31 * result + outputAspectRatio.hashCode()
-        result = 31 * result + liquifyWarp.hashCode()
+        result = 31 * result + warpActive.hashCode()
         return result
     }
 

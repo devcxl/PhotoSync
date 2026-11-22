@@ -6,7 +6,7 @@ import kotlin.math.roundToInt
 import android.graphics.Bitmap
 
 import cn.devcxl.photosync.editor.domain.GeometryMath
-import cn.devcxl.photosync.editor.domain.LiquifyMesh
+import cn.devcxl.photosync.editor.domain.WarpDisplacementField
 import cn.devcxl.photosync.editor.domain.Mat3
 import cn.devcxl.photosync.editor.domain.Uv
 import cn.devcxl.photosync.wrapper.LinearRawBuffer
@@ -25,8 +25,8 @@ internal object GeometryCpuResampler {
      * Renders the cropped, rotated, straightened and perspective-corrected frame of an 8-bit
      * [source] bitmap.
      *
-     * @param liquifyMesh Displacement grid applied in pre-crop space before the CA lookups, or
-     *   `null` when the photo has no liquify edit.
+     * @param warpField Composed displacement grid (face MLS + body + liquify) applied in pre-crop
+     *   space before the CA lookups, or `null` when the photo has no warp.
      */
     fun resample(
         source: Bitmap,
@@ -35,7 +35,7 @@ internal object GeometryCpuResampler {
         outputHeight: Int,
         caRedK: Float,
         caBlueK: Float,
-        liquifyMesh: LiquifyMesh? = null
+        warpField: WarpDisplacementField? = null
     ): Bitmap {
         val width = outputWidth.coerceAtLeast(1)
         val height = outputHeight.coerceAtLeast(1)
@@ -60,7 +60,7 @@ internal object GeometryCpuResampler {
                     outputV = v,
                     caRedK = caRedK,
                     caBlueK = caBlueK,
-                    liquifyMesh = liquifyMesh
+                    warpField = warpField
                 )
             }
         }
@@ -72,8 +72,8 @@ internal object GeometryCpuResampler {
      * CA-corrected frame of a 16-bit linear [LinearRawBuffer], preserving scene-linear float values
      * above `1.0`.
      *
-     * @param liquifyMesh Displacement grid applied in pre-crop space before the CA lookups, or
-     *   `null` when the photo has no liquify edit.
+     * @param warpField Composed displacement grid (face MLS + body + liquify) applied in pre-crop
+     *   space before the CA lookups, or `null` when the photo has no warp.
      */
     fun resampleLinear(
         source: LinearRawBuffer,
@@ -82,7 +82,7 @@ internal object GeometryCpuResampler {
         outputHeight: Int,
         caRedK: Float,
         caBlueK: Float,
-        liquifyMesh: LiquifyMesh? = null
+        warpField: WarpDisplacementField? = null
     ): LinearRawBuffer {
         val width = outputWidth.coerceAtLeast(1)
         val height = outputHeight.coerceAtLeast(1)
@@ -97,7 +97,7 @@ internal object GeometryCpuResampler {
             val v = (row + 0.5f) / height
             for (column in 0 until width) {
                 val u = (column + 0.5f) / width
-                val preCrop = applyLiquifyWarp(inverseMatrix.map(u, v), liquifyMesh)
+                val preCrop = applyLiquifyWarp(inverseMatrix.map(u, v), warpField)
                 val ca = GeometryMath.applyLateralCaSampleUv(preCrop, caRedK, caBlueK, srcAspect)
                 samples[outIndex++] = sampleLinearChannel(source, ca.red, 0, p00, p10, p01, p11)
                 samples[outIndex++] = sampleLinearChannel(source, ca.green, 1, p00, p10, p01, p11)
@@ -152,9 +152,9 @@ internal object GeometryCpuResampler {
         outputV: Float,
         caRedK: Float,
         caBlueK: Float,
-        liquifyMesh: LiquifyMesh?
+        warpField: WarpDisplacementField?
     ): Int {
-        val preCrop = applyLiquifyWarp(inverseMatrix.map(outputU, outputV), liquifyMesh)
+        val preCrop = applyLiquifyWarp(inverseMatrix.map(outputU, outputV), warpField)
         val ca = GeometryMath.applyLateralCaSampleUv(preCrop, caRedK, caBlueK, sourceAspect)
         val red = sampleBitmapChannel(sourcePixels, sourceWidth, sourceHeight, ca.red, RED_SHIFT)
         val green = sampleBitmapChannel(sourcePixels, sourceWidth, sourceHeight, ca.green, GREEN_SHIFT)
@@ -163,12 +163,12 @@ internal object GeometryCpuResampler {
     }
 
     /**
-     * Adds the liquify displacement of the pre-crop coordinate, matching the `uWarpTex` lookup the
-     * Pass A shader performs before its lateral-CA sampling.
+     * Adds the composed warp displacement of the pre-crop coordinate, matching the `uWarpTex`
+     * lookup the Pass A shader performs before its lateral-CA sampling.
      */
-    private fun applyLiquifyWarp(preCropUv: Uv, liquifyMesh: LiquifyMesh?): Uv {
-        if (liquifyMesh == null) return preCropUv
-        val warp = liquifyMesh.displacementAt(preCropUv.u, preCropUv.v)
+    private fun applyLiquifyWarp(preCropUv: Uv, warpField: WarpDisplacementField?): Uv {
+        if (warpField == null) return preCropUv
+        val warp = warpField.displacementAt(preCropUv.u, preCropUv.v)
         return Uv(preCropUv.u + warp.u, preCropUv.v + warp.v)
     }
 

@@ -25,7 +25,6 @@ import cn.devcxl.photosync.editor.domain.LiquifyBrushSettings
 import cn.devcxl.photosync.editor.domain.LiquifyMeshStore
 import cn.devcxl.photosync.editor.domain.LiquifySession
 import cn.devcxl.photosync.editor.lut.CubeLutStore
-import cn.devcxl.photosync.editor.render.CanvasViewportTransform
 import cn.devcxl.photosync.editor.render.EditorGlRenderer
 import cn.devcxl.photosync.editor.render.EditorPreviewSession
 import cn.devcxl.photosync.editor.ui.gesture.CanvasTransform
@@ -35,11 +34,9 @@ import cn.devcxl.photosync.editor.ui.panels.EditorPanelController
 import cn.devcxl.photosync.editor.ui.panels.EditorPreviewGeometry
 
 /**
- * Full-screen non-destructive photo editor.
- *
- * Combines 16-bit linear RAW decoding + `BaseLook` baseline switching with Pass A geometry /
- * liquify / lateral chromatic-aberration resampling, Pass B D65 Bradford WB + linear/display tone
- * grading and Pass D 3D LUT + film grain + post-crop vignette rendering.
+ * Full-screen non-destructive photo editor: 16-bit linear RAW + `BaseLook`, Pass A geometry /
+ * liquify, Pass B tone and colour, Pass C spatial detail + portrait skin / MLS reshaping, and
+ * Pass D LUT, grain and vignette.
  */
 class EditorActivity : AppCompatActivity(),
     EditorPanelController.Host,
@@ -57,6 +54,9 @@ class EditorActivity : AppCompatActivity(),
     private lateinit var topBar: EditorTopBarBinder
     private lateinit var canvas: EditorCanvasBinder
     private lateinit var lutImporter: EditorLutImportCoordinator
+    private lateinit var portraitHost: EditorPortraitHost
+    private lateinit var renderCoordinator: EditorRenderCoordinator
+    private lateinit var gestureHost: EditorGestureHost
     private val renderer = EditorGlRenderer()
     private val undoController = EditorUndoController()
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -67,7 +67,7 @@ class EditorActivity : AppCompatActivity(),
     private var isRaw: Boolean = false
     private var preferLinearSource: Boolean = false
 
-    private val settleFullQualityRunnable = Runnable { renderCurrentGraph(useProxy = false) }
+    private val settleFullQualityRunnable = Runnable { renderCoordinator.renderCurrentGraph(useProxy = false) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -83,11 +83,54 @@ class EditorActivity : AppCompatActivity(),
         canvas.attachOverlays()
         topBar = EditorTopBarBinder(binding, historyCoordinator, this).also { it.bind() }
         panel = EditorPanelController(this, binding, undoController, this, lutStore)
-        overlaySync = EditorOverlaySync(binding, panel, liquifySession, ::previewAspect)
+        overlaySync = EditorOverlaySync(
+            binding = binding,
+            panel = panel,
+            liquifySession = liquifySession,
+            previewAspect = ::previewAspect,
+            guides = { portraitHost.guides() }
+        )
         overlaySync.syncBrush()
+        portraitHost = EditorPortraitHost(
+            context = this,
+            filesDir = filesDir,
+            undoController = undoController,
+            renderer = renderer,
+            scope = lifecycleScope,
+            panelProvider = { panel },
+            sourceProvider = { previewSession.source },
+            onWarpsPublished = { binding.glSurfaceView.requestRender() },
+            onGraphEdited = { renderCoordinator.renderCurrentGraph(useProxy = true) },
+            onGraphCommitted = {
+                renderCoordinator.renderCurrentGraph(useProxy = false)
+                renderCoordinator.updateHistoryButtons()
+            }
+        )
+        renderCoordinator = EditorRenderCoordinator(
+            binding = binding,
+            renderer = renderer,
+            previewSession = previewSession,
+            liquifySession = liquifySession,
+            undoController = undoController,
+            topBar = topBar,
+            portraitHost = portraitHost,
+            scope = lifecycleScope,
+            isRaw = { isRaw },
+            panelProvider = { panel },
+            overlaySyncProvider = { overlaySync }
+        )
+        gestureHost = EditorGestureHost(
+            binding = binding,
+            renderer = renderer,
+            topBar = topBar,
+            historyCoordinator = historyCoordinator,
+            portraitHost = portraitHost,
+            renderCoordinatorProvider = { renderCoordinator },
+            cancelSettle = { mainHandler.removeCallbacks(settleFullQualityRunnable) }
+        )
         lutImporter = EditorLutImportCoordinator(this, lutStore, undoController, previewSession) {
-            renderCurrentGraph(useProxy = false)
-            updateHistoryButtons()
+            renderCoordinator.renderCurrentGraph(useProxy = false)
+            renderCoordinator.updateHistoryButtons()
         }
         panel.selectGroup(EditorGroup.TONE)
         loadInitialPhotoAndEditState()
@@ -96,14 +139,22 @@ class EditorActivity : AppCompatActivity(),
     private fun initCoordinators() {
         liquifySession = LiquifySession(photoId, LiquifyMeshStore(filesDir))
         previewSession = EditorPreviewSession(renderer, cacheDir, photoId, lutStore)
-        saveCoordinator = EditorSaveCoordinator(photoId, previewSession, liquifySession)
         sessionLoader = EditorSessionLoader(photoId, previewSession, liquifySession)
         historyCoordinator = EditorHistoryCoordinator(
             photoId = photoId,
             undoController = undoController,
             liquifySession = liquifySession,
-            onMeshPublished = ::publishLiquifyMesh,
-            onStateChanged = ::applyHistoryGraph
+            onMeshPublished = { renderCoordinator.publishLiquifyMesh() },
+            onStateChanged = { graph ->
+                mainHandler.removeCallbacks(settleFullQualityRunnable)
+                renderCoordinator.applyHistoryGraph(graph)
+            }
+        )
+        saveCoordinator = EditorSaveCoordinator(
+            photoId = photoId,
+            previewSession = previewSession,
+            liquifySession = liquifySession,
+            portraitAnalysis = { portraitHost.analysis() }
         )
     }
 
@@ -121,6 +172,7 @@ class EditorActivity : AppCompatActivity(),
     override fun onDestroy() {
         mainHandler.removeCallbacks(settleFullQualityRunnable)
         canvas.detachOverlays()
+        portraitHost.release()
         previewSession.release()
         super.onDestroy()
     }
@@ -129,21 +181,21 @@ class EditorActivity : AppCompatActivity(),
         val liquifyActive = panel.currentGroup == EditorGroup.GEOMETRY && tool == EditorTool.LIQUIFY
         binding.cropOverlayView.visibility = if (liquifyActive) View.GONE else View.VISIBLE
         binding.liquifyBrushOverlayView.visibility = if (liquifyActive) View.VISIBLE else View.GONE
-        overlaySync.sync(undoController.currentGraph)
-        renderCurrentGraph(useProxy = false)
-        updateHistoryButtons()
+        portraitHost.onToolChanged()
+        renderCoordinator.renderCurrentGraph(useProxy = false)
+        renderCoordinator.updateHistoryButtons()
     }
 
     override fun onGraphEdited(graph: EditGraph, parameterKey: EditParameterKey) {
         mainHandler.removeCallbacks(settleFullQualityRunnable)
-        renderCurrentGraph(useProxy = true)
+        renderCoordinator.renderCurrentGraph(useProxy = true)
         mainHandler.postDelayed(settleFullQualityRunnable, SETTLE_DELAY_MS)
     }
 
     override fun onGraphCommitted(graph: EditGraph, parameterKey: EditParameterKey) {
         mainHandler.removeCallbacks(settleFullQualityRunnable)
-        renderCurrentGraph(useProxy = false)
-        updateHistoryButtons()
+        renderCoordinator.renderCurrentGraph(useProxy = false)
+        renderCoordinator.updateHistoryButtons()
     }
 
     override fun previewAspect(): Float = EditorPreviewGeometry.previewAspect(
@@ -159,97 +211,43 @@ class EditorActivity : AppCompatActivity(),
 
     override fun onLiquifyResetRequested() {
         historyCoordinator.requestLiquifyReset()
-        updateHistoryButtons()
+        renderCoordinator.updateHistoryButtons()
     }
 
     override fun onLutImportRequested() {
         lutImporter.launch()
     }
 
-    override fun onPreviewDragStarted() {
-        mainHandler.removeCallbacks(settleFullQualityRunnable)
-        renderCurrentGraph(useProxy = true)
-    }
+    override fun onPreviewDragStarted() = gestureHost.onDragStarted()
 
-    override fun onPreviewDragFinished() {
-        renderCurrentGraph(useProxy = false)
-        updateHistoryButtons()
-    }
+    override fun onPreviewDragFinished() = gestureHost.onDragFinished()
 
-    override fun onLiquifyMeshChanged() {
-        publishLiquifyMesh()
-    }
+    override fun onLiquifyMeshChanged() = gestureHost.onLiquifyMeshChanged()
 
-    override fun onLiquifyStrokeFinished() {
-        historyCoordinator.onLiquifyStrokeCommitted()
-        renderCurrentGraph(useProxy = false)
-        updateHistoryButtons()
-    }
+    override fun onLiquifyStrokeFinished() = gestureHost.onLiquifyStrokeFinished()
 
-    override fun onCompareChanged(comparing: Boolean) {
-        if (renderer.compareOriginal == comparing) return
-        renderer.compareOriginal = comparing
-        topBar.setComparePillVisible(comparing)
-        binding.glSurfaceView.requestRender()
-    }
+    override fun onBodyGuidesChanged(waistY: Float, hipY: Float) =
+        gestureHost.onBodyGuidesChanged(waistY, hipY)
+
+    override fun onBodyGuidesCommitted() = gestureHost.onBodyGuidesCommitted()
+
+    override fun onCompareChanged(comparing: Boolean) = gestureHost.onCompareChanged(comparing)
 
     override fun onBaseLookSelected(baseLook: BaseLook) {
         val current = undoController.currentGraph
         if (current.baseLook == baseLook) return
         undoController.onParameterDrag(current.copy(baseLook = baseLook), EditParameterKey.BASE_LOOK)
         undoController.onParameterRelease()
-        applyHistoryGraph(undoController.currentGraph)
+        mainHandler.removeCallbacks(settleFullQualityRunnable)
+        renderCoordinator.applyHistoryGraph(undoController.currentGraph)
     }
 
     override fun onDoneRequested() {
         saveEditAndFinish()
     }
 
-    private fun applyHistoryGraph(graph: EditGraph) {
-        mainHandler.removeCallbacks(settleFullQualityRunnable)
-        renderCurrentGraph(useProxy = false)
-        updateBaseLookPill(graph.baseLook)
-        updateHistoryButtons()
-    }
-
-    private fun renderCurrentGraph(useProxy: Boolean) {
-        val graph = undoController.currentGraph
-        val preview = EditorPreviewGeometry.previewGraph(graph, panel.currentTool)
-        val lutWarm = previewSession.applyGraph(preview, useProxy = useProxy)
-        overlaySync.sync(graph)
-        panel.refresh()
-        updateBaseLookPill(graph.baseLook)
-        binding.glSurfaceView.requestRender()
-        if (!lutWarm) preloadLutAsync(graph)
-    }
-
-    private fun preloadLutAsync(graph: EditGraph) {
-        lifecycleScope.launch {
-            val loaded = withContext(Dispatchers.IO) { previewSession.preloadLut(graph) }
-            if (loaded && undoController.currentGraph.color.lut?.id == graph.color.lut?.id) {
-                binding.glSurfaceView.requestRender()
-            }
-        }
-    }
-
-    private fun publishLiquifyMesh() {
-        previewSession.applyLiquifyMesh(liquifySession.mesh)
-        binding.glSurfaceView.requestRender()
-    }
-
-    override fun onCanvasTransformChanged(transform: CanvasTransform) {
-        renderer.canvasTransform = CanvasViewportTransform(transform.scale, transform.offsetX, transform.offsetY)
-        overlaySync.syncCanvasTransform(transform)
-        binding.glSurfaceView.requestRender()
-    }
-
-    private fun updateBaseLookPill(baseLook: BaseLook) {
-        topBar.updateBaseLookPill(baseLook, isRaw && previewSession.supportsBaseLook)
-    }
-
-    private fun updateHistoryButtons() {
-        topBar.updateHistoryButtons()
-    }
+    override fun onCanvasTransformChanged(transform: CanvasTransform) =
+        gestureHost.onCanvasTransformChanged(transform)
 
     private fun loadInitialPhotoAndEditState() {
         lifecycleScope.launch {
@@ -260,9 +258,10 @@ class EditorActivity : AppCompatActivity(),
                 return@launch
             }
             historyCoordinator.resetSession(loaded.graph)
-            publishLiquifyMesh()
-            renderCurrentGraph(useProxy = false)
-            updateHistoryButtons()
+            portraitHost.onSourceLoaded()
+            renderCoordinator.publishLiquifyMesh()
+            renderCoordinator.renderCurrentGraph(useProxy = false)
+            renderCoordinator.updateHistoryButtons()
         }
     }
 
@@ -270,7 +269,7 @@ class EditorActivity : AppCompatActivity(),
         binding.btnDone.isEnabled = false
         val finalGraph = undoController.currentGraph
         lifecycleScope.launch {
-            val saved = saveCoordinator.persist(finalGraph)
+            val saved = withContext(Dispatchers.IO) { saveCoordinator.persist(finalGraph) }
             if (!saved) {
                 binding.btnDone.isEnabled = true
                 Toast.makeText(this@EditorActivity, R.string.editor_save_failed, Toast.LENGTH_SHORT).show()

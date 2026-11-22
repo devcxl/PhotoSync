@@ -13,7 +13,8 @@ import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.ExposureShaderMath
 import cn.devcxl.photosync.editor.domain.GeometryMath
 import cn.devcxl.photosync.editor.domain.LinearRawPreviewRenderer
-import cn.devcxl.photosync.editor.domain.LiquifyMesh
+import cn.devcxl.photosync.editor.domain.SkinMaskMath
+import cn.devcxl.photosync.editor.domain.WarpDisplacementField
 import cn.devcxl.photosync.editor.domain.Lut3dSamples
 import cn.devcxl.photosync.editor.domain.PassBColorMath
 import cn.devcxl.photosync.editor.domain.PassDEffectsMath
@@ -46,10 +47,11 @@ internal object PreviewCacheWriter {
         graph: EditGraph,
         cacheDir: File,
         photoId: Long,
-        liquifyMesh: LiquifyMesh? = null,
-        lut: Lut3dSamples? = null
+        warpField: WarpDisplacementField? = null,
+        lut: Lut3dSamples? = null,
+        skinMask: FloatArray? = null
     ): String? {
-        val rendered = renderBitmapFrame(source, graph, liquifyMesh, lut) ?: return null
+        val rendered = renderBitmapFrame(source, graph, warpField, lut, skinMask) ?: return null
         return compressAndWrite(rendered, cacheDir, photoId)
     }
 
@@ -59,13 +61,14 @@ internal object PreviewCacheWriter {
         graph: EditGraph,
         cacheDir: File,
         photoId: Long,
-        liquifyMesh: LiquifyMesh? = null,
-        lut: Lut3dSamples? = null
+        warpField: WarpDisplacementField? = null,
+        lut: Lut3dSamples? = null,
+        skinMask: FloatArray? = null
     ): String? {
         val sourceAspect = source.width.toFloat() / source.height.toFloat()
         val outputAspect = GeometryMath.outputAspect(graph.geometry, sourceAspect)
         val (outW, outH) = previewSize(outputAspect)
-        val geometryActive = graph.requiresPassAGeometry(hasWarp = liquifyMesh != null)
+        val geometryActive = graph.requiresPassAGeometry(hasWarp = warpField?.isZero() == false)
         val linearFrame = if (geometryActive) {
             val ca = graph.effects.ca
             GeometryCpuResampler.resampleLinear(
@@ -75,7 +78,7 @@ internal object PreviewCacheWriter {
                 outputHeight = outH,
                 caRedK = GeometryMath.lateralCaKFromSlider(ca.redCyan),
                 caBlueK = GeometryMath.lateralCaKFromSlider(ca.blueYellow),
-                liquifyMesh = liquifyMesh
+                warpField = warpField
             )
         } else {
             source.downscaledTo(PREVIEW_MAX_EDGE_PX)
@@ -84,7 +87,8 @@ internal object PreviewCacheWriter {
             source = linearFrame,
             graph = graph,
             lut = lut,
-            fullResolutionShortEdge = minOf(source.width, source.height)
+            fullResolutionShortEdge = minOf(source.width, source.height),
+            skinMask = skinMask?.takeIf { it.size == SkinMaskMath.MASK_SIZE * SkinMaskMath.MASK_SIZE }
         )
         val outBitmap = Bitmap.createBitmap(
             pixels,
@@ -98,8 +102,9 @@ internal object PreviewCacheWriter {
     private fun renderBitmapFrame(
         source: Bitmap,
         graph: EditGraph,
-        liquifyMesh: LiquifyMesh?,
-        lut: Lut3dSamples?
+        warpField: WarpDisplacementField?,
+        lut: Lut3dSamples?,
+        skinMask: FloatArray?
     ): Bitmap? {
         val sourceAspect = source.width.toFloat() / source.height.toFloat()
         val outputAspect = GeometryMath.outputAspect(graph.geometry, sourceAspect)
@@ -113,22 +118,36 @@ internal object PreviewCacheWriter {
             outputHeight = height,
             caRedK = GeometryMath.lateralCaKFromSlider(ca.redCyan),
             caBlueK = GeometryMath.lateralCaKFromSlider(ca.blueYellow),
-            liquifyMesh = liquifyMesh
+            warpField = warpField
         )
         applyPassBToDisplayPixels(resampled, graph)
-        applyPassC(resampled, graph, minOf(source.width, source.height))
+        applyPassC(resampled, graph, minOf(source.width, source.height), skinMask)
         applyPassDEffects(resampled, graph, lut)
         return resampled
     }
 
-    private fun applyPassC(bitmap: Bitmap, graph: EditGraph, fullResolutionShortEdge: Int) {
-        if (SpatialDetailParams.from(graph).isZeroDrawCallShortCircuit) return
+    private fun applyPassC(
+        bitmap: Bitmap,
+        graph: EditGraph,
+        fullResolutionShortEdge: Int,
+        skinMask: FloatArray?
+    ) {
+        if (SpatialDetailParams.from(graph).isZeroDrawCallShortCircuit &&
+            skinMask == null
+        ) {
+            return
+        }
         val width = bitmap.width
         val height = bitmap.height
         val pixels = IntArray(width * height)
         bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
         val detailed = PreviewDetailPass.apply(
-            pixels, width, height, graph, fullResolutionShortEdge = fullResolutionShortEdge
+            pixels,
+            width,
+            height,
+            graph,
+            fullResolutionShortEdge = fullResolutionShortEdge,
+            skinMask = skinMask
         )
         bitmap.setPixels(detailed, 0, width, 0, 0, width, height)
     }

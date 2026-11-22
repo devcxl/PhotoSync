@@ -84,6 +84,12 @@ internal class EditorPanelController(
         onEdited = ::handleSubPanelEdited,
         onCommitted = ::handleSubPanelCommitted
     )
+    private val portraitPanels = PortraitPanelsBinder(
+        binding = binding,
+        undoController = undoController,
+        onEdited = ::handleSubPanelEdited,
+        onCommitted = ::handleSubPanelCommitted
+    )
     private val effectsPanels = EffectsPanelsBinder(
         binding = binding,
         undoController = undoController,
@@ -119,6 +125,7 @@ internal class EditorPanelController(
         colorPanels.showFor(null)
         detailPanels.showFor(null)
         effectsPanels.showFor(null)
+        portraitPanels.showFor(null)
         aspectRow.setVisible(false)
     }
 
@@ -132,6 +139,7 @@ internal class EditorPanelController(
         colorPanels.refresh(graph)
         detailPanels.refresh(graph)
         effectsPanels.refresh(graph)
+        portraitPanels.refresh(graph)
         refreshHeaderReadout(graph)
         aspectRow.setVisible(currentTool == EditorTool.CROP)
         aspectRow.refresh(lockedAspect, host.previewAspect())
@@ -205,6 +213,7 @@ internal class EditorPanelController(
         colorPanels.showFor(null)
         detailPanels.showFor(null)
         effectsPanels.showFor(null)
+        portraitPanels.showFor(null)
         aspectRow.setVisible(false)
         binding.activeToolLabel.text = tabViews[group]?.text
         binding.activeValueText.setText(R.string.editor_tool_coming_soon)
@@ -245,6 +254,7 @@ internal class EditorPanelController(
         colorPanels.showFor(spec.controlStyle)
         detailPanels.showFor(spec.controlStyle)
         effectsPanels.showFor(spec.controlStyle)
+        portraitPanels.showFor(spec.controlStyle)
         val dial = spec.dial
         dialTool = if (dial == null) null else spec.tool
         if (dial == null) {

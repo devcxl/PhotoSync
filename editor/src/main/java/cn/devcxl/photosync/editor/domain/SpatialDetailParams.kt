@@ -28,9 +28,19 @@ data class SpatialDetailParams(
     val nrChroma: Float = 0.0f,
     /** Detail blend-back of the luminance NR in `0..1`; `1` restores the original luma. */
     val nrDetail: Float = DEFAULT_NR_DETAIL,
+    /** Portrait skin smoothing amount in `0..1`. */
+    val skinSmooth: Float = 0.0f,
+    /** Fraction of the skin micro texture kept at full smoothing, in `0..1`. */
+    val skinTexture: Float = DEFAULT_SKIN_TEXTURE,
+    /** Skin tone evening amount in `0..1`. */
+    val skinEvenTone: Float = 0.0f,
     /** True when the Portrait panel's skin smoothing occupies Pass C first. */
     val hasSkinSmoothing: Boolean = false
 ) {
+
+    /** True when Stage 0 (skin frequency separation) must run. */
+    val hasSkinFrequencySeparation: Boolean
+        get() = skinSmooth > 0.0f || skinEvenTone > 0.0f
 
     /** True when luminance or chroma noise reduction has work to do. */
     val hasNoiseReduction: Boolean
@@ -57,7 +67,7 @@ data class SpatialDetailParams(
      * neutral, Pass C is skipped entirely instead of rendering a copy of its input.
      */
     val isZeroDrawCallShortCircuit: Boolean
-        get() = !hasSkinSmoothing &&
+        get() = !hasSkinFrequencySeparation &&
             nrLuma == 0.0f &&
             nrChroma == 0.0f &&
             dehaze == 0.0f &&
@@ -78,6 +88,9 @@ data class SpatialDetailParams(
         /** `detail.nr.detail` default, which keeps half of the removed grain. */
         const val DEFAULT_NR_DETAIL = 0.5f
 
+        /** `portrait.skin.texture` default: half of the micro texture survives full smoothing. */
+        const val DEFAULT_SKIN_TEXTURE = 0.5f
+
         private const val SLIDER_SCALE = 100.0f
         private const val SHARPEN_AMOUNT_SCALE = 100.0f
 
@@ -90,6 +103,7 @@ data class SpatialDetailParams(
         fun from(graph: EditGraph): SpatialDetailParams {
             val detail = graph.detail
             val sharpen = detail.sharpen
+            val skin = graph.portrait.skin
             return SpatialDetailParams(
                 clarity = detail.clarity / SLIDER_SCALE + ToneShaderMath.glowClarityBoost(graph.tone.glow),
                 texture = detail.texture / SLIDER_SCALE,
@@ -101,7 +115,10 @@ data class SpatialDetailParams(
                 nrLuma = detail.nr.luma / SLIDER_SCALE,
                 nrChroma = detail.nr.chroma / SLIDER_SCALE,
                 nrDetail = detail.nr.detail / SLIDER_SCALE,
-                hasSkinSmoothing = graph.portrait.skin.smooth != 0
+                skinSmooth = skin.smooth / SLIDER_SCALE,
+                skinTexture = skin.texture / SLIDER_SCALE,
+                skinEvenTone = skin.evenTone / SLIDER_SCALE,
+                hasSkinSmoothing = skin.smooth != 0 || skin.evenTone != 0
             )
         }
     }

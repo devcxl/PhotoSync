@@ -1,13 +1,15 @@
 package cn.devcxl.photosync.editor.domain
 
 import kotlin.math.abs
-import kotlin.math.roundToInt
 
 /**
  * CPU reference of physical Pass C (`SpatialDetailChain`), the spatial-detail stage that sits
  * between `Pass B` and the effects pass.
  *
  * The stages run in the contract order:
+ * 0. **Skin smoothing** — Portrait frequency separation weighted by `skinMask`: the luminance detail
+ *    is attenuated by `smooth` (keeping `texture` of it) and the mid-frequency chroma is blended
+ *    towards its own local average by `evenTone`.
  * 1. **Noise reduction** — luminance `3 x 3` guided filter with a `detail` blend-back, then CbCr
  *    `5 x 5` edge-guided chroma smoothing.
  * 2. **Dehaze** — `I' = (I - A (1 - t)) / t` with `t = max(t_low, 0.1)`, or the inverse haze
@@ -54,9 +56,6 @@ object PassCDetailMath {
     private const val LUMA_NR_RADIUS = 1
     private const val LUMA_NR_EPSILON = 1e-3f
     private const val CHANNELS = 3
-    private const val SHARPEN_MAX_STEP_PX = 3
-    private const val CENTRE_WEIGHT = 0.5f
-    private const val NEIGHBOUR_WEIGHT = 0.25f
 
     /**
      * Runs the whole Pass C chain in place on interleaved sRGB samples in `[0, 1]`.
@@ -64,8 +63,9 @@ object PassCDetailMath {
      * @param srgb Display-domain samples, row-major, modified in place.
      * @param params Normalised Pass C bundle from [SpatialDetailParams.from].
      * @param analysis Pre-pass result; required by Dehaze and Clarity/Texture, ignored otherwise.
-     * @param skinMask Optional per-pixel skin weight in `[0, 1]`; sharpening is scaled by
-     *   `(1 - skinMask)`, and `null` (the default until the Portrait panel lands) suppresses nothing.
+     * @param skinMask Optional per-pixel skin weight in `[0, 1]`; skin smoothing is weighted by it
+     *   and sharpening is scaled by `(1 - skinMask)`. A `null` mask disables skin smoothing: without
+     *   the analysis the stage would have to guess which pixels are skin.
      * @param resolutionScale Working-to-full resolution ratio, used to keep the sharpening radius
      *   physically identical between the 1024px proxy, the preview cache and a full-resolution bake.
      */
@@ -83,10 +83,23 @@ object PassCDetailMath {
         }
         require(width > 0 && height > 0) { "Frame size must be positive" }
         if (params.isZeroDrawCallShortCircuit) return
+        if (params.hasSkinFrequencySeparation) {
+            SkinSmoothingMath.apply(
+                srgb = srgb,
+                width = width,
+                height = height,
+                skinMask = skinMask,
+                smooth = params.skinSmooth,
+                texture = params.skinTexture,
+                evenTone = params.skinEvenTone
+            )
+        }
         if (params.hasNoiseReduction) denoise(srgb, width, height, params)
         if (params.hasDehaze) removeHaze(srgb, width, height, params, analysis)
         if (params.hasClarityTexture) applyClarityTexture(srgb, width, height, params, analysis)
-        if (params.hasSharpen) applyUnsharpMask(srgb, width, height, params, skinMask, resolutionScale)
+        if (params.hasSharpen) {
+            SharpenMath.apply(srgb, width, height, params, skinMask, resolutionScale)
+        }
     }
 
     /**
@@ -104,16 +117,6 @@ object PassCDetailMath {
 
     /** Transmission floor `max(t, 0.1)`; a pitch-black region can therefore never divide by zero. */
     fun transmission(raw: Float): Float = raw.coerceAtLeast(TRANSMISSION_FLOOR)
-
-    /**
-     * Soft threshold gate: detail below `threshold * THRESHOLD_SCALE` is treated as noise, then the
-     * gate fades in over [THRESHOLD_SOFTNESS] so an edge does not pop.
-     */
-    fun thresholdGate(detail: Float, threshold: Float): Float {
-        val knee = threshold.coerceIn(0.0f, 1.0f) * THRESHOLD_SCALE
-        if (knee <= 0.0f) return 1.0f
-        return ToneShaderMath.smoothStep(knee, knee + THRESHOLD_SOFTNESS, abs(detail))
-    }
 
     private fun denoise(srgb: FloatArray, width: Int, height: Int, params: SpatialDetailParams) {
         val luma = ImageFilters.luminance(srgb)
@@ -210,72 +213,6 @@ object PassCDetailMath {
                 addLumaDelta(srgb, y * width + x, delta * midtoneBell(luma))
             }
         }
-    }
-
-    private fun applyUnsharpMask(
-        srgb: FloatArray,
-        width: Int,
-        height: Int,
-        params: SpatialDetailParams,
-        skinMask: FloatArray?,
-        resolutionScale: Float
-    ) {
-        val amount = params.sharpenAmount.coerceIn(0.0f, MAX_SHARPEN_AMOUNT)
-        if (amount <= 0.0f) return
-        val scale = resolutionScale.takeIf { it.isFinite() && it > 0.0f } ?: 1.0f
-        val radius = (params.sharpenRadiusPx * scale)
-            .coerceIn(MIN_WORKING_RADIUS_PX, MAX_WORKING_RADIUS_PX)
-        val step = radius.roundToInt().coerceIn(1, SHARPEN_MAX_STEP_PX)
-        val luma = ImageFilters.luminance(srgb)
-        val blurred = sharpenBlur(luma, width, height, step)
-        val masking = params.sharpenMasking.coerceIn(0.0f, 1.0f)
-        for (index in luma.indices) {
-            val detail = luma[index] - blurred[index]
-            val gate = thresholdGate(detail, params.sharpenThreshold)
-            if (gate <= 0.0f) continue
-            val weight = maskingWeight(luma, width, height, index, masking)
-            val skin = 1.0f - (skinMask?.get(index)?.coerceIn(0.0f, 1.0f) ?: 0.0f)
-            val delta = amount * detail * gate * weight * skin
-            if (delta == 0.0f) continue
-            addLumaDelta(srgb, index, delta)
-        }
-    }
-
-    /**
-     * Separable `[0.25, 0.5, 0.25]` low-pass with a step of [step] pixels, so one kernel serves every
-     * radius between `0.5` and `3.0` and the GLSL stage can reproduce it with nine taps.
-     */
-    private fun sharpenBlur(luma: FloatArray, width: Int, height: Int, step: Int): FloatArray {
-        val out = FloatArray(luma.size)
-        for (y in 0 until height) {
-            for (x in 0 until width) {
-                var sum = 0.0f
-                for (dy in -1..1) {
-                    val sampleY = (y + dy * step).coerceIn(0, height - 1)
-                    val weightY = if (dy == 0) CENTRE_WEIGHT else NEIGHBOUR_WEIGHT
-                    for (dx in -1..1) {
-                        val sampleX = (x + dx * step).coerceIn(0, width - 1)
-                        val weightX = if (dx == 0) CENTRE_WEIGHT else NEIGHBOUR_WEIGHT
-                        sum += luma[sampleY * width + sampleX] * weightX * weightY
-                    }
-                }
-                out[y * width + x] = sum
-            }
-        }
-        return out
-    }
-
-    private fun maskingWeight(
-        luma: FloatArray,
-        width: Int,
-        height: Int,
-        index: Int,
-        masking: Float
-    ): Float {
-        if (masking <= 0.0f) return 1.0f
-        val gradient = Srgb8Packer.neighborGradient(luma, width, height, index)
-        val edge = ToneShaderMath.smoothStep(0.0f, MASK_GRADIENT_REFERENCE, gradient)
-        return 1.0f + (edge - 1.0f) * masking
     }
 
     private fun addLumaDelta(srgb: FloatArray, pixelIndex: Int, delta: Float) {

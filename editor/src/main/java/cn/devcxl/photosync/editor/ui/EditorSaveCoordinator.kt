@@ -5,6 +5,8 @@ import timber.log.Timber
 import cn.devcxl.photosync.editor.contract.EditorHostRegistry
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.LiquifySession
+import cn.devcxl.photosync.editor.domain.PortraitAnalysis
+import cn.devcxl.photosync.editor.domain.PortraitWarpComposer
 import cn.devcxl.photosync.editor.render.EditorPreviewSession
 
 /**
@@ -17,7 +19,8 @@ import cn.devcxl.photosync.editor.render.EditorPreviewSession
 internal class EditorSaveCoordinator(
     private val photoId: Long,
     private val previewSession: EditorPreviewSession,
-    private val liquifySession: LiquifySession
+    private val liquifySession: LiquifySession,
+    private val portraitAnalysis: () -> PortraitAnalysis? = { null }
 ) {
 
     /**
@@ -37,7 +40,7 @@ internal class EditorSaveCoordinator(
         val previewPath = if (finalGraph.isIdentity()) {
             null
         } else {
-            previewSession.writePreviewCache(finalGraph, liquifySession.mesh)
+            writePreviewCache(finalGraph)
         }
         val store = EditorHostRegistry.editStore
         if (store == null) {
@@ -50,5 +53,19 @@ internal class EditorSaveCoordinator(
             previewCachePath = previewPath
         )
         return true
+    }
+
+    /**
+     * Renders the preview cache with the exact `uWarpTex` and `skinMask` the canvas showed, so the
+     * gallery thumbnail cannot disagree with the editor about a face or body warp.
+     */
+    private fun writePreviewCache(finalGraph: EditGraph): String? {
+        val analysis = portraitAnalysis()
+        val warpField = PortraitWarpComposer.compose(
+            analysis?.faceWarp(finalGraph.portrait.reshape),
+            analysis?.bodyWarp(finalGraph.portrait.body),
+            liquifySession.mesh
+        )
+        return previewSession.writePreviewCache(finalGraph, warpField, analysis?.skinMask)
     }
 }
