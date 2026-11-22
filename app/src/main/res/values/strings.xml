@@ -96,4 +96,8 @@
     <string name="filmstrip_collapse">▾ 收起胶片条</string>
     <string name="filmstrip_expand">▴ 展开胶片条</string>
     <string name="filmstrip_exported_mark">✓</string>
+
+    <!-- Non-destructive photo editor (Ticket #02) -->
+    <string name="edited_badge">✎ 已编辑</string>
+    <string name="edit_photo">编辑照片</string>
 </resources>

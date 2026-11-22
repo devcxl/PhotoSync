@@ -73,6 +73,7 @@ android {
     }
 }
 dependencies {
+    implementation project(':editor')
     implementation project(':libraw')
 
     implementation libs.androidx.core.ktx

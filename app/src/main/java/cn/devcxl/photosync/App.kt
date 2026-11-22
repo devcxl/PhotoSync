@@ -4,11 +4,17 @@ import android.app.Application
 import android.content.Context
 import android.content.IntentFilter
 import android.hardware.usb.UsbManager
+
+import timber.log.Timber
+
+import cn.devcxl.photosync.activity.clearPhotoEditCacheDir
+import cn.devcxl.photosync.data.AppDatabase
+import cn.devcxl.photosync.data.RoomEditStore
+import cn.devcxl.photosync.editor.contract.EditorHostRegistry
 import cn.devcxl.photosync.ptp.manager.UsbPtpConnectionController
 import cn.devcxl.photosync.receiver.UsbPermissionReceiver
 import cn.devcxl.photosync.receiver.UsbReceiver
 import cn.devcxl.photosync.wrapper.RawWrapper
-import timber.log.Timber
 
 /**
  * Application entry point for the PhotoSync app.
@@ -49,6 +55,12 @@ class App : Application() {
         super.onCreate()
         instance = this
         Timber.plant(Timber.DebugTree())
+
+        val db = AppDatabase.getInstance(this)
+        EditorHostRegistry.editStore = RoomEditStore(
+            photoEditDao = db.photoEditDao(),
+            onClearPhotoEditCache = { photoId -> clearPhotoEditCacheDir(cacheDir, photoId) }
+        )
 
         try {
             val ver = RawWrapper.version()

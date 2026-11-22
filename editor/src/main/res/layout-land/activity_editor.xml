@@ -1,0 +1,265 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/editorRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/editor_bg"
+    android:keepScreenOn="true">
+
+    <!-- Central GLES 3.0 preview canvas on the left -->
+    <android.opengl.GLSurfaceView
+        android:id="@+id/glSurfaceView"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toStartOf="@id/bottomPanel"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <TextView
+        android:id="@+id/compareStatusPill"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="56dp"
+        android:background="@color/editor_glass_bg"
+        android:paddingStart="14dp"
+        android:paddingTop="6dp"
+        android:paddingEnd="14dp"
+        android:paddingBottom="6dp"
+        android:text="@string/editor_comparing_original"
+        android:textColor="@color/editor_text_primary"
+        android:textSize="12sp"
+        android:textStyle="bold"
+        android:visibility="gone"
+        app:layout_constraintEnd_toStartOf="@id/bottomPanel"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <!-- Top floating bar above canvas -->
+    <LinearLayout
+        android:id="@+id/editorTopBar"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="14dp"
+        android:paddingTop="10dp"
+        android:paddingEnd="14dp"
+        android:paddingBottom="10dp"
+        app:layout_constraintEnd_toStartOf="@id/bottomPanel"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <Button
+            android:id="@+id/btnDone"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/editor_top_btn_height"
+            android:backgroundTint="@color/editor_accent_blue"
+            android:minWidth="72dp"
+            android:text="@string/editor_done"
+            android:textAllCaps="false"
+            android:textColor="@color/editor_text_primary"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <Space
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:layout_weight="1" />
+
+        <Button
+            android:id="@+id/btnUndo"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/editor_top_btn_height"
+            android:layout_marginEnd="6dp"
+            android:backgroundTint="@color/editor_surface_elevated"
+            android:minWidth="64dp"
+            android:text="@string/editor_undo"
+            android:textAllCaps="false"
+            android:textColor="@color/editor_text_primary"
+            android:textSize="12sp" />
+
+        <Button
+            android:id="@+id/btnRedo"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/editor_top_btn_height"
+            android:layout_marginEnd="6dp"
+            android:backgroundTint="@color/editor_surface_elevated"
+            android:minWidth="64dp"
+            android:text="@string/editor_redo"
+            android:textAllCaps="false"
+            android:textColor="@color/editor_text_primary"
+            android:textSize="12sp" />
+
+        <Button
+            android:id="@+id/btnCompare"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/editor_top_btn_height"
+            android:backgroundTint="@color/editor_surface_elevated"
+            android:minWidth="64dp"
+            android:text="@string/editor_compare"
+            android:textAllCaps="false"
+            android:textColor="@color/editor_text_primary"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <!-- Right-side 320dp vertical panel in landscape -->
+    <LinearLayout
+        android:id="@+id/bottomPanel"
+        android:layout_width="@dimen/editor_side_panel_width"
+        android:layout_height="0dp"
+        android:background="@color/editor_surface"
+        android:gravity="bottom"
+        android:orientation="vertical"
+        android:padding="16dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/activeToolLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/editor_tool_exposure"
+                android:textColor="@color/editor_text_primary"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:text="@string/editor_double_tap_reset_hint"
+                android:textColor="@color/editor_text_muted"
+                android:textSize="11sp" />
+
+            <TextView
+                android:id="@+id/activeValueText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:textColor="@color/editor_accent_blue"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                tools:text="+0.00 EV" />
+        </LinearLayout>
+
+        <cn.devcxl.photosync.editor.ui.widgets.DialSeekBar
+            android:id="@+id/dialSeekBar"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:layout_marginTop="8dp" />
+
+        <HorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:id="@+id/subToolChipContainer"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/chipExposure"
+                    android:layout_width="wrap_content"
+                    android:layout_height="30dp"
+                    android:background="@color/editor_surface_elevated"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp"
+                    android:text="@string/editor_tool_exposure"
+                    android:textColor="@color/editor_text_primary"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+        </HorizontalScrollView>
+
+        <LinearLayout
+            android:id="@+id/categoryTabRow"
+            android:layout_width="match_parent"
+            android:layout_height="36dp"
+            android:layout_marginTop="14dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:weightSum="6">
+
+            <TextView
+                android:id="@+id/tabPreset"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="@string/editor_tab_preset"
+                android:textColor="@color/editor_text_muted"
+                android:textSize="11sp" />
+
+            <TextView
+                android:id="@+id/tabGeometry"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="@string/editor_tab_geometry"
+                android:textColor="@color/editor_text_muted"
+                android:textSize="11sp" />
+
+            <TextView
+                android:id="@+id/tabTone"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="@color/editor_surface_elevated"
+                android:gravity="center"
+                android:text="@string/editor_tab_tone"
+                android:textColor="@color/editor_text_primary"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tabColor"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="@string/editor_tab_color"
+                android:textColor="@color/editor_text_muted"
+                android:textSize="11sp" />
+
+            <TextView
+                android:id="@+id/tabDetail"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="@string/editor_tab_detail"
+                android:textColor="@color/editor_text_muted"
+                android:textSize="11sp" />
+
+            <TextView
+                android:id="@+id/tabPortrait"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="@string/editor_tab_portrait"
+                android:textColor="@color/editor_text_muted"
+                android:textSize="11sp" />
+        </LinearLayout>
+    </LinearLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

@@ -29,6 +29,7 @@ import android.widget.CheckBox
 import android.widget.TextView
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.VisibleForTesting
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -64,6 +65,10 @@ import cn.devcxl.photosync.data.AppDatabase
 import cn.devcxl.photosync.data.PhotoDao
 import cn.devcxl.photosync.data.entity.PhotoEntity
 import cn.devcxl.photosync.databinding.ActivityMainBinding
+import cn.devcxl.photosync.editor.contract.EditorHostRegistry
+import cn.devcxl.photosync.editor.contract.EditorLaunchArgs
+import cn.devcxl.photosync.editor.contract.PhotoEditRecord
+import cn.devcxl.photosync.editor.ui.EditorActivity
 import cn.devcxl.photosync.export.ExifCopier
 import cn.devcxl.photosync.export.GallerySink
 import cn.devcxl.photosync.export.MediaStoreGallerySink
@@ -116,8 +121,19 @@ class MainActivity : AppCompatActivity() {
     private var pendingNewPhotoCount: Int = 0
     private var filmstripCollapsed: Boolean = false
     private var lastBottomInsetPx: Int = 0
+    @Volatile
+    private var editedPhotoMap: Map<Long, PhotoEditRecord> = emptyMap()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val hideFeedbackRunnable = Runnable { hideInlineFeedback() }
+
+    private val editorLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val editedPath = result.data?.getStringExtra(EditorActivity.EXTRA_SOURCE_PATH)
+        if (!editedPath.isNullOrBlank()) {
+            invalidateCachedBitmapsForPath(editedPath)
+        }
+    }
 
     private val thumbnailCache: LruCache<String, Bitmap> by lazy { createBitmapCache(16) }
     private val fullBitmapCache: LruCache<String, Bitmap> by lazy { createBitmapCache(8) }
@@ -289,7 +305,7 @@ class MainActivity : AppCompatActivity() {
             },
             jpegSourceInfoProvider = { path -> getJpegSourceInfo(path) },
             isCurrentPageProvider = { position -> position == binding.viewPager.currentItem },
-            isJpegProvider = { path -> isJpegPath(path) },
+            isJpegProvider = { path -> isJpegPath(path) && !hasEditPreviewForPath(path) },
             onPhotoScaleChanged = { _, position, scale, minScale ->
                 onCurrentPhotoScaleChanged(position, scale, minScale)
             },
@@ -527,6 +543,24 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                EditorHostRegistry.editStore?.observeEditedPhotoMap()?.collect { newMap ->
+                    val oldMap = editedPhotoMap
+                    editedPhotoMap = newMap
+                    val changedPhotoIds = (oldMap.keys + newMap.keys).filter { id ->
+                        oldMap[id] != newMap[id]
+                    }
+                    for (photoId in changedPhotoIds) {
+                        val path = findPathByPhotoId(photoId)
+                        if (path != null) {
+                            invalidateCachedBitmapsForPath(path)
+                        }
+                    }
+                    renderPhotoChrome()
+                }
+            }
+        }
     }
 
     private fun renderNewPhotoBanner() {
@@ -617,6 +651,8 @@ class MainActivity : AppCompatActivity() {
         binding.photoMetaPill.visibility = if (hasPhotos) View.VISIBLE else View.GONE
         binding.infoToggleButton.visibility = if (hasPhotos) View.VISIBLE else View.GONE
         binding.topBarSpacer.visibility = if (hasPhotos) View.GONE else View.VISIBLE
+        binding.editButton.isEnabled = hasPhotos
+        binding.editButton.alpha = if (hasPhotos) 1.0f else 0.35f
         binding.exportButton.isEnabled = hasPhotos
         binding.exportButton.alpha = if (hasPhotos) 1.0f else 0.35f
         binding.deleteButton.isEnabled = hasPhotos
@@ -636,6 +672,8 @@ class MainActivity : AppCompatActivity() {
         binding.photoNameText.text = item.name ?: getString(R.string.photo_default_name)
 
         val exported = isPhotoExported(item.uriString)
+        val edited = isPhotoMarkedEdited(item, editedPhotoMap)
+        binding.photoEditedBadge.visibility = if (edited) View.VISIBLE else View.GONE
         binding.photoExportedBadge.visibility = if (exported) View.VISIBLE else View.GONE
         if (exported) {
             binding.exportButton.setBackgroundResource(R.drawable.bg_glass_icon_btn_exported)
@@ -766,6 +804,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupButtons() {
+        binding.editButton.setOnClickListener { openEditorForCurrentPhoto() }
         binding.exportButton.setOnClickListener { exportCurrent() }
         binding.deleteButton.setOnClickListener { showDeleteConfirmDialog() }
         binding.connectButton.setOnClickListener { onConnectButtonClick() }
@@ -1007,7 +1046,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun ensureFullPreview(path: String) {
         if (fullBitmapCache.get(path) != null) return
-        if (isRawPath(path)) return
+        if (isRawPath(path) && !hasEditPreviewForPath(path)) return
         if (!inFlightFullPaths.add(path)) return
         lifecycleScope.launch(Dispatchers.IO) {
             try {
@@ -1023,6 +1062,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun decodeThumbnailBitmap(path: String): Bitmap? {
+        val previewOverride = resolvePreviewOverridePath(path)
+        if (previewOverride != null) {
+            return decodeSampledBitmap(previewOverride, THUMBNAIL_MAX_EDGE_PX)
+        }
         val ext = ExtensionUtils.fileExtension(path)
         return try {
             when {
@@ -1044,6 +1087,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun decodeFullPreviewBitmap(path: String): Bitmap? {
+        val previewOverride = resolvePreviewOverridePath(path)
+        if (previewOverride != null) {
+            val targetEdge = (previewLongEdgePx * FULL_PREVIEW_SCALE_FACTOR)
+                .coerceAtMost(FULL_PREVIEW_MAX_EDGE_PX)
+            return decodeSampledBitmap(previewOverride, targetEdge)
+        }
         val ext = ExtensionUtils.fileExtension(path)
         return try {
             when {
@@ -1059,6 +1108,53 @@ class MainActivity : AppCompatActivity() {
             Timber.w(e, "decodeFullPreviewBitmap failed for path=%s", path)
             null
         }
+    }
+
+    private fun openEditorForCurrentPhoto() {
+        if (adapter.itemCount == 0) return
+        val index = binding.viewPager.currentItem.coerceIn(0, adapter.itemCount - 1)
+        val entity = adapter.getItem(index) ?: return
+        val args = EditorLaunchArgs(
+            photoId = entity.id,
+            sourcePath = entity.path,
+            displayName = entity.name,
+            isRaw = isRawPath(entity.path)
+        )
+        editorLauncher.launch(EditorActivity.createIntent(this, args))
+    }
+
+    private fun resolvePreviewOverridePath(originalPath: String): String? {
+        val idx = adapter.indexOfPath(originalPath)
+        val entity = if (idx >= 0) adapter.getItem(idx) else null
+        if (entity == null) return null
+        val resolved = resolveEffectivePreviewPath(entity, editedPhotoMap)
+        return resolved.takeIf { it != originalPath }
+    }
+
+    private fun hasEditPreviewForPath(originalPath: String): Boolean =
+        resolvePreviewOverridePath(originalPath) != null
+
+    private fun findPathByPhotoId(photoId: Long): String? {
+        for (i in 0 until adapter.itemCount) {
+            val item = adapter.getItem(i)
+            if (item != null && item.id == photoId) return item.path
+        }
+        return null
+    }
+
+    private fun invalidateCachedBitmapsForPath(path: String) {
+        thumbnailCache.remove(path)
+        fullBitmapCache.remove(path)
+        inFlightThumbnailPaths.remove(path)
+        inFlightFullPaths.remove(path)
+        jpegSourceInfoCache.remove(path)
+        val idx = adapter.indexOfPath(path)
+        if (idx >= 0) {
+            ensurePhotoForPosition(path, idx)
+        }
+        adapter.notifyPathChanged(path)
+        filmstripAdapter.notifyPathChanged(path)
+        renderPhotoChrome()
     }
 
     private fun decodeSampledBitmap(path: String, targetLongEdge: Int): Bitmap? {
@@ -1361,9 +1457,10 @@ class MainActivity : AppCompatActivity() {
                 inFlightFullPaths.remove(entity.path)
                 jpegSourceInfoCache.remove(entity.path)
 
-                // Delete physical file
+                // Delete physical file and any rendered editor preview caches
                 val file = File(entity.path)
                 val fileDeleted = if (file.exists()) file.delete() else true
+                clearPhotoEditCacheDir(cacheDir, entity.id)
 
                 // Remove from database
                 dao.delete(entity)

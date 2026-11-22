@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="editor_bg">#000000</color>
+    <color name="editor_surface">#14161C</color>
+    <color name="editor_surface_elevated">#1B1E26</color>
+    <color name="editor_glass_bg">#C70E1014</color>
+    <color name="editor_glass_border">#26FFFFFF</color>
+    <color name="editor_text_primary">#F4F5F7</color>
+    <color name="editor_text_secondary">#A1A7B3</color>
+    <color name="editor_text_muted">#6C7382</color>
+    <color name="editor_accent_blue">#3B82F6</color>
+    <color name="editor_accent_blue_pill">#DB2563EB</color>
+    <color name="editor_accent_blue_border">#8093C5FD</color>
+    <color name="editor_zero_pin">#F59E0B</color>
+</resources>

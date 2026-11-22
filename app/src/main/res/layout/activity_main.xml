@@ -198,6 +198,23 @@
                     tools:text="RAW"/>
 
                 <TextView
+                    android:id="@+id/photoEditedBadge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:background="@drawable/bg_edited_pill"
+                    android:paddingStart="7dp"
+                    android:paddingTop="1dp"
+                    android:paddingEnd="7dp"
+                    android:paddingBottom="1dp"
+                    android:text="@string/edited_badge"
+                    android:textColor="@color/toggle_on_text"
+                    android:textSize="10sp"
+                    android:textStyle="bold"
+                    android:visibility="gone"
+                    tools:visibility="visible"/>
+
+                <TextView
                     android:id="@+id/photoExportedBadge"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -293,6 +310,18 @@
         </LinearLayout>
 
         <!-- Action buttons (circle diameter unified with top bar height) -->
+        <ImageButton
+            android:id="@+id/editButton"
+            android:layout_width="@dimen/top_bar_control_height"
+            android:layout_height="@dimen/top_bar_control_height"
+            android:layout_marginEnd="8dp"
+            android:background="@drawable/bg_glass_icon_btn"
+            android:contentDescription="@string/edit_photo"
+            android:padding="9dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_edit_24"
+            app:tint="@color/darkroom_text_primary"/>
+
         <ImageButton
             android:id="@+id/exportButton"
             android:layout_width="@dimen/top_bar_control_height"

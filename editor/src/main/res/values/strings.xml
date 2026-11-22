@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="editor_done">✓ 完成</string>
+    <string name="editor_undo">↶ 撤销</string>
+    <string name="editor_redo">↷ 重做</string>
+    <string name="editor_compare">对比</string>
+    <string name="editor_comparing_original">未编辑原图 (Before)</string>
+    <string name="editor_tab_preset">预设</string>
+    <string name="editor_tab_geometry">几何</string>
+    <string name="editor_tab_tone">影调</string>
+    <string name="editor_tab_color">色彩</string>
+    <string name="editor_tab_detail">细节</string>
+    <string name="editor_tab_portrait">人像</string>
+    <string name="editor_tool_exposure">曝光</string>
+    <string name="editor_tool_Exposure_modified">曝光 •</string>
+    <string name="editor_exposure_value_fmt">%1$+.2f EV</string>
+    <string name="editor_double_tap_reset_hint">双击标签重置</string>
+    <string name="editor_source_missing">源文件已清理，请重新连接相机同步</string>
+</resources>
