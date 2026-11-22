@@ -35,7 +35,6 @@ internal interface VendorProfile {
     fun createEventChannel(session: PtpSession): CameraEventChannel? = null
 }
 
-/** Cameras that speak plain PTP: object-list polling, no vendor handshake. */
 /**
  * Runs a vendor handshake step, treating a camera rejection as "this body does not do that".
  *
@@ -52,6 +51,7 @@ private inline fun ignoreRejection(step: () -> Unit) {
     }
 }
 
+/** Cameras that speak plain PTP: object-list polling, no vendor handshake. */
 internal object GenericProfile : VendorProfile {
     override val name: String = "PTP standard"
     override val eventChannelOperation: Int? = null

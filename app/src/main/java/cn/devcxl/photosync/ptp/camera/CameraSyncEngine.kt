@@ -2,6 +2,7 @@ package cn.devcxl.photosync.ptp.camera
 
 import cn.devcxl.photosync.ptp.camera.vendor.CameraEvent
 import cn.devcxl.photosync.ptp.camera.vendor.CameraEventChannel
+import cn.devcxl.photosync.ptp.camera.vendor.NikonEventReader
 import cn.devcxl.photosync.ptp.interfaces.FileDownloadedListener
 import cn.devcxl.photosync.ptp.interfaces.FileTransferListener
 import cn.devcxl.photosync.ptp.protocol.PtpDeviceException
@@ -292,8 +293,11 @@ internal class CameraSyncEngine(
             }
         }
 
+        val currentHandled = camera.handledObjects.snapshot().toHashSet()
+        val deletedMidPass = handled.filterTo(HashSet()) { it !in currentHandled }
         val next = reconcileHandledSet(handled, enumeration.handles, imported, enumeration.complete)
-        if (next.toSet() != handled.toSet()) {
+            .filter { it !in deletedMidPass }
+        if (next.toSet() != currentHandled) {
             camera.handledObjects.replace(next)
             camera.persistHandledObjects(
                 if (enumeration.complete) "object list pass" else "partial object list pass"
@@ -346,6 +350,11 @@ internal class CameraSyncEngine(
     }
 
     private suspend fun rememberImported(handle: Int, reason: String) {
+        // Nikon's SDRAM placeholder is a reusable constant rather than a unique card handle;
+        // recording it would cause every subsequent SDRAM capture to be skipped.
+        if (handle == NikonEventReader.SDRAM_PLACEHOLDER_HANDLE) {
+            return
+        }
         if (camera.handledObjects.add(handle)) {
             camera.persistHandledObjects(reason)
         }

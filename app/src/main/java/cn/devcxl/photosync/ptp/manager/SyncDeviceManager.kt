@@ -82,7 +82,7 @@ class SyncDeviceManager(private var device: UsbDevice) {
         if (strIdList.isEmpty()) {
             return emptyList()
         }
-        return strIdList.split(",").map { it.toInt() }
+        return strIdList.split(",").mapNotNull { it.trim().toIntOrNull() }
     }
 
     fun getSyncDevice(device: UsbDevice): SyncDevice? {

@@ -283,10 +283,20 @@ class UsbPtpConnectionController(
             return false
         }
 
-        stateMutex.withLock {
-            currentCamera = camera
-            currentDevice = device
-            connectedCameraSupportsDeletion = camera.supportsObjectDeletion
+        val stillTracking = stateMutex.withLock {
+            if (currentDeviceId != deviceId) {
+                false
+            } else {
+                currentCamera = camera
+                currentDevice = device
+                connectedCameraSupportsDeletion = camera.supportsObjectDeletion
+                true
+            }
+        }
+        if (!stillTracking) {
+            runCatching { camera.close() }
+                .onFailure { closeErr -> Timber.w(closeErr, "Failed to close superseded camera") }
+            return false
         }
         // Publish the state before the loop starts, so a listener installed on Connected
         // cannot miss the first import.

@@ -31,6 +31,13 @@ internal class UsbPtpTransport private constructor(
      */
     private val outPacketSize: Int = maxOf(1, bulkOut.maxPacketSize)
 
+    private val bulkReader = PtpBulkInReader(
+        maxPacketSize = bulkIn.maxPacketSize,
+        readChunkBytes = READ_CHUNK_BYTES,
+    ) { dest, offset, length, timeoutMs ->
+        connection.bulkTransfer(bulkIn, dest, offset, length, timeoutMs)
+    }
+
     override fun writeContainer(bytes: ByteArray) {
         var written = 0
         while (written < bytes.size) {
@@ -51,35 +58,14 @@ internal class UsbPtpTransport private constructor(
         if (bytes.size % outPacketSize == 0) {
             // A non-empty buffer keeps the platform call happy; the length is what makes it
             // a zero-length packet.
-            connection.bulkTransfer(bulkOut, ZERO_LENGTH_PACKET, 0, COMMAND_TIMEOUT_MS)
+            val zlp = connection.bulkTransfer(bulkOut, ZERO_LENGTH_PACKET, 0, COMMAND_TIMEOUT_MS)
+            if (zlp < 0) {
+                throw PtpTransportException("Bulk-OUT zero-length terminator failed ($zlp)")
+            }
         }
     }
 
-    override fun readHeader(): PtpContainerHeader {
-        val header = ByteArray(PtpContainer.HEADER_BYTES)
-        var filled = 0
-        var zeroPackets = 0
-        while (filled < header.size) {
-            val read = connection.bulkTransfer(
-                bulkIn,
-                header,
-                filled,
-                header.size - filled,
-                COMMAND_TIMEOUT_MS,
-            )
-            if (read > 0) {
-                filled += read
-                continue
-            }
-            if (read == 0 && zeroPackets < MAX_ZERO_PACKETS) {
-                // A stray terminator from the previous transfer; the header follows it.
-                zeroPackets++
-                continue
-            }
-            throw PtpTransportException("Bulk-IN header read failed after $filled bytes ($read)")
-        }
-        return PtpContainerHeader.parse(header)
-    }
+    override fun readHeader(): PtpContainerHeader = bulkReader.readHeader(COMMAND_TIMEOUT_MS)
 
     override fun readBody(length: Int): ByteArray {
         if (length > MAX_DATASET_BYTES) {
@@ -99,11 +85,14 @@ internal class UsbPtpTransport private constructor(
     override fun openBody(length: Int): PtpBody = BulkBody(length)
 
     override fun resetDevice() {
+        bulkReader.clear()
         connection.controlTransfer(
-            UsbConstants.USB_DIR_OUT or UsbConstants.USB_TYPE_CLASS,
+            // bmRequestType: host-to-device, class, interface recipient (0x21) per USB
+            // Still Image Capture Class Spec 1.0 section 5.1.
+            UsbConstants.USB_DIR_OUT or UsbConstants.USB_TYPE_CLASS or RECIPIENT_INTERFACE,
             CLASS_DEVICE_RESET,
             0,
-            0,
+            usbInterface.id,
             EMPTY,
             0,
             COMMAND_TIMEOUT_MS,
@@ -147,23 +136,12 @@ internal class UsbPtpTransport private constructor(
         override val remaining: Int get() = bytesLeft
 
         override fun read(dest: ByteArray, offset: Int, count: Int): Int {
-            if (bytesLeft <= 0) {
+            if (bytesLeft <= 0 || count <= 0) {
                 return 0
             }
-            val request = minOf(count, bytesLeft, READ_CHUNK_BYTES)
-            var zeroPackets = 0
-            while (true) {
-                val read = connection.bulkTransfer(bulkIn, dest, offset, request, DATA_TIMEOUT_MS)
-                if (read > 0) {
-                    bytesLeft -= read
-                    return read
-                }
-                if (read == 0 && zeroPackets < MAX_ZERO_PACKETS) {
-                    zeroPackets++
-                    continue
-                }
-                throw PtpTransportException("Bulk-IN body read failed with $bytesLeft bytes pending ($read)")
-            }
+            val read = bulkReader.readBodyBytes(dest, offset, minOf(count, bytesLeft), DATA_TIMEOUT_MS)
+            bytesLeft -= read
+            return read
         }
     }
 
@@ -173,15 +151,19 @@ internal class UsbPtpTransport private constructor(
         /** Buffer for a zero-length packet: the length passed is 0, not the buffer size. */
         private val ZERO_LENGTH_PACKET = ByteArray(1)
 
-        private const val COMMAND_TIMEOUT_MS = 1_000
+        /**
+         * Timeout for command/response headers. Large SD cards can take 2-4 seconds to answer
+         * `GetObjectHandles` or `DeleteObject`, so 1 second is too tight for real hardware.
+         */
+        private const val COMMAND_TIMEOUT_MS = 5_000
         private const val DATA_TIMEOUT_MS = 15_000
-        private const val READ_CHUNK_BYTES = 64 * 1024
-        private const val MAX_ZERO_PACKETS = 2
+        private const val READ_CHUNK_BYTES = 16 * 1024
         private const val MAX_DATASET_BYTES = 16 * 1024 * 1024
 
         private const val CLASS_DEVICE_RESET = 0x66
         private const val CLEAR_FEATURE = 0x01
         private const val ENDPOINT_HALT = 0x00
+        private const val RECIPIENT_INTERFACE = 0x01
         private const val RECIPIENT_ENDPOINT = 0x02
         private const val INTERFACE_CLASS_STILL_IMAGE = 6
 
@@ -257,5 +239,114 @@ internal class UsbPtpTransport private constructor(
             val input = bulkIn ?: return null
             return Endpoints(usbInterface, out, input)
         }
+    }
+}
+
+/**
+ * Packet-aligned reader for the PTP bulk-IN pipe.
+ *
+ * A USB bulk-IN URB whose buffer is smaller than the endpoint's `wMaxPacketSize` (such as a
+ * 12-byte container header read) fails with `EOVERFLOW` on Android/Linux whenever the camera
+ * sends the header and payload together in one USB packet. Reading in multiples of
+ * [maxPacketSize] and buffering the packet tail fixes that without copying full-speed object
+ * transfers through an extra buffer.
+ */
+internal class PtpBulkInReader(
+    maxPacketSize: Int,
+    readChunkBytes: Int = DEFAULT_READ_CHUNK_BYTES,
+    private val readUsb: (dest: ByteArray, offset: Int, length: Int, timeoutMs: Int) -> Int,
+) {
+    private val packetSize = maxOf(1, maxPacketSize)
+    private val alignedChunkBytes = maxOf(packetSize, readChunkBytes - (readChunkBytes % packetSize))
+    private val packetBuffer = ByteArray(packetSize)
+    private var bufferStart = 0
+    private var bufferEnd = 0
+
+    private val bufferedCount: Int get() = bufferEnd - bufferStart
+
+    fun clear() {
+        bufferStart = 0
+        bufferEnd = 0
+    }
+
+    fun readHeader(timeoutMs: Int): PtpContainerHeader {
+        val header = ByteArray(PtpContainer.HEADER_BYTES)
+        var filled = drainBuffered(header, 0, header.size)
+        var zeroPackets = 0
+        while (filled < header.size) {
+            val got = readPacketIntoBuffer(timeoutMs)
+            if (got > 0) {
+                filled += drainBuffered(header, filled, header.size - filled)
+                continue
+            }
+            if (got == 0 && zeroPackets < MAX_ZERO_PACKETS) {
+                zeroPackets++
+                continue
+            }
+            throw PtpTransportException("Bulk-IN header read failed after $filled bytes ($got)")
+        }
+        return PtpContainerHeader.parse(header)
+    }
+
+    fun readBodyBytes(dest: ByteArray, offset: Int, count: Int, timeoutMs: Int): Int {
+        if (count <= 0) {
+            return 0
+        }
+        if (bufferedCount > 0) {
+            return drainBuffered(dest, offset, count)
+        }
+        var zeroPackets = 0
+        while (true) {
+            val got = if (count >= packetSize) {
+                val alignedRequest = minOf(count - (count % packetSize), alignedChunkBytes)
+                readUsb(dest, offset, alignedRequest, timeoutMs)
+            } else {
+                val read = readPacketIntoBuffer(timeoutMs)
+                if (read > 0) {
+                    return drainBuffered(dest, offset, count)
+                }
+                read
+            }
+            if (got > 0) {
+                return got
+            }
+            if (got == 0 && zeroPackets < MAX_ZERO_PACKETS) {
+                zeroPackets++
+                continue
+            }
+            throw PtpTransportException("Bulk-IN body read failed ($got)")
+        }
+    }
+
+    private fun readPacketIntoBuffer(timeoutMs: Int): Int {
+        val got = readUsb(packetBuffer, 0, packetSize, timeoutMs)
+        if (got > packetBuffer.size) {
+            throw PtpTransportException("Bulk-IN packet ($got bytes) exceeded buffer (${packetBuffer.size})")
+        }
+        if (got > 0) {
+            bufferStart = 0
+            bufferEnd = got
+        }
+        return got
+    }
+
+    private fun drainBuffered(dest: ByteArray, offset: Int, maxCount: Int): Int {
+        val available = bufferedCount
+        if (available <= 0 || maxCount <= 0) {
+            return 0
+        }
+        val toCopy = minOf(available, maxCount)
+        System.arraycopy(packetBuffer, bufferStart, dest, offset, toCopy)
+        bufferStart += toCopy
+        if (bufferStart == bufferEnd) {
+            bufferStart = 0
+            bufferEnd = 0
+        }
+        return toCopy
+    }
+
+    private companion object {
+        const val DEFAULT_READ_CHUNK_BYTES = 16 * 1024
+        const val MAX_ZERO_PACKETS = 2
     }
 }

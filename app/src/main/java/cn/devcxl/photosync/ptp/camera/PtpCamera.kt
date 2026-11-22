@@ -51,6 +51,7 @@ internal class PtpCamera private constructor(
     private val ioDispatcher: CoroutineDispatcher,
 ) {
     private val mutex = Mutex()
+    private val persistMutex = Mutex()
     private val session = PtpSession(transport)
 
     /** Objects this session has already imported; shared with the delete path. */
@@ -217,6 +218,16 @@ internal class PtpCamera private constructor(
                 val total = start.declaredLength
                 if (total <= 0) {
                     Timber.w("GetObject(0x%08x) announced %d bytes", handle, total)
+                    try {
+                        if (total == 0) {
+                            session.finishData()
+                        } else {
+                            linkBroken = true
+                        }
+                    } catch (e: Exception) {
+                        linkBroken = true
+                        throw e
+                    }
                     return@locked false
                 }
                 try {
@@ -273,14 +284,16 @@ internal class PtpCamera private constructor(
      */
     internal suspend fun persistHandledObjects(reason: String) {
         val store = importedHandleStore ?: return
-        val snapshot = handledObjects.snapshot()
-        withContext(ioDispatcher) {
-            try {
-                store.save(snapshot)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Timber.w(e, "Saving imported handles failed (%s)", reason)
+        persistMutex.withLock {
+            val snapshot = handledObjects.snapshot()
+            withContext(ioDispatcher) {
+                try {
+                    store.save(snapshot)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Timber.w(e, "Saving imported handles failed (%s)", reason)
+                }
             }
         }
     }

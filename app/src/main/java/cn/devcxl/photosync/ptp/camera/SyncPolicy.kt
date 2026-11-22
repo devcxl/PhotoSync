@@ -127,7 +127,7 @@ internal fun reconcileHandledSet(
  * so a failure is retried for a few polls before the handle is given up. The bound keeps a
  * handle the camera keeps advertising from being retried forever.
  */
-internal class EventRetryQueue(private val maxAttempts: Int = 10) {
+internal class EventRetryQueue(private val maxAttempts: Int = 30) {
     private val attempts = LinkedHashMap<Int, Int>()
 
     /**
