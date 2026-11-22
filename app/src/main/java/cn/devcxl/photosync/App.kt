@@ -11,6 +11,7 @@ import cn.devcxl.photosync.activity.clearPhotoEditCacheDir
 import cn.devcxl.photosync.data.AppDatabase
 import cn.devcxl.photosync.data.RoomEditStore
 import cn.devcxl.photosync.editor.contract.EditorHostRegistry
+import cn.devcxl.photosync.export.MediaStoreGallerySink
 import cn.devcxl.photosync.ptp.manager.UsbPtpConnectionController
 import cn.devcxl.photosync.receiver.UsbPermissionReceiver
 import cn.devcxl.photosync.receiver.UsbReceiver
@@ -61,6 +62,7 @@ class App : Application() {
             photoEditDao = db.photoEditDao(),
             onClearPhotoEditCache = { photoId -> clearPhotoEditCacheDir(cacheDir, photoId) }
         )
+        EditorHostRegistry.gallerySink = MediaStoreGallerySink(contentResolver)
 
         try {
             val ver = RawWrapper.version()

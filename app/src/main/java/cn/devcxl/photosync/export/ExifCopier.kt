@@ -21,14 +21,7 @@ interface ExifTagReader {
     fun getAltitude(defaultValue: Double): Double
 }
 
-/**
- * Minimal write seam over EXIF attributes.
- */
-interface ExifTagWriter {
-    fun setAttribute(tag: String, value: String?)
-    fun setLatLong(latitude: Double, longitude: Double)
-    fun setAltitude(altitude: Double)
-}
+typealias ExifTagWriter = cn.devcxl.photosync.editor.contract.ExifTagWriter
 
 /**
  * Adapter bridging AndroidX [ExifInterface] to [ExifTagReader] and [ExifTagWriter].

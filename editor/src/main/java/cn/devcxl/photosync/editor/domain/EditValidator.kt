@@ -24,91 +24,69 @@ object EditValidator {
     }
 
     private fun sanitizeGeometry(g: GeometryOps): GeometryOps {
-        val rot = g.rotate90.coerceIn(0, 3)
-        val straighten = sanitizeFloat(g.straighten, 0.0f, -45.0f, 45.0f)
-        val crop = sanitizeCrop(g.crop)
+        val l = sanitizeFloat(g.crop.left, 0.0f, 0.0f, 1.0f - MIN_CROP_SPAN)
+        val t = sanitizeFloat(g.crop.top, 0.0f, 0.0f, 1.0f - MIN_CROP_SPAN)
+        val r = sanitizeFloat(g.crop.right, 1.0f, l + MIN_CROP_SPAN, 1.0f)
+        val b = sanitizeFloat(g.crop.bottom, 1.0f, t + MIN_CROP_SPAN, 1.0f)
         val persp = if (g.perspective.size == 8 && g.perspective.all { it.isFinite() }) {
             g.perspective.map { it.coerceIn(-0.5f, 1.5f) }
         } else {
             GeometryOps.DEFAULT_PERSPECTIVE_QUAD
         }
         return g.copy(
-            rotate90 = rot,
-            straighten = straighten,
-            crop = crop,
+            rotate90 = g.rotate90.coerceIn(0, 3),
+            straighten = sanitizeFloat(g.straighten, 0.0f, -45.0f, 45.0f),
+            crop = CropRect(left = l, top = t, right = r, bottom = b),
             perspective = persp
         )
     }
 
-    private fun sanitizeCrop(c: CropRect): CropRect {
-        val l = sanitizeFloat(c.left, 0.0f, 0.0f, 1.0f - MIN_CROP_SPAN)
-        val t = sanitizeFloat(c.top, 0.0f, 0.0f, 1.0f - MIN_CROP_SPAN)
-        val r = sanitizeFloat(c.right, 1.0f, l + MIN_CROP_SPAN, 1.0f)
-        val b = sanitizeFloat(c.bottom, 1.0f, t + MIN_CROP_SPAN, 1.0f)
-        return CropRect(left = l, top = t, right = r, bottom = b)
-    }
+    private fun sanitizeTone(t: ToneOps): ToneOps = ToneOps(
+        exposure = sanitizeFloat(t.exposure, 0.0f, -5.0f, 5.0f),
+        brightness = t.brightness.clampSigned100(),
+        contrast = t.contrast.clampSigned100(),
+        glow = t.glow.clampSigned100(),
+        highlights = t.highlights.clampSigned100(),
+        shadows = t.shadows.clampSigned100(),
+        whites = t.whites.clampSigned100(),
+        blacks = t.blacks.clampSigned100()
+    )
 
-    private fun sanitizeTone(t: ToneOps): ToneOps {
-        return ToneOps(
-            exposure = sanitizeFloat(t.exposure, 0.0f, -5.0f, 5.0f),
-            brightness = t.brightness.coerceIn(-100, 100),
-            contrast = t.contrast.coerceIn(-100, 100),
-            glow = t.glow.coerceIn(-100, 100),
-            highlights = t.highlights.coerceIn(-100, 100),
-            shadows = t.shadows.coerceIn(-100, 100),
-            whites = t.whites.coerceIn(-100, 100),
-            blacks = t.blacks.coerceIn(-100, 100)
-        )
-    }
+    private fun sanitizeColor(c: ColorOps): ColorOps = ColorOps(
+        temp = c.temp.clampSigned100(),
+        tint = c.tint.clampSigned100(),
+        saturation = c.saturation.clampSigned100(),
+        vibrance = c.vibrance.clampSigned100(),
+        hsl = sanitizeHsl(c.hsl),
+        curve = CurveOps(
+            rgb = sanitizeCurvePoints(c.curve.rgb),
+            r = sanitizeCurvePoints(c.curve.r),
+            g = sanitizeCurvePoints(c.curve.g),
+            b = sanitizeCurvePoints(c.curve.b)
+        ),
+        split = SplitToningOps(
+            hiHue = c.split.hiHue.coerceIn(0, 360),
+            hiSat = c.split.hiSat.clampUnsigned100(),
+            shHue = c.split.shHue.coerceIn(0, 360),
+            shSat = c.split.shSat.clampUnsigned100(),
+            balance = c.split.balance.clampSigned100()
+        ),
+        fade = c.fade.clampUnsigned100(),
+        lut = c.lut?.takeIf { it.id.isNotBlank() }?.let {
+            LutRef(id = it.id.trim(), strength = it.strength.clampUnsigned100())
+        }
+    )
 
-    private fun sanitizeColor(c: ColorOps): ColorOps {
-        return ColorOps(
-            temp = c.temp.coerceIn(-100, 100),
-            tint = c.tint.coerceIn(-100, 100),
-            saturation = c.saturation.coerceIn(-100, 100),
-            vibrance = c.vibrance.coerceIn(-100, 100),
-            hsl = sanitizeHsl(c.hsl),
-            curve = sanitizeCurve(c.curve),
-            split = SplitToningOps(
-                hiHue = c.split.hiHue.coerceIn(0, 360),
-                hiSat = c.split.hiSat.coerceIn(0, 100),
-                shHue = c.split.shHue.coerceIn(0, 360),
-                shSat = c.split.shSat.coerceIn(0, 100),
-                balance = c.split.balance.coerceIn(-100, 100)
-            ),
-            fade = c.fade.coerceIn(0, 100),
-            lut = c.lut?.takeIf { it.id.isNotBlank() }?.let {
-                LutRef(id = it.id.trim(), strength = it.strength.coerceIn(0, 100))
-            }
-        )
-    }
-
-    private fun sanitizeHsl(h: HslOps): HslOps {
-        fun band(b: HslBandShift) = HslBandShift(
-            hue = b.hue.coerceIn(-100, 100),
-            saturation = b.saturation.coerceIn(-100, 100),
-            luminance = b.luminance.coerceIn(-100, 100)
-        )
-        return HslOps(
-            red = band(h.red),
-            orange = band(h.orange),
-            yellow = band(h.yellow),
-            green = band(h.green),
-            aqua = band(h.aqua),
-            blue = band(h.blue),
-            purple = band(h.purple),
-            magenta = band(h.magenta)
-        )
-    }
-
-    private fun sanitizeCurve(curve: CurveOps): CurveOps {
-        return CurveOps(
-            rgb = sanitizeCurvePoints(curve.rgb),
-            r = sanitizeCurvePoints(curve.r),
-            g = sanitizeCurvePoints(curve.g),
-            b = sanitizeCurvePoints(curve.b)
-        )
-    }
+    private fun sanitizeHsl(h: HslOps): HslOps = HslOps(
+        red = h.red.sanitized(),
+        orange = h.orange.sanitized(),
+        yellow = h.yellow.sanitized(),
+        green = h.green.sanitized(),
+        aqua = h.aqua.sanitized(),
+        blue = h.blue.sanitized(),
+        purple = h.purple.sanitized(),
+        magenta = h.magenta.sanitized()
+    )
 
     private fun sanitizeCurvePoints(points: List<CurvePoint>): List<CurvePoint> {
         val valid = points
@@ -126,70 +104,73 @@ object EditValidator {
         return if (deduplicated.size >= 2) deduplicated else CurveOps.DEFAULT_LINEAR_CURVE
     }
 
-    private fun sanitizeDetail(d: DetailOps): DetailOps {
-        return DetailOps(
-            sharpen = SharpenOps(
-                amount = d.sharpen.amount.coerceIn(0, 150),
-                radius = sanitizeFloat(d.sharpen.radius, 1.0f, 0.5f, 3.0f),
-                threshold = d.sharpen.threshold.coerceIn(0, 100),
-                masking = d.sharpen.masking.coerceIn(0, 100)
-            ),
-            clarity = d.clarity.coerceIn(-100, 100),
-            texture = d.texture.coerceIn(-100, 100),
-            dehaze = d.dehaze.coerceIn(-100, 100),
-            nr = NoiseReductionOps(
-                luma = d.nr.luma.coerceIn(0, 100),
-                chroma = d.nr.chroma.coerceIn(0, 100),
-                detail = d.nr.detail.coerceIn(0, 100)
-            )
+    private fun sanitizeDetail(d: DetailOps): DetailOps = DetailOps(
+        sharpen = SharpenOps(
+            amount = d.sharpen.amount.coerceIn(0, 150),
+            radius = sanitizeFloat(d.sharpen.radius, 1.0f, 0.5f, 3.0f),
+            threshold = d.sharpen.threshold.clampUnsigned100(),
+            masking = d.sharpen.masking.clampUnsigned100()
+        ),
+        clarity = d.clarity.clampSigned100(),
+        texture = d.texture.clampSigned100(),
+        dehaze = d.dehaze.clampSigned100(),
+        nr = NoiseReductionOps(
+            luma = d.nr.luma.clampUnsigned100(),
+            chroma = d.nr.chroma.clampUnsigned100(),
+            detail = d.nr.detail.clampUnsigned100()
         )
-    }
+    )
 
-    private fun sanitizeEffects(e: EffectsOps): EffectsOps {
-        return EffectsOps(
-            grain = GrainOps(
-                amount = e.grain.amount.coerceIn(0, 100),
-                size = e.grain.size.coerceIn(0, 100),
-                roughness = e.grain.roughness.coerceIn(0, 100),
-                seed = e.grain.seed.coerceIn(1, 999999)
-            ),
-            vignette = VignetteOps(
-                amount = e.vignette.amount.coerceIn(-100, 100),
-                midpoint = e.vignette.midpoint.coerceIn(0, 100),
-                feather = e.vignette.feather.coerceIn(0, 100),
-                roundness = e.vignette.roundness.coerceIn(-100, 100)
-            ),
-            ca = ChromaticAberrationOps(
-                redCyan = e.ca.redCyan.coerceIn(-100, 100),
-                blueYellow = e.ca.blueYellow.coerceIn(-100, 100),
-                defringe = e.ca.defringe.coerceIn(0, 100)
-            )
+    private fun sanitizeEffects(e: EffectsOps): EffectsOps = EffectsOps(
+        grain = GrainOps(
+            amount = e.grain.amount.clampUnsigned100(),
+            size = e.grain.size.clampUnsigned100(),
+            roughness = e.grain.roughness.clampUnsigned100(),
+            seed = e.grain.seed.coerceIn(1, 999999)
+        ),
+        vignette = VignetteOps(
+            amount = e.vignette.amount.clampSigned100(),
+            midpoint = e.vignette.midpoint.clampUnsigned100(),
+            feather = e.vignette.feather.clampUnsigned100(),
+            roundness = e.vignette.roundness.clampSigned100()
+        ),
+        ca = ChromaticAberrationOps(
+            redCyan = e.ca.redCyan.clampSigned100(),
+            blueYellow = e.ca.blueYellow.clampSigned100(),
+            defringe = e.ca.defringe.clampUnsigned100()
         )
-    }
+    )
 
-    private fun sanitizePortrait(p: PortraitOps): PortraitOps {
-        return PortraitOps(
-            skin = SkinOps(
-                smooth = p.skin.smooth.coerceIn(0, 100),
-                texture = p.skin.texture.coerceIn(0, 100),
-                evenTone = p.skin.evenTone.coerceIn(0, 100)
-            ),
-            reshape = ReshapeOps(
-                face = p.reshape.face.coerceIn(-100, 100),
-                eyes = p.reshape.eyes.coerceIn(-100, 100),
-                nose = p.reshape.nose.coerceIn(-100, 100),
-                chin = p.reshape.chin.coerceIn(-100, 100),
-                forehead = p.reshape.forehead.coerceIn(-100, 100),
-                smile = p.reshape.smile.coerceIn(-100, 100)
-            ),
-            body = BodyOps(
-                waist = p.body.waist.coerceIn(-100, 100),
-                legs = p.body.legs.coerceIn(-100, 100),
-                waistY = p.body.waistY?.takeIf { it.isFinite() }?.coerceIn(0.2f, 0.85f),
-                hipY = p.body.hipY?.takeIf { it.isFinite() }?.coerceIn(0.3f, 0.9f)
-            )
+    private fun sanitizePortrait(p: PortraitOps): PortraitOps = PortraitOps(
+        skin = SkinOps(
+            smooth = p.skin.smooth.clampUnsigned100(),
+            texture = p.skin.texture.clampUnsigned100(),
+            evenTone = p.skin.evenTone.clampUnsigned100()
+        ),
+        reshape = ReshapeOps(
+            face = p.reshape.face.clampSigned100(),
+            eyes = p.reshape.eyes.clampSigned100(),
+            nose = p.reshape.nose.clampSigned100(),
+            chin = p.reshape.chin.clampSigned100(),
+            forehead = p.reshape.forehead.clampSigned100(),
+            smile = p.reshape.smile.clampSigned100()
+        ),
+        body = BodyOps(
+            waist = p.body.waist.clampSigned100(),
+            legs = p.body.legs.clampSigned100(),
+            waistY = p.body.waistY?.takeIf { it.isFinite() }?.coerceIn(0.2f, 0.85f),
+            hipY = p.body.hipY?.takeIf { it.isFinite() }?.coerceIn(0.3f, 0.9f)
         )
-    }
+    )
+
+    private fun HslBandShift.sanitized() = HslBandShift(
+        hue = hue.clampSigned100(),
+        saturation = saturation.clampSigned100(),
+        luminance = luminance.clampSigned100()
+    )
+
+    private fun Int.clampSigned100(): Int = coerceIn(-100, 100)
+    private fun Int.clampUnsigned100(): Int = coerceIn(0, 100)
 
     private fun sanitizeFloat(value: Float, defaultValue: Float, min: Float, max: Float): Float {
         return if (value.isFinite()) value.coerceIn(min, max) else defaultValue

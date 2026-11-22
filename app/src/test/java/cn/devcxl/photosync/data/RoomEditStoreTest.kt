@@ -10,7 +10,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 import cn.devcxl.photosync.data.entity.PhotoEditEntity
-import cn.devcxl.photosync.data.entity.UserPresetEntity
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.ToneOps
 
@@ -18,7 +17,6 @@ class RoomEditStoreTest {
 
     private class FakePhotoEditDao : PhotoEditDao {
         val editsByPhotoId = mutableMapOf<Long, PhotoEditEntity>()
-        val presetsById = mutableMapOf<String, UserPresetEntity>()
         private val flow = MutableStateFlow<List<PhotoEditEntity>>(emptyList())
 
         override suspend fun getByPhotoId(photoId: Long): PhotoEditEntity? = editsByPhotoId[photoId]
@@ -37,16 +35,6 @@ class RoomEditStoreTest {
         override suspend fun deleteByPhotoId(photoId: Long) {
             editsByPhotoId.remove(photoId)
             flow.value = editsByPhotoId.values.toList()
-        }
-
-        override suspend fun getAllPresets(): List<UserPresetEntity> = presetsById.values.toList()
-
-        override suspend fun upsertPreset(preset: UserPresetEntity) {
-            presetsById[preset.id] = preset
-        }
-
-        override suspend fun deletePresetById(id: String) {
-            presetsById.remove(id)
         }
     }
 
@@ -67,8 +55,8 @@ class RoomEditStoreTest {
         )
 
         val record = store.getEditForPhoto(42L)
-        assertNotNull(record)
-        assertEquals(42L, record!!.photoId)
+            ?: throw AssertionError("Expected persisted PhotoEditRecord for photoId=42")
+        assertEquals(42L, record.photoId)
         assertEquals("/cache/edits/42/preview.jpg", record.previewCachePath)
         assertTrue(record.graphJson.contains("\"exposure\":1.25"))
         assertTrue(cleanedPhotoIds.isEmpty())
@@ -102,7 +90,7 @@ class RoomEditStoreTest {
     }
 
     @Test
-    fun shouldDefineForeignKeyCascadeAndUniqueIndex_inMigration3To4Sql() {
+    fun shouldDefineForeignKeyCascadeAndUniqueIndex_whenInspectingMigration3To4Sql() {
         val statements = AppDatabase.MIGRATION_3_4_STATEMENTS
         assertEquals(3, statements.size)
         assertTrue(

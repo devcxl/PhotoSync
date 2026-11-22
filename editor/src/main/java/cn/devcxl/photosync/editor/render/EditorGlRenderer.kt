@@ -1,18 +1,13 @@
 package cn.devcxl.photosync.editor.render
 
-import java.io.File
-import java.io.FileOutputStream
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
-import kotlin.math.abs
 import kotlin.math.roundToInt
 
 import android.graphics.Bitmap
 import android.opengl.GLES20
 import android.opengl.GLSurfaceView
 import android.opengl.GLUtils
-
-import cn.devcxl.photosync.editor.domain.ExposureShaderMath
 
 /**
  * GLES 3.0 renderer for the editor preview canvas.
@@ -148,7 +143,6 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
 
     companion object {
         private const val PROXY_MAX_EDGE_PX = 1024
-        private const val PREVIEW_JPEG_QUALITY = 92
 
         fun createProxyBitmap(source: Bitmap): Bitmap {
             val maxEdge = maxOf(source.width, source.height)
@@ -157,57 +151,6 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
             val w = (source.width * scale).roundToInt().coerceAtLeast(1)
             val h = (source.height * scale).roundToInt().coerceAtLeast(1)
             return Bitmap.createScaledBitmap(source, w, h, true)
-        }
-
-        /**
-         * Renders the current exposure adjustment onto [source] using the exact shader math
-         * and writes the preview cache file under `cacheDir/edits/<photoId>/`.
-         */
-        fun renderPreviewCacheToFile(
-            source: Bitmap,
-            exposureEv: Float,
-            cacheDir: File,
-            photoId: Long
-        ): String? {
-            val editDir = File(cacheDir, "edits/$photoId")
-            if (!editDir.exists() && !editDir.mkdirs()) return null
-            editDir.listFiles()?.forEach { it.delete() }
-
-            val outFile = File(editDir, "preview_${System.currentTimeMillis()}.jpg")
-            val w = source.width
-            val h = source.height
-            val pixels = IntArray(w * h)
-            source.getPixels(pixels, 0, w, 0, 0, w, h)
-
-            if (abs(exposureEv) >= 1e-4f) {
-                val lut = ExposureShaderMath.buildExposureLut8(exposureEv)
-                for (i in pixels.indices) {
-                    val p = pixels[i]
-                    val a = p and -0x1000000
-                    val r = lut[(p ushr 16) and 0xFF]
-                    val g = lut[(p ushr 8) and 0xFF]
-                    val b = lut[p and 0xFF]
-                    pixels[i] = a or (r shl 16) or (g shl 8) or b
-                }
-            }
-
-            val outBitmap = Bitmap.createBitmap(pixels, w, h, Bitmap.Config.ARGB_8888)
-            return try {
-                FileOutputStream(outFile).use { stream ->
-                    if (!outBitmap.compress(
-                            Bitmap.CompressFormat.JPEG,
-                            PREVIEW_JPEG_QUALITY,
-                            stream
-                        )
-                    ) {
-                        return null
-                    }
-                    stream.flush()
-                }
-                outFile.absolutePath
-            } finally {
-                outBitmap.recycle()
-            }
         }
     }
 }

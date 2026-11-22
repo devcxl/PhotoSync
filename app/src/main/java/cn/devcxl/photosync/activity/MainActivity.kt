@@ -69,8 +69,8 @@ import cn.devcxl.photosync.editor.contract.EditorHostRegistry
 import cn.devcxl.photosync.editor.contract.EditorLaunchArgs
 import cn.devcxl.photosync.editor.contract.PhotoEditRecord
 import cn.devcxl.photosync.editor.ui.EditorActivity
+import cn.devcxl.photosync.editor.contract.GallerySink
 import cn.devcxl.photosync.export.ExifCopier
-import cn.devcxl.photosync.export.GallerySink
 import cn.devcxl.photosync.export.MediaStoreGallerySink
 import cn.devcxl.photosync.ptp.manager.UsbPtpConnectionState
 import cn.devcxl.photosync.ptp.manager.cameraDeleteBlockedBy
@@ -349,7 +349,8 @@ class MainActivity : AppCompatActivity() {
                 if (position in 0 until adapter.itemCount) {
                     binding.viewPager.setCurrentItem(position, true)
                 }
-            }
+            },
+            hasEditPreviewProvider = { photoId -> editedPhotoMap.containsKey(photoId) }
         )
         binding.filmstripRecyclerView.apply {
             layoutManager = LinearLayoutManager(this@MainActivity, RecyclerView.HORIZONTAL, false)

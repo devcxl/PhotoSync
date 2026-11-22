@@ -221,8 +221,9 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun shouldRequestFilmstripThumbnail_onlyForNonRawItems() {
-        assertTrue(shouldRequestFilmstripThumbnail(isRaw = false))
-        assertFalse(shouldRequestFilmstripThumbnail(isRaw = true))
+    fun shouldRequestFilmstripThumbnail_whenNonRawOrHasEditPreview() {
+        assertTrue(shouldRequestFilmstripThumbnail(isRaw = false, hasEditPreview = false))
+        assertFalse(shouldRequestFilmstripThumbnail(isRaw = true, hasEditPreview = false))
+        assertTrue(shouldRequestFilmstripThumbnail(isRaw = true, hasEditPreview = true))
     }
 }

@@ -3,6 +3,7 @@ package cn.devcxl.photosync.activity
 import java.io.File
 
 import cn.devcxl.photosync.data.entity.PhotoEntity
+import cn.devcxl.photosync.editor.contract.EditorCachePaths
 import cn.devcxl.photosync.editor.contract.PhotoEditRecord
 
 /**
@@ -31,7 +32,7 @@ internal fun isPhotoMarkedEdited(
 
 internal fun clearPhotoEditCacheDir(cacheDir: File, photoId: Long) {
     if (photoId <= 0L) return
-    val editDir = File(cacheDir, "edits/$photoId")
+    val editDir = File(cacheDir, EditorCachePaths.photoEditDirName(photoId))
     if (editDir.exists()) {
         editDir.deleteRecursively()
     }

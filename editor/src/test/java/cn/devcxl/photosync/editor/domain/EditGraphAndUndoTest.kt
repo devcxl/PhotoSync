@@ -112,22 +112,28 @@ class EditGraphAndUndoTest {
     }
 
     @Test
+    fun shouldReturnNull_whenDecodingBlankOrMalformedJson() {
+        org.junit.Assert.assertNull(EditGraphJsonCodec.decode("   "))
+        org.junit.Assert.assertNull(EditGraphJsonCodec.decode("not_json_object"))
+    }
+
+    @Test
     fun shouldCoalesceSliderChangesWithin300msWindowIntoSingleUndoStep_whenDraggingContinuously() {
         val controller = EditorUndoController(maxDepth = 50, coalesceWindowMs = 300L)
 
         controller.onParameterDrag(
             newGraph = EditGraph(tone = ToneOps(exposure = 0.5f)),
-            parameterKey = "tone.exposure",
+            parameterKey = EditParameterKey.TONE_EXPOSURE,
             timestampMs = 1000L
         )
         controller.onParameterDrag(
             newGraph = EditGraph(tone = ToneOps(exposure = 1.0f)),
-            parameterKey = "tone.exposure",
+            parameterKey = EditParameterKey.TONE_EXPOSURE,
             timestampMs = 1120L
         )
         controller.onParameterDrag(
             newGraph = EditGraph(tone = ToneOps(exposure = 1.5f)),
-            parameterKey = "tone.exposure",
+            parameterKey = EditParameterKey.TONE_EXPOSURE,
             timestampMs = 1280L
         )
         controller.onParameterRelease()
@@ -150,28 +156,28 @@ class EditGraphAndUndoTest {
 
         controller.onParameterDrag(
             newGraph = EditGraph(tone = ToneOps(exposure = 0.5f)),
-            parameterKey = "tone.exposure",
+            parameterKey = EditParameterKey.TONE_EXPOSURE,
             timestampMs = 1000L
         )
         controller.onParameterRelease()
 
         controller.onParameterDrag(
             newGraph = EditGraph(tone = ToneOps(exposure = 1.0f)),
-            parameterKey = "tone.exposure",
+            parameterKey = EditParameterKey.TONE_EXPOSURE,
             timestampMs = 1050L
         )
         controller.onParameterRelease()
 
         controller.onParameterDrag(
             newGraph = EditGraph(tone = ToneOps(exposure = 1.5f)),
-            parameterKey = "tone.exposure",
+            parameterKey = EditParameterKey.TONE_EXPOSURE,
             timestampMs = 1100L
         )
         controller.onParameterRelease()
 
         controller.onParameterDrag(
             newGraph = EditGraph(tone = ToneOps(exposure = 2.0f)),
-            parameterKey = "tone.exposure",
+            parameterKey = EditParameterKey.TONE_EXPOSURE,
             timestampMs = 1150L
         )
         controller.onParameterRelease()
@@ -184,7 +190,7 @@ class EditGraphAndUndoTest {
     }
 
     @Test
-    fun shouldBeStrictlyIdentityAtZeroEvAndScaleLinearLight_inExposureShaderMath() {
+    fun shouldBeIdentityAtZeroEvAndScaleLinearLight_whenApplyingExposureShaderMath() {
         val neutral8Bit = 128
         assertEquals(
             neutral8Bit,

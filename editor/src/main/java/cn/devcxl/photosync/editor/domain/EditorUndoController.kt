@@ -1,6 +1,13 @@
 package cn.devcxl.photosync.editor.domain
 
 /**
+ * Typed parameter keys for [EditorUndoController] coalescing windows.
+ */
+enum class EditParameterKey {
+    TONE_EXPOSURE
+}
+
+/**
  * Manages immutable [EditGraph] undo/redo snapshots with a rolling coalescing window so
  * continuous slider dragging within [coalesceWindowMs] produces a single undo step.
  */
@@ -15,7 +22,7 @@ class EditorUndoController(
     var currentGraph: EditGraph = EditValidator.sanitize(initialGraph)
         private set
 
-    private var activeTransactionKey: String? = null
+    private var activeTransactionKey: EditParameterKey? = null
     private var lastDragTimestampMs: Long = 0L
 
     val undoDepth: Int
@@ -50,7 +57,7 @@ class EditorUndoController(
      */
     fun onParameterDrag(
         newGraph: EditGraph,
-        parameterKey: String,
+        parameterKey: EditParameterKey,
         timestampMs: Long = System.currentTimeMillis()
     ): EditGraph {
         val sanitized = EditValidator.sanitize(newGraph)

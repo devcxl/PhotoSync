@@ -22,7 +22,10 @@ import cn.devcxl.photosync.utils.ExtensionUtils
  * RAW files are only decoded on demand when the user visits their page so filmstrip scrolling
  * never spawns background LibRaw bursts.
  */
-internal fun shouldRequestFilmstripThumbnail(isRaw: Boolean): Boolean = !isRaw
+internal fun shouldRequestFilmstripThumbnail(
+    isRaw: Boolean,
+    hasEditPreview: Boolean = false
+): Boolean = !isRaw || hasEditPreview
 
 /**
  * Horizontal thumbnail filmstrip adapter for quick navigation across synced photos.
@@ -30,7 +33,8 @@ internal fun shouldRequestFilmstripThumbnail(isRaw: Boolean): Boolean = !isRaw
 class FilmstripAdapter(
     private val thumbnailProvider: (String) -> Bitmap?,
     private val onThumbnailRequest: (String) -> Unit,
-    private val onItemClick: (Int) -> Unit
+    private val onItemClick: (Int) -> Unit,
+    private val hasEditPreviewProvider: (Long) -> Boolean = { false }
 ) : RecyclerView.Adapter<FilmstripAdapter.VH>() {
 
     companion object {
@@ -64,7 +68,8 @@ class FilmstripAdapter(
         val isSelected = position == selectedPosition
         val isRaw = ExtensionUtils.isRawExtension(ExtensionUtils.fileExtension(entity.path))
         val bitmap = thumbnailProvider(entity.path)
-        if (bitmap == null && shouldRequestFilmstripThumbnail(isRaw)) {
+        val hasEditPreview = hasEditPreviewProvider(entity.id)
+        if (bitmap == null && shouldRequestFilmstripThumbnail(isRaw, hasEditPreview)) {
             onThumbnailRequest(entity.path)
         }
         holder.bind(

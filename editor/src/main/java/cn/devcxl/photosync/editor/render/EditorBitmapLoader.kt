@@ -1,6 +1,7 @@
 package cn.devcxl.photosync.editor.render
 
 import java.io.File
+import java.io.IOException
 import kotlin.math.roundToInt
 
 import android.graphics.Bitmap
@@ -80,7 +81,8 @@ internal object EditorBitmapLoader {
                 ExifInterface.TAG_ORIENTATION,
                 ExifInterface.ORIENTATION_NORMAL
             )
-        } catch (_: Exception) {
+        } catch (e: IOException) {
+            Timber.w(e, "Failed to read EXIF orientation; defaulting to normal")
             ExifInterface.ORIENTATION_NORMAL
         }
         return applyExifOrientation(decoded, orientation)

@@ -7,10 +7,9 @@ import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
 
 import cn.devcxl.photosync.data.entity.PhotoEditEntity
-import cn.devcxl.photosync.data.entity.UserPresetEntity
 
 /**
- * DAO for non-destructive photo edit records and user presets.
+ * DAO for non-destructive photo edit records.
  */
 @Dao
 interface PhotoEditDao {
@@ -26,13 +25,4 @@ interface PhotoEditDao {
 
     @Query("DELETE FROM photo_edits WHERE photo_id = :photoId")
     suspend fun deleteByPhotoId(photoId: Long)
-
-    @Query("SELECT * FROM user_presets ORDER BY created_at ASC")
-    suspend fun getAllPresets(): List<UserPresetEntity>
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsertPreset(preset: UserPresetEntity)
-
-    @Query("DELETE FROM user_presets WHERE id = :id")
-    suspend fun deletePresetById(id: String)
 }

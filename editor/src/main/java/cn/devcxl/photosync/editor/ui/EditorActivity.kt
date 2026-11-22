@@ -22,6 +22,7 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import timber.log.Timber
 
 import cn.devcxl.photosync.editor.R
 import cn.devcxl.photosync.editor.contract.EditorHostRegistry
@@ -29,9 +30,11 @@ import cn.devcxl.photosync.editor.contract.EditorLaunchArgs
 import cn.devcxl.photosync.editor.databinding.ActivityEditorBinding
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.EditGraphJsonCodec
+import cn.devcxl.photosync.editor.domain.EditParameterKey
 import cn.devcxl.photosync.editor.domain.EditorUndoController
 import cn.devcxl.photosync.editor.render.EditorBitmapLoader
 import cn.devcxl.photosync.editor.render.EditorGlRenderer
+import cn.devcxl.photosync.editor.render.PreviewCacheWriter
 import cn.devcxl.photosync.editor.ui.widgets.DialSeekBar
 
 /**
@@ -66,7 +69,8 @@ class EditorActivity : AppCompatActivity() {
         isRaw = intent.getBooleanExtra(EXTRA_IS_RAW, false)
 
         setupGlSurfaceView()
-        setupControls()
+        setupExposureSlider()
+        setupActionButtons()
         loadInitialPhotoAndEditState()
     }
 
@@ -83,6 +87,7 @@ class EditorActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         mainHandler.removeCallbacks(settleFullQualityRunnable)
+        recyclePreviewBitmaps()
         super.onDestroy()
     }
 
@@ -98,7 +103,6 @@ class EditorActivity : AppCompatActivity() {
             this,
             object : GestureDetector.SimpleOnGestureListener() {
                 override fun onDown(e: MotionEvent): Boolean = true
-
                 override fun onLongPress(e: MotionEvent) {
                     setCompareOriginal(true)
                 }
@@ -117,8 +121,7 @@ class EditorActivity : AppCompatActivity() {
         }
     }
 
-    @SuppressLint("ClickableViewAccessibility")
-    private fun setupControls() {
+    private fun setupExposureSlider() {
         binding.dialSeekBar.minValue = -5.0f
         binding.dialSeekBar.maxValue = 5.0f
         binding.dialSeekBar.stepSize = 0.05f
@@ -129,7 +132,10 @@ class EditorActivity : AppCompatActivity() {
                 mainHandler.removeCallbacks(settleFullQualityRunnable)
                 val current = undoController.currentGraph
                 val updated = current.copy(tone = current.tone.copy(exposure = value))
-                val sanitized = undoController.onParameterDrag(updated, KEY_TONE_EXPOSURE)
+                val sanitized = undoController.onParameterDrag(
+                    updated,
+                    EditParameterKey.TONE_EXPOSURE
+                )
                 renderer.useFastProxy = true
                 renderer.exposureEv = sanitized.tone.exposure
                 binding.glSurfaceView.requestRender()
@@ -143,12 +149,14 @@ class EditorActivity : AppCompatActivity() {
                 updateControlsUi()
             }
         }
+    }
 
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupActionButtons() {
         val chipGestureDetector = GestureDetector(
             this,
             object : GestureDetector.SimpleOnGestureListener() {
                 override fun onSingleTapConfirmed(e: MotionEvent): Boolean = true
-
                 override fun onDoubleTap(e: MotionEvent): Boolean {
                     resetExposureToZero()
                     return true
@@ -159,14 +167,11 @@ class EditorActivity : AppCompatActivity() {
             chipGestureDetector.onTouchEvent(event)
             true
         }
-
         binding.btnUndo.setOnClickListener {
-            val graph = undoController.undo()
-            applyGraphToRendererAndUi(graph)
+            applyGraphToRendererAndUi(undoController.undo())
         }
         binding.btnRedo.setOnClickListener {
-            val graph = undoController.redo()
-            applyGraphToRendererAndUi(graph)
+            applyGraphToRendererAndUi(undoController.redo())
         }
         binding.btnCompare.setOnTouchListener { _, event ->
             when (event.actionMasked) {
@@ -175,9 +180,7 @@ class EditorActivity : AppCompatActivity() {
             }
             false
         }
-        binding.btnDone.setOnClickListener {
-            saveEditAndFinish()
-        }
+        binding.btnDone.setOnClickListener { saveEditAndFinish() }
         updateControlsUi()
     }
 
@@ -185,8 +188,12 @@ class EditorActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val (loadedGraph, bmp, proxy) = withContext(Dispatchers.IO) {
                 val existingRecord = EditorHostRegistry.editStore?.getEditForPhoto(photoId)
-                val graph = existingRecord?.graphJson?.let { EditGraphJsonCodec.decode(it) }
-                    ?: EditGraph()
+                val graph = existingRecord?.graphJson?.let { json ->
+                    EditGraphJsonCodec.decode(json) ?: run {
+                        Timber.w("Corrupt EditGraph JSON for photoId=%d; resetting to neutral", photoId)
+                        EditGraph()
+                    }
+                } ?: EditGraph()
                 val fullBmp = EditorBitmapLoader.loadUprightPreviewBitmap(sourcePath, isRaw)
                 val proxyBmp = fullBmp?.let { EditorGlRenderer.createProxyBitmap(it) }
                 Triple(graph, fullBmp, proxyBmp)
@@ -212,7 +219,7 @@ class EditorActivity : AppCompatActivity() {
         val current = undoController.currentGraph
         if (abs(current.tone.exposure) < 1e-4f) return
         val resetGraph = current.copy(tone = current.tone.copy(exposure = 0.0f))
-        undoController.onParameterDrag(resetGraph, KEY_TONE_EXPOSURE)
+        undoController.onParameterDrag(resetGraph, EditParameterKey.TONE_EXPOSURE)
         undoController.onParameterRelease()
         applyGraphToRendererAndUi(undoController.currentGraph)
     }
@@ -240,7 +247,7 @@ class EditorActivity : AppCompatActivity() {
         )
         val isModified = abs(exposure) >= 1e-4f
         binding.chipExposure.setText(
-            if (isModified) R.string.editor_tool_Exposure_modified else R.string.editor_tool_exposure
+            if (isModified) R.string.editor_tool_exposure_modified else R.string.editor_tool_exposure
         )
         binding.btnUndo.isEnabled = undoController.canUndo
         binding.btnRedo.isEnabled = undoController.canRedo
@@ -255,7 +262,7 @@ class EditorActivity : AppCompatActivity() {
         lifecycleScope.launch {
             withContext(Dispatchers.IO) {
                 val previewPath = if (!finalGraph.isIdentity() && srcBitmap != null) {
-                    EditorGlRenderer.renderPreviewCacheToFile(
+                    PreviewCacheWriter.writePreviewCache(
                         source = srcBitmap,
                         exposureEv = finalGraph.tone.exposure,
                         cacheDir = cacheDir,
@@ -264,11 +271,16 @@ class EditorActivity : AppCompatActivity() {
                 } else {
                     null
                 }
-                EditorHostRegistry.editStore?.saveEditForPhoto(
-                    photoId = photoId,
-                    graph = finalGraph,
-                    previewCachePath = previewPath
-                )
+                val store = EditorHostRegistry.editStore
+                if (store == null) {
+                    Timber.e("EditorHostRegistry.editStore is null; edit cannot be persisted")
+                } else {
+                    store.saveEditForPhoto(
+                        photoId = photoId,
+                        graph = finalGraph,
+                        previewCachePath = previewPath
+                    )
+                }
             }
             val resultIntent = Intent().apply {
                 putExtra(EXTRA_PHOTO_ID, photoId)
@@ -279,19 +291,29 @@ class EditorActivity : AppCompatActivity() {
         }
     }
 
+    private fun recyclePreviewBitmaps() {
+        val full = fullPreviewBitmap
+        val proxy = proxyPreviewBitmap
+        fullPreviewBitmap = null
+        proxyPreviewBitmap = null
+        if (proxy != null && proxy !== full && !proxy.isRecycled) {
+            proxy.recycle()
+        }
+        if (full != null && !full.isRecycled) {
+            full.recycle()
+        }
+    }
+
     companion object {
         const val EXTRA_PHOTO_ID = "extra_photo_id"
         const val EXTRA_SOURCE_PATH = "extra_source_path"
-        private const val EXTRA_DISPLAY_NAME = "extra_display_name"
         private const val EXTRA_IS_RAW = "extra_is_raw"
-        private const val KEY_TONE_EXPOSURE = "tone.exposure"
         private const val SETTLE_DELAY_MS = 150L
 
         fun createIntent(context: Context, args: EditorLaunchArgs): Intent {
             return Intent(context, EditorActivity::class.java).apply {
                 putExtra(EXTRA_PHOTO_ID, args.photoId)
                 putExtra(EXTRA_SOURCE_PATH, args.sourcePath)
-                putExtra(EXTRA_DISPLAY_NAME, args.displayName)
                 putExtra(EXTRA_IS_RAW, args.isRaw)
             }
         }

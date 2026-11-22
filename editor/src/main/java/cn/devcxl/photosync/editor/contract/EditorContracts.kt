@@ -27,18 +27,6 @@ data class PhotoEditRecord(
 )
 
 /**
- * Reusable user-defined or built-in parameter preset record.
- */
-data class UserPresetRecord(
-    val id: String,
-    val name: String,
-    val graphSubsetJson: String,
-    val lutFilePath: String?,
-    val isBuiltin: Boolean,
-    val createdAt: Long
-)
-
-/**
  * Host storage contract implemented by `:app` and consumed by `:editor`.
  */
 interface EditStore {
@@ -60,10 +48,20 @@ interface EditStore {
 }
 
 /**
- * Process-wide registry used by `:app` to wire its [EditStore] implementation into `:editor`
- * without introducing a circular module dependency.
+ * Shared relative directory convention under `cacheDir` for rendered editor previews.
+ */
+object EditorCachePaths {
+    fun photoEditDirName(photoId: Long): String = "edits/$photoId"
+}
+
+/**
+ * Process-wide registry used by `:app` to wire its [EditStore] and [GallerySink] hosts into
+ * `:editor` without introducing a circular module dependency.
  */
 object EditorHostRegistry {
     @Volatile
     var editStore: EditStore? = null
+
+    @Volatile
+    var gallerySink: GallerySink? = null
 }
