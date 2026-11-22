@@ -24,12 +24,12 @@ Labels: wayfinder:map
 
 - [MediaPipe 人像模型体积、许可证与 GitHub APK/AAB 双渠道分发事实调研](issues/01-mediapipe-model-packaging-and-distribution.md): 模型与 AAR 均属 Apache-2.0；`tasks-core:1.2.3` native `.so` 使 arm64 APK 增 15.80 MiB（需在 Gradle 排除 x86/x86_64 与 debugSymbol 防 AAB 膨胀 32.5 MB，并加 R8 keep 规则）；GPU Delegate 要求 GLES 3.1+ 且无自动 CPU 回退，需 catch 后回退 CPU；推荐混合分发（内置 3.33 MB `face_landmarker.task` + 250 KB `selfie_segmenter.tflite`，16.37 MB FP32 `selfie_multiclass_256x256.tflite` 首进面板按需 HTTPS 下载 + SHA-256 校验，不引 `deeplab_v3`）。
 - [NDK libjpeg-turbo 流式编码与 ExifInterface FileDescriptor 写回技术调研](issues/02-libjpeg-turbo-streaming-and-exif-writeback.md): 用 `ExternalProject_Add` 集成 `libjpeg-turbo` 3.2.2（stripped `.so` 仅增 330 KiB，禁 `optimize_coding`/渐进式以防 291 MiB 全图系数缓冲）；分块几何采用「≤2048 宽列带 × 512 高 + `GL_PACK_ROW_LENGTH` 散射至全宽行缓冲」（峰值渲染/行缓冲 32–43 MiB）；EXIF 走白名单拷贝并在 API 29+ 重新以 `"rw"` 打开 FD 调 `saveAttributes()`（RAW 时间戳用 `localtime()` 反解）。
+- [开放参数语义与非破坏性编辑工作流边界](issues/03-parameter-semantics-and-workflow-boundaries.md): 光感采用「氛围型（Ambiance）」三段式联动清晰度/自然饱和度；降噪与颗粒分置消歧；拉直/透视/拉腿统一保持画幅比例自动内接裁切；RAW 默认启用可切换的 `camera_default` 基准观感；确立「联机暗房」闭环（保存用户预设 + 新同步照片自动套用 `LiveTetherPreset`、跨照片复制粘贴参数、主界面显示编辑后预览 + 快捷预设栏 + 长按对比原图、多张后台队列烘焙导出、编辑态来新图静默入库不抢焦点）。
 
 ## Not yet specified
 
 <!-- 在范围内但暂时还无法成工单的迷雾；随前沿推进而毕业 -->
 
-- **GLES 3.0 6-Pass Shader 精确 Uniform 契约与 Pre-pass 金字塔分块拼接规格**：待产品语义边界（光感公式、画幅裁切策略）与 NDK `libjpeg-turbo` 流式编码调研落定后，需细化每个 Pass 的输入/输出纹理格式、`Camera Default Look` 在 GPU 端的精确补偿参数、1024px Pre-pass 引导金字塔层级定义，以及分块导出时 `32–64px` Halo 的全局 UV 与边界裁剪公式。
 - **GPU 碎片化降级矩阵、设备黑名单与金标验收测试集规格**：待渲染 Pass 与模型集成方案锁定后，需定义无 `GL_EXT_color_buffer_half_float` 设备的 `RGBA8` 抖动降级触发条件、Shader 编译失败的最小管线回退策略，以及用于自动化验收的恒等测试、ΔE2000 / SSIM 金标图与分块一致性断言规格。
 
 ## Out of scope

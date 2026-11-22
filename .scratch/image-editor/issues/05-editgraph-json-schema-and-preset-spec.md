@@ -13,3 +13,6 @@ Blocked by: 03, 04
    - 液化（`liquify`）笔刷轨迹序列 vs 半分辨率位移网格的序列化策略（如何保证 `graph_json` 不会膨胀到数 MB 撑爆 Room CursorWindow 2MB 限制）；
    - 颗粒随机种子（`seed`）的生成与持久化时机。
 3. 内置滤镜（参数预设 Preset）与外部 `.cube` 3D LUT 资源在 `EditGraph` 中的引用标识、强度混合与向后兼容升级（`schemaVersion` v1→v2 迁移函数）契约。
+4. **联机暗房（Tethered Darkroom）扩展数据模型**：
+   - `baseLook`（`"camera_default" | "linear_neutral"`）字段定义；
+   - 用户预设表（`user_presets`）或 JSON 存储格式、「联机自动预设（`LiveTetherPreset`）」激活状态持久化，以及跨照片「复制/粘贴编辑参数」的子集掩码（`CopyMask`：默认排除单图几何/液化/人像关键点位移）契约。

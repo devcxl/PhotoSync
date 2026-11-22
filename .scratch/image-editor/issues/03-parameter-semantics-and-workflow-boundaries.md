@@ -1,7 +1,7 @@
 # 开放参数语义与非破坏性编辑工作流边界
 
 Type: grilling
-Status: open
+Status: resolved
 
 ## Question
 
@@ -13,3 +13,42 @@ Status: open
    - 主界面大图浏览（`ViewPager2`）与底部胶片条（`FilmstripAdapter`）是展示**带编辑效果的渲染缓存图**（并带「已编辑」角标），还是仅展示原图？
    - 主界面的「导出」按钮是默认导出**应用了最新 `EditGraph` 的成片**，还是仅导出未编辑原图（必须进编辑器才能导出成片）？
 5. **RAW「0 参数默认基准 Look」开关**：编辑器内是否允许用户一键在「PhotoSync 默认观感（对齐浏览页自动提亮+基础 S 曲线）」与「纯线性中性 RAW」之间切换基底？
+
+## Answer
+
+经与用户逐轮确认并结合 PhotoSync「USB 联机拍摄与现场快修伴侣」的核心场景，锁定以下参数语义与联机暗房工作流边界决策：
+
+### 1. 核心参数语义与几何裁切契约
+
+1. **「光感（Glow）」采用「氛围型光感（Ambiance）」复合定义**：
+   - 归一化滑杆 $g \in [-1, 1]$（UI 范围 `-100..100`，默认 `0`）。
+   - 三段组合：① 中间调幂次提亮 $y_1 = y^{1/(1 + 0.20g)}$；② 保零黑点的暗部通透补偿 $y_2 = y_1 + 0.10g \cdot y_1(1 - y_1)^2$；③ 联动局部对比度与色彩防发灰补偿：`clarity += 0.20g`、`vibrance += 0.10g`。
+2. **「噪点（Noise）」与「降噪（NR）」/「颗粒（Grain）」消歧**：
+   - 底层 `EditGraph` 不设重复的第二套噪点算子。
+   - UI「细节」组提供 **「降噪（消除噪点）」**（含明度 `luma`、色度 `chroma`、细节 `detail` 三滑杆）；UI「效果」组提供 **「颗粒（胶片加噪）」**（含数量 `amount`、大小 `size`、粗糙度 `roughness` 三滑杆）。
+3. **几何变形与美体「拉腿」的画幅裁切契约**：
+   - **任意角度拉直 & 透视校正**：保持当前裁切宽高比，自动求解最大内接有效像素矩形（无黑边/透明边）。
+   - **美体「拉腿」**：保持输出画幅整体像素宽高比不变（髋线以下做 $C^1$ 连续纵向拉伸，自动裁掉底部溢出画幅边界的像素），避免导出画幅比例突变或破坏分块/相册缩略图布局。
+4. **RAW 基准观感（`BaseLook`）可切换契约**：
+   - `EditGraph` 顶层包含 `"baseLook": "camera_default" | "linear_neutral"`（默认 `"camera_default"`）。
+   - `"camera_default"` 在阶段 ② 线性影调开头复刻浏览页的 `autoBrightGain`（最高 +2EV）+ `shadowMidtoneGamma = 0.78` + `sCurveStrength = 0.12` + `vibrance = 0.18`，确保从浏览页进入编辑器时 0 参数画面零跳变；用户可在编辑器顶部一键切换为 `"linear_neutral"` 获取纯平直线性起点。
+
+### 2. 主界面 × 编辑器「联机暗房（Tethered Darkroom）」工作流闭环
+
+1. **主界面入口与非破坏性预览闭环**：
+   - 在 `activity_main.xml` 顶部栏右侧（`infoToggleButton` 与 `exportButton` 之间）新增圆形玻璃图标按钮 **「编辑（`editButton`）」**。
+   - 编辑器内点 **「完成」**：仅将 `EditGraph` JSON 存入 Room `photo_edits` 表，并将当前屏幕渲染帧存为私有预览缓存（`cacheDir/edits/<photoId>/<hash>.jpg` 及 512px 缩略图），秒退回主界面（不触发耗时的全分辨率烘焙）。
+   - 编辑器内点 **「导出」**：保存 `EditGraph` 并立即触发全分辨率分块烘焙写入系统相册（`Pictures/PhotoSync/<name>_edit.jpg`）。
+   - 主界面浏览体验：当照片存在非恒等 `EditGraph` 时，`ViewPager2` 与底部 `FilmstripAdapter` 自动展示编辑后预览缓存图，顶部 `photoMetaPill` 亮起 **「已编辑」** 标签；**在主界面长按大图不放可实时对比「未编辑原图（Before）」，松手恢复「编辑后（After）」**。
+2. **边拍边套 Look（`LiveTetherPreset` / 联机自动预设）**：
+   - 用户在编辑器调好满意参数后可保存为 **「用户预设（`Preset`）」**，并可在主界面开启 **「新同步照片自动套用此预设」**。
+   - 开启后，USB PTP 每同步入库一张新照片，自动为其写入绑定该预设的 `EditGraph` 并后台生成预览缓存；当 `AutoFollow` 切换到新照片时，摄影师与客户直接看到套好调色/LUT 的成片效果。
+3. **跨照片复制/粘贴修改（Copy & Paste Edits）**：
+   - 支持「复制编辑参数」（默认复制基准 Look、影调、色彩、细节、效果与 LUT，默认排除裁切、旋转、透视、液化、人像重塑等单图几何项，也可手动勾选包含）→ 切换照片或多选后一键「粘贴参数」。
+4. **主界面零跳转快捷预设栏（Quick Preset Strip）**：
+   - 主界面可直接呼出轻量快捷预设栏，一键在原图与各个已保存的 `Preset` 之间切换预览，仅需细调滑杆时再点 `editButton` 进入 `EditorActivity`。
+5. **单张/批量后台烘焙导出队列（Batch Bake Queue）**：
+   - 主界面对已编辑照片短按 `exportButton` 默认后台烘焙编辑后成片（长按提供「导出编辑后成片 / 导出未编辑原图」）；
+   - 支持多选已套用预设的照片批量加入后台烘焙导出队列，复用主界面右上角进度卡片展示导出进度（如「正在导出 3/15…」）。
+6. **编辑态联机同步免打扰（Tethering Interruption Guard）**：
+   - 当用户处于 `EditorActivity` 时，后台 USB PTP 同步继续静默收图（若开启了 `LiveTetherPreset` 则静默绑定），绝不抢夺焦点或打断当前编辑手势，仅在编辑器顶部轻提示「已同步 +N 张新照片」。
