@@ -188,27 +188,32 @@ internal object EditorToolCatalog {
         )
     )
 
-    private fun toneSpecs(): List<EditorToolSpec> = listOf(
-        EditorToolSpec(
-            tool = EditorTool.EXPOSURE,
-            group = EditorGroup.TONE,
-            labelRes = R.string.editor_tool_exposure,
-            modifiedLabelRes = R.string.editor_tool_exposure_modified,
-            parameterKey = EditParameterKey.TONE_EXPOSURE,
-            controlStyle = EditorControlStyle.DIAL,
-            dial = DialSpec(
-                min = -5.0f,
-                max = 5.0f,
-                step = 0.05f,
-                zeroSnapThreshold = 0.10f,
-                valueFormatRes = R.string.editor_exposure_value_fmt
-            ),
-            readValue = { it.tone.exposure },
-            writeValue = { graph, value -> graph.copy(tone = graph.tone.copy(exposure = value)) },
-            isModified = { abs(it.tone.exposure) >= 1e-4f },
-            reset = { it.copy(tone = it.tone.copy(exposure = 0.0f)) }
+    private fun toneSpecs(): List<EditorToolSpec> =
+        listOf(exposureSpec()) + basicToneSpecs() + tonalRangeSpecs() + listOf(glowSpec())
+
+    private fun exposureSpec(): EditorToolSpec = EditorToolSpec(
+        tool = EditorTool.EXPOSURE,
+        group = EditorGroup.TONE,
+        labelRes = R.string.editor_tool_exposure,
+        modifiedLabelRes = R.string.editor_tool_exposure_modified,
+        parameterKey = EditParameterKey.TONE_EXPOSURE,
+        controlStyle = EditorControlStyle.DIAL,
+        dial = DialSpec(
+            min = -5.0f,
+            max = 5.0f,
+            step = 0.05f,
+            zeroSnapThreshold = 0.10f,
+            valueFormatRes = R.string.editor_exposure_value_fmt
         ),
-        toneSlider(
+        readValue = { it.tone.exposure },
+        writeValue = { graph, value -> graph.copy(tone = graph.tone.copy(exposure = value)) },
+        isModified = { abs(it.tone.exposure) >= 1e-4f },
+        reset = { it.copy(tone = it.tone.copy(exposure = 0.0f)) }
+    )
+
+    private fun basicToneSpecs(): List<EditorToolSpec> = listOf(
+        signedSlider(
+            group = EditorGroup.TONE,
             tool = EditorTool.BRIGHTNESS,
             labelRes = R.string.editor_tool_brightness,
             modifiedLabelRes = R.string.editor_tool_brightness_modified,
@@ -216,15 +221,20 @@ internal object EditorToolCatalog {
             read = { it.tone.brightness },
             write = { graph, value -> graph.copy(tone = graph.tone.copy(brightness = value)) }
         ),
-        toneSlider(
+        signedSlider(
+            group = EditorGroup.TONE,
             tool = EditorTool.CONTRAST,
             labelRes = R.string.editor_tool_contrast,
             modifiedLabelRes = R.string.editor_tool_contrast_modified,
             parameterKey = EditParameterKey.TONE_CONTRAST,
             read = { it.tone.contrast },
             write = { graph, value -> graph.copy(tone = graph.tone.copy(contrast = value)) }
-        ),
-        toneSlider(
+        )
+    )
+
+    private fun tonalRangeSpecs(): List<EditorToolSpec> = listOf(
+        signedSlider(
+            group = EditorGroup.TONE,
             tool = EditorTool.HIGHLIGHTS,
             labelRes = R.string.editor_tool_highlights,
             modifiedLabelRes = R.string.editor_tool_highlights_modified,
@@ -232,7 +242,8 @@ internal object EditorToolCatalog {
             read = { it.tone.highlights },
             write = { graph, value -> graph.copy(tone = graph.tone.copy(highlights = value)) }
         ),
-        toneSlider(
+        signedSlider(
+            group = EditorGroup.TONE,
             tool = EditorTool.SHADOWS,
             labelRes = R.string.editor_tool_shadows,
             modifiedLabelRes = R.string.editor_tool_shadows_modified,
@@ -240,7 +251,8 @@ internal object EditorToolCatalog {
             read = { it.tone.shadows },
             write = { graph, value -> graph.copy(tone = graph.tone.copy(shadows = value)) }
         ),
-        toneSlider(
+        signedSlider(
+            group = EditorGroup.TONE,
             tool = EditorTool.WHITES,
             labelRes = R.string.editor_tool_whites,
             modifiedLabelRes = R.string.editor_tool_whites_modified,
@@ -248,22 +260,25 @@ internal object EditorToolCatalog {
             read = { it.tone.whites },
             write = { graph, value -> graph.copy(tone = graph.tone.copy(whites = value)) }
         ),
-        toneSlider(
+        signedSlider(
+            group = EditorGroup.TONE,
             tool = EditorTool.BLACKS,
             labelRes = R.string.editor_tool_blacks,
             modifiedLabelRes = R.string.editor_tool_blacks_modified,
             parameterKey = EditParameterKey.TONE_BLACKS,
             read = { it.tone.blacks },
             write = { graph, value -> graph.copy(tone = graph.tone.copy(blacks = value)) }
-        ),
-        toneSlider(
-            tool = EditorTool.GLOW,
-            labelRes = R.string.editor_tool_glow,
-            modifiedLabelRes = R.string.editor_tool_glow_modified,
-            parameterKey = EditParameterKey.TONE_GLOW,
-            read = { it.tone.glow },
-            write = { graph, value -> graph.copy(tone = graph.tone.copy(glow = value)) }
         )
+    )
+
+    private fun glowSpec(): EditorToolSpec = signedSlider(
+        group = EditorGroup.TONE,
+        tool = EditorTool.GLOW,
+        labelRes = R.string.editor_tool_glow,
+        modifiedLabelRes = R.string.editor_tool_glow_modified,
+        parameterKey = EditParameterKey.TONE_GLOW,
+        read = { it.tone.glow },
+        write = { graph, value -> graph.copy(tone = graph.tone.copy(glow = value)) }
     )
 
     private fun colourSpecs(): List<EditorToolSpec> = listOf(
@@ -310,23 +325,6 @@ internal object EditorToolCatalog {
                 graph.copy(effects = graph.effects.copy(ca = graph.effects.ca.copy(blueYellow = value)))
             }
         )
-    )
-
-    private fun toneSlider(
-        tool: EditorTool,
-        labelRes: Int,
-        modifiedLabelRes: Int,
-        parameterKey: EditParameterKey,
-        read: (EditGraph) -> Int,
-        write: (EditGraph, Int) -> EditGraph
-    ): EditorToolSpec = signedSlider(
-        tool = tool,
-        group = EditorGroup.TONE,
-        labelRes = labelRes,
-        modifiedLabelRes = modifiedLabelRes,
-        parameterKey = parameterKey,
-        read = read,
-        write = write
     )
 
     /**
