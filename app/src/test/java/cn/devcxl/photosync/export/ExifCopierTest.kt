@@ -115,7 +115,7 @@ class ExifCopierTest {
             gpsParsed = true,
             gpsLatitude = 35.6895,
             gpsLongitude = 139.6917,
-            gpsAltitude = 40.0
+            gpsAltitude = 0.0
         )
 
         val dst = FakeExifTagStore()
@@ -146,7 +146,7 @@ class ExifCopierTest {
         assertEquals("8192", dst.getAttribute(ExifInterface.TAG_IMAGE_WIDTH))
         assertEquals("5464", dst.getAttribute(ExifInterface.TAG_IMAGE_LENGTH))
         assertEquals(35.6895, dst.getLatLong()!![0], 0.0001)
-        assertEquals(40.0, dst.getAltitude(0.0), 0.0001)
+        assertEquals(0.0, dst.getAltitude(Double.NaN), 0.0001)
     }
 
     @Test

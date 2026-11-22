@@ -82,17 +82,17 @@ object ExifCopier {
 
     /**
      * Copies whitelisted shooting EXIF tags from a source JPEG file at [sourcePath] into
-     * [targetExif], normalizes orientation to `1`, and updates dimensions when positive.
+     * [target], normalizes orientation to `"1"`, and updates dimensions when positive.
      */
     fun copyFromJpeg(
         sourcePath: String,
-        targetExif: ExifInterface,
+        target: ExifTagWriter,
         outputWidth: Int = 0,
         outputHeight: Int = 0
     ) {
         copyFromReader(
             source = AndroidExifTagAdapter(ExifInterface(sourcePath)),
-            target = AndroidExifTagAdapter(targetExif),
+            target = target,
             outputWidth = outputWidth,
             outputHeight = outputHeight
         )
@@ -128,25 +128,8 @@ object ExifCopier {
     }
 
     /**
-     * Populates [targetExif] from [RawExifMetadata] decoded by LibRaw, decoding the
+     * Populates [target] from [RawExifMetadata] decoded by LibRaw, decoding the
      * timestamp in the device's local timezone to match LibRaw's `mktime()` parser.
-     */
-    fun applyFromRawMetadata(
-        metadata: RawExifMetadata,
-        targetExif: ExifInterface,
-        outputWidth: Int,
-        outputHeight: Int
-    ) {
-        applyFromRawMetadata(
-            metadata = metadata,
-            target = AndroidExifTagAdapter(targetExif),
-            outputWidth = outputWidth,
-            outputHeight = outputHeight
-        )
-    }
-
-    /**
-     * Populates [target] from [RawExifMetadata] decoded by LibRaw.
      */
     fun applyFromRawMetadata(
         metadata: RawExifMetadata,
@@ -174,11 +157,12 @@ object ExifCopier {
             target.setAttribute(ExifInterface.TAG_DATETIME, dateString)
         }
 
-        applyRawNumericTags(metadata, target)
+        applyRawExposureTags(metadata, target)
+        applyRawLensAndGpsTags(metadata, target)
         applyNormalizedGeometry(target, outputWidth, outputHeight)
     }
 
-    private fun applyRawNumericTags(metadata: RawExifMetadata, target: ExifTagWriter) {
+    private fun applyRawExposureTags(metadata: RawExifMetadata, target: ExifTagWriter) {
         if (metadata.shutterSec > 0f && metadata.shutterSec.isFinite()) {
             target.setAttribute(
                 ExifInterface.TAG_EXPOSURE_TIME,
@@ -197,16 +181,6 @@ object ExifCopier {
                 metadata.isoSpeed.roundToInt().toString()
             )
         }
-        if (metadata.focalLengthMm > 0f && metadata.focalLengthMm.isFinite()) {
-            val tenths = (metadata.focalLengthMm * 10f).roundToInt()
-            target.setAttribute(ExifInterface.TAG_FOCAL_LENGTH, "$tenths/10")
-        }
-        if (metadata.focalLengthIn35mm > 0) {
-            target.setAttribute(
-                ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM,
-                metadata.focalLengthIn35mm.toString()
-            )
-        }
         if (metadata.exposureProgram > 0) {
             target.setAttribute(
                 ExifInterface.TAG_EXPOSURE_PROGRAM,
@@ -219,10 +193,23 @@ object ExifCopier {
                 metadata.meteringMode.toString()
             )
         }
+    }
+
+    private fun applyRawLensAndGpsTags(metadata: RawExifMetadata, target: ExifTagWriter) {
+        if (metadata.focalLengthMm > 0f && metadata.focalLengthMm.isFinite()) {
+            val tenths = (metadata.focalLengthMm * 10f).roundToInt()
+            target.setAttribute(ExifInterface.TAG_FOCAL_LENGTH, "$tenths/10")
+        }
+        if (metadata.focalLengthIn35mm > 0) {
+            target.setAttribute(
+                ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM,
+                metadata.focalLengthIn35mm.toString()
+            )
+        }
         if (metadata.gpsParsed) {
             try {
                 target.setLatLong(metadata.gpsLatitude, metadata.gpsLongitude)
-                if (metadata.gpsAltitude != 0.0) {
+                if (!metadata.gpsAltitude.isNaN()) {
                     target.setAltitude(metadata.gpsAltitude)
                 }
             } catch (e: IllegalArgumentException) {

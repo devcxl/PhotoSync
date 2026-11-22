@@ -3,6 +3,7 @@
 #include <android/bitmap.h>
 #include <android/log.h>
 #include "libraw.h"
+#include "jni_raii_guards.h"
 #include "raw_postprocess.h"
 #include <algorithm>
 #include <cmath>
@@ -27,30 +28,9 @@ Java_cn_devcxl_photosync_wrapper_RawWrapper_version(JNIEnv* env, jobject /*thiz*
     return env->NewStringUTF(v ? v : "unknown");
 }
 
-// RAII guard for JNI string release
-struct PathGuard {
-    JNIEnv* env;
-    jstring jpath;
-    const char* cpath;
-    ~PathGuard() { if(cpath) env->ReleaseStringUTFChars(jpath, cpath); }
-};
-
-// RAII guard for LibRaw instance lifecycle
-struct LibRawGuard {
-    LibRaw* proc;
-    bool valid;
-    explicit LibRawGuard(LibRaw* p) : proc(p), valid(true) {}
-    void invalidate() { valid = false; }
-    ~LibRawGuard() { if(proc && valid) proc->recycle(); }
-};
-
-// RAII guard for dcraw_make_mem_image output
-struct ImageGuard {
-    libraw_processed_image_t* img;
-    explicit ImageGuard(libraw_processed_image_t* i) : img(i) {}
-    void release() { img = nullptr; }
-    ~ImageGuard() { if(img) LibRaw::dcraw_clear_mem(img); }
-};
+using photosync::jni::ImageGuard;
+using photosync::jni::LibRawGuard;
+using photosync::jni::PathGuard;
 
 // Safe libraw_strerror wrapper – returns a static string on null
 static const char* safe_strerror(int ret) {

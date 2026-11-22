@@ -14,6 +14,14 @@ object RawWrapper {
     external fun decodeThumbnail(path: String): ByteArray?
     external fun decodeToRGB(path: String): ByteArray?
     external fun decodeToBitmapNative(path: String): Bitmap?
+
+    /**
+     * Extracts shooting EXIF metadata from the RAW file header at [path] without running
+     * full demosaicing.
+     *
+     * @param path Absolute file path to the RAW photo.
+     * @return Parsed [RawExifMetadata] or null if the file header cannot be opened.
+     */
     external fun extractExifMetadata(path: String): RawExifMetadata?
 
     /**

@@ -1,6 +1,7 @@
 #include <jni.h>
 #include <android/log.h>
 #include "libraw.h"
+#include "jni_raii_guards.h"
 #include <cmath>
 #include <cstring>
 
@@ -9,23 +10,15 @@
 
 namespace {
 
-struct PathGuard {
-    JNIEnv* env;
-    jstring jpath;
-    const char* cpath;
-    ~PathGuard() {
-        if (cpath) {
-            env->ReleaseStringUTFChars(jpath, cpath);
-        }
-    }
-};
+using photosync::jni::LibRawGuard;
+using photosync::jni::PathGuard;
 
-struct LibRawGuard {
-    LibRaw* proc;
-    explicit LibRawGuard(LibRaw* p) : proc(p) {}
-    ~LibRawGuard() {
-        if (proc) {
-            proc->recycle();
+struct LocalStringGuard {
+    JNIEnv* env;
+    jstring ref;
+    ~LocalStringGuard() {
+        if (ref) {
+            env->DeleteLocalRef(ref);
         }
     }
 };
@@ -52,6 +45,76 @@ double dmsToDecimal(const float dms[3], char ref) {
     return deg;
 }
 
+jobject buildRawExifMetadataObject(JNIEnv* env, const LibRaw& proc) {
+    jclass metaCls = env->FindClass("cn/devcxl/photosync/wrapper/RawExifMetadata");
+    if (!metaCls) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return nullptr;
+    }
+    jmethodID ctor = env->GetMethodID(
+        metaCls,
+        "<init>",
+        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;JFFFFILjava/lang/String;"
+        "Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;IILjava/lang/String;"
+        "Ljava/lang/String;ZDDD)V"
+    );
+    if (!ctor) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        env->DeleteLocalRef(metaCls);
+        return nullptr;
+    }
+
+    const libraw_iparams_t& idata = proc.imgdata.idata;
+    const libraw_imgother_t& other = proc.imgdata.other;
+    const libraw_lensinfo_t& lens = proc.imgdata.lens;
+    const libraw_shootinginfo_t& shoot = proc.imgdata.shootinginfo;
+
+    LocalStringGuard jMake{env, (strnlen(idata.normalized_make, sizeof(idata.normalized_make)) > 0)
+        ? newSafeUtfString(env, idata.normalized_make) : newSafeUtfString(env, idata.make)};
+    LocalStringGuard jModel{env, (strnlen(idata.normalized_model, sizeof(idata.normalized_model)) > 0)
+        ? newSafeUtfString(env, idata.normalized_model) : newSafeUtfString(env, idata.model)};
+    LocalStringGuard jSoft{env, newSafeUtfString(env, idata.software)};
+    LocalStringGuard jLensMake{env, newSafeUtfString(env, lens.LensMake)};
+    LocalStringGuard jLensModel{env, (strnlen(lens.Lens, sizeof(lens.Lens)) > 0)
+        ? newSafeUtfString(env, lens.Lens) : newSafeUtfString(env, lens.makernotes.Lens)};
+    LocalStringGuard jLensSerial{env, newSafeUtfString(env, lens.LensSerial)};
+    LocalStringGuard jBodySerial{env, newSafeUtfString(env, shoot.BodySerial)};
+    LocalStringGuard jDesc{env, newSafeUtfString(env, other.desc)};
+    LocalStringGuard jArtist{env, newSafeUtfString(env, other.artist)};
+
+    const jboolean gpsParsed = (other.parsed_gps.gpsparsed != 0) ? JNI_TRUE : JNI_FALSE;
+    const jdouble gpsLat = gpsParsed
+        ? dmsToDecimal(other.parsed_gps.latitude, other.parsed_gps.latref) : 0.0;
+    const jdouble gpsLon = gpsParsed
+        ? dmsToDecimal(other.parsed_gps.longitude, other.parsed_gps.longref) : 0.0;
+    double gpsAlt = gpsParsed ? static_cast<double>(other.parsed_gps.altitude) : NAN;
+    if (gpsParsed && other.parsed_gps.altref != 0) {
+        gpsAlt = -gpsAlt;
+    }
+
+    jobject result = env->NewObject(
+        metaCls, ctor,
+        jMake.ref, jModel.ref, jSoft.ref,
+        static_cast<jlong>(other.timestamp),
+        static_cast<jfloat>(other.shutter),
+        static_cast<jfloat>(other.aperture),
+        static_cast<jfloat>(other.iso_speed),
+        static_cast<jfloat>(other.focal_len),
+        static_cast<jint>(lens.FocalLengthIn35mmFormat),
+        jLensMake.ref, jLensModel.ref, jLensSerial.ref, jBodySerial.ref,
+        static_cast<jint>(shoot.ExposureProgram),
+        static_cast<jint>(shoot.MeteringMode),
+        jDesc.ref, jArtist.ref,
+        gpsParsed, gpsLat, gpsLon, static_cast<jdouble>(gpsAlt)
+    );
+    env->DeleteLocalRef(metaCls);
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        return nullptr;
+    }
+    return result;
+}
+
 }  // namespace
 
 extern "C" JNIEXPORT jobject JNICALL
@@ -74,102 +137,8 @@ Java_cn_devcxl_photosync_wrapper_RawWrapper_extractExifMetadata(
 
     int ret = proc.open_file(cpath);
     if (ret != LIBRAW_SUCCESS) {
-        ALOGE("open_file failed (%d) while extracting EXIF for %s", ret, cpath);
+        ALOGE("open_file failed (code=%d) while extracting RAW EXIF header", ret);
         return nullptr;
     }
-
-    jclass metaCls = env->FindClass("cn/devcxl/photosync/wrapper/RawExifMetadata");
-    if (!metaCls) {
-        if (env->ExceptionCheck()) env->ExceptionClear();
-        return nullptr;
-    }
-
-    jmethodID ctor = env->GetMethodID(
-        metaCls,
-        "<init>",
-        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;JFFFFILjava/lang/String;"
-        "Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;IILjava/lang/String;"
-        "Ljava/lang/String;ZDDD)V"
-    );
-    if (!ctor) {
-        if (env->ExceptionCheck()) env->ExceptionClear();
-        env->DeleteLocalRef(metaCls);
-        return nullptr;
-    }
-
-    const libraw_iparams_t& idata = proc.imgdata.idata;
-    const libraw_imgother_t& other = proc.imgdata.other;
-    const libraw_lensinfo_t& lens = proc.imgdata.lens;
-    const libraw_shootinginfo_t& shoot = proc.imgdata.shootinginfo;
-
-    jstring jMake = (strnlen(idata.normalized_make, sizeof(idata.normalized_make)) > 0)
-        ? newSafeUtfString(env, idata.normalized_make)
-        : newSafeUtfString(env, idata.make);
-    jstring jModel = (strnlen(idata.normalized_model, sizeof(idata.normalized_model)) > 0)
-        ? newSafeUtfString(env, idata.normalized_model)
-        : newSafeUtfString(env, idata.model);
-    jstring jSoftware = newSafeUtfString(env, idata.software);
-    jstring jLensMake = newSafeUtfString(env, lens.LensMake);
-    jstring jLensModel = (strnlen(lens.Lens, sizeof(lens.Lens)) > 0)
-        ? newSafeUtfString(env, lens.Lens)
-        : newSafeUtfString(env, lens.makernotes.Lens);
-    jstring jLensSerial = newSafeUtfString(env, lens.LensSerial);
-    jstring jBodySerial = newSafeUtfString(env, shoot.BodySerial);
-    jstring jDesc = newSafeUtfString(env, other.desc);
-    jstring jArtist = newSafeUtfString(env, other.artist);
-
-    const jboolean gpsParsed = (other.parsed_gps.gpsparsed != 0) ? JNI_TRUE : JNI_FALSE;
-    const jdouble gpsLat = gpsParsed
-        ? dmsToDecimal(other.parsed_gps.latitude, other.parsed_gps.latref)
-        : 0.0;
-    const jdouble gpsLon = gpsParsed
-        ? dmsToDecimal(other.parsed_gps.longitude, other.parsed_gps.longref)
-        : 0.0;
-    double gpsAlt = gpsParsed ? static_cast<double>(other.parsed_gps.altitude) : 0.0;
-    if (gpsParsed && other.parsed_gps.altref != 0) {
-        gpsAlt = -gpsAlt;
-    }
-
-    jobject result = env->NewObject(
-        metaCls,
-        ctor,
-        jMake,
-        jModel,
-        jSoftware,
-        static_cast<jlong>(other.timestamp),
-        static_cast<jfloat>(other.shutter),
-        static_cast<jfloat>(other.aperture),
-        static_cast<jfloat>(other.iso_speed),
-        static_cast<jfloat>(other.focal_len),
-        static_cast<jint>(lens.FocalLengthIn35mmFormat),
-        jLensMake,
-        jLensModel,
-        jLensSerial,
-        jBodySerial,
-        static_cast<jint>(shoot.ExposureProgram),
-        static_cast<jint>(shoot.MeteringMode),
-        jDesc,
-        jArtist,
-        gpsParsed,
-        gpsLat,
-        gpsLon,
-        static_cast<jdouble>(gpsAlt)
-    );
-
-    if (jMake) env->DeleteLocalRef(jMake);
-    if (jModel) env->DeleteLocalRef(jModel);
-    if (jSoftware) env->DeleteLocalRef(jSoftware);
-    if (jLensMake) env->DeleteLocalRef(jLensMake);
-    if (jLensModel) env->DeleteLocalRef(jLensModel);
-    if (jLensSerial) env->DeleteLocalRef(jLensSerial);
-    if (jBodySerial) env->DeleteLocalRef(jBodySerial);
-    if (jDesc) env->DeleteLocalRef(jDesc);
-    if (jArtist) env->DeleteLocalRef(jArtist);
-    env->DeleteLocalRef(metaCls);
-
-    if (env->ExceptionCheck()) {
-        env->ExceptionClear();
-        return nullptr;
-    }
-    return result;
+    return buildRawExifMetadataObject(env, proc);
 }

@@ -28,5 +28,5 @@ data class RawExifMetadata(
     val gpsParsed: Boolean = false,
     val gpsLatitude: Double = 0.0,
     val gpsLongitude: Double = 0.0,
-    val gpsAltitude: Double = 0.0
+    val gpsAltitude: Double = Double.NaN
 )

@@ -58,6 +58,17 @@ internal interface ScopedMediaStoreBackend<H : Any> {
     fun deleteEntry(handle: H)
 }
 
+/**
+ * Seam for API 24–28 legacy external directory operations (`.tmp` write → EXIF writeback →
+ * atomic rename → MediaStore announcement).
+ */
+internal interface LegacyDirectoryBackend<H : Any> {
+    fun openTempWriteStream(displayName: String): OutputStream
+    fun applyExifToTemp(displayName: String, block: (ExifTagWriter) -> Unit)
+    fun commitTempAndAnnounce(displayName: String, mime: String): H?
+    fun deleteTemp(displayName: String)
+}
+
 internal fun <H : Any> saveViaScopedMediaStore(
     backend: ScopedMediaStoreBackend<H>,
     displayName: String,
@@ -68,7 +79,7 @@ internal fun <H : Any> saveViaScopedMediaStore(
 ): H? {
     val handle = try {
         backend.insertPending(displayName, mime, relativePath)
-    } catch (e: Exception) {
+    } catch (e: RuntimeException) {
         Timber.e(e, "insertPending failed for %s", displayName)
         null
     } ?: return null
@@ -85,51 +96,52 @@ internal fun <H : Any> saveViaScopedMediaStore(
         }
         backend.publishPending(handle)
         handle
-    } catch (e: Exception) {
-        try {
-            backend.deleteEntry(handle)
-        } catch (cleanupError: Exception) {
-            Timber.w(cleanupError, "Failed to clean up pending gallery entry for %s", displayName)
-        }
-        Timber.e(e, "saveViaScopedMediaStore failed for %s", displayName)
+    } catch (e: IOException) {
+        cleanupPending(backend, handle, displayName)
+        Timber.e(e, "saveViaScopedMediaStore I/O failed for %s", displayName)
+        null
+    } catch (e: RuntimeException) {
+        cleanupPending(backend, handle, displayName)
+        Timber.e(e, "saveViaScopedMediaStore runtime failure for %s", displayName)
         null
     }
 }
 
-internal fun <H : Any> saveViaLegacyDirectory(
-    targetDir: File,
-    displayName: String,
-    write: (OutputStream) -> Unit,
-    applyExifToFile: (File, (ExifTagWriter) -> Unit) -> Unit,
-    writeExif: ((ExifTagWriter) -> Unit)?,
-    announceFile: (File) -> H?
-): H? {
-    if (!targetDir.exists() && !targetDir.mkdirs()) {
-        Timber.e("Failed to create gallery directory for %s", displayName)
-        return null
+private fun <H : Any> cleanupPending(
+    backend: ScopedMediaStoreBackend<H>,
+    handle: H,
+    displayName: String
+) {
+    try {
+        backend.deleteEntry(handle)
+    } catch (cleanupError: RuntimeException) {
+        Timber.w(cleanupError, "Failed to clean up pending gallery entry for %s", displayName)
     }
-    val tmpFile = File(targetDir, "$displayName.tmp")
-    val finalFile = File(targetDir, displayName)
+}
+
+internal fun <H : Any> saveViaLegacyBackend(
+    backend: LegacyDirectoryBackend<H>,
+    displayName: String,
+    mime: String,
+    write: (OutputStream) -> Unit,
+    writeExif: ((ExifTagWriter) -> Unit)?
+): H? {
     return try {
-        FileOutputStream(tmpFile).use { out ->
+        backend.openTempWriteStream(displayName).use { out ->
             write(out)
             out.flush()
         }
         if (writeExif != null) {
-            applyExifToFile(tmpFile, writeExif)
+            backend.applyExifToTemp(displayName, writeExif)
         }
-        if (finalFile.exists() && !finalFile.delete()) {
-            throw IOException("Could not replace existing file for $displayName")
-        }
-        if (!tmpFile.renameTo(finalFile)) {
-            throw IOException("Atomic rename from temp file failed for $displayName")
-        }
-        announceFile(finalFile)
-    } catch (e: Exception) {
-        if (tmpFile.exists()) {
-            tmpFile.delete()
-        }
-        Timber.e(e, "saveViaLegacyDirectory failed for %s", displayName)
+        backend.commitTempAndAnnounce(displayName, mime)
+    } catch (e: IOException) {
+        backend.deleteTemp(displayName)
+        Timber.e(e, "saveViaLegacyBackend I/O failed for %s", displayName)
+        null
+    } catch (e: RuntimeException) {
+        backend.deleteTemp(displayName)
+        Timber.e(e, "saveViaLegacyBackend runtime failure for %s", displayName)
         null
     }
 }
@@ -181,6 +193,59 @@ class MediaStoreGallerySink(
     }
 
     @Suppress("DEPRECATION")
+    private val legacyBackend = object : LegacyDirectoryBackend<Uri> {
+        private fun galleryDir(): File {
+            val pictures = Environment.getExternalStoragePublicDirectory(
+                Environment.DIRECTORY_PICTURES
+            )
+            val dir = File(pictures, GallerySink.GALLERY_DIR_NAME)
+            if (!dir.exists() && !dir.mkdirs()) {
+                throw IOException("Failed to create gallery directory")
+            }
+            return dir
+        }
+
+        private fun tempFileFor(displayName: String): File =
+            File(galleryDir(), "$displayName.tmp")
+
+        override fun openTempWriteStream(displayName: String): OutputStream =
+            FileOutputStream(tempFileFor(displayName))
+
+        override fun applyExifToTemp(displayName: String, block: (ExifTagWriter) -> Unit) {
+            val exif = ExifInterface(tempFileFor(displayName))
+            block(AndroidExifTagAdapter(exif))
+            exif.saveAttributes()
+        }
+
+        override fun commitTempAndAnnounce(displayName: String, mime: String): Uri? {
+            val dir = galleryDir()
+            val tmpFile = File(dir, "$displayName.tmp")
+            val finalFile = File(dir, displayName)
+            if (finalFile.exists() && !finalFile.delete()) {
+                throw IOException("Could not replace existing file for $displayName")
+            }
+            if (!tmpFile.renameTo(finalFile)) {
+                throw IOException("Atomic rename from temp file failed for $displayName")
+            }
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DATA, finalFile.absolutePath)
+                put(MediaStore.MediaColumns.MIME_TYPE, mime)
+                put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+            }
+            return contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+        }
+
+        override fun deleteTemp(displayName: String) {
+            val pictures = Environment.getExternalStoragePublicDirectory(
+                Environment.DIRECTORY_PICTURES
+            )
+            val tmpFile = File(File(pictures, GallerySink.GALLERY_DIR_NAME), "$displayName.tmp")
+            if (tmpFile.exists()) {
+                tmpFile.delete()
+            }
+        }
+    }
+
     override fun save(
         displayName: String,
         mime: String,
@@ -199,28 +264,12 @@ class MediaStoreGallerySink(
                 writeExif = writeExif
             )
         } else {
-            val pictures = Environment.getExternalStoragePublicDirectory(
-                Environment.DIRECTORY_PICTURES
-            )
-            val dir = File(pictures, GallerySink.GALLERY_DIR_NAME)
-            saveViaLegacyDirectory(
-                targetDir = dir,
+            saveViaLegacyBackend(
+                backend = legacyBackend,
                 displayName = displayName,
+                mime = mime,
                 write = write,
-                applyExifToFile = { tmpFile, block ->
-                    val exif = ExifInterface(tmpFile)
-                    block(AndroidExifTagAdapter(exif))
-                    exif.saveAttributes()
-                },
-                writeExif = writeExif,
-                announceFile = { finalFile ->
-                    val values = ContentValues().apply {
-                        put(MediaStore.MediaColumns.DATA, finalFile.absolutePath)
-                        put(MediaStore.MediaColumns.MIME_TYPE, mime)
-                        put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
-                    }
-                    contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-                }
+                writeExif = writeExif
             )
         }
     }

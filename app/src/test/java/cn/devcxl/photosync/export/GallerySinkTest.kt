@@ -1,7 +1,6 @@
 package cn.devcxl.photosync.export
 
 import java.io.ByteArrayOutputStream
-import java.io.File
 import java.io.IOException
 import java.io.OutputStream
 
@@ -10,14 +9,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Rule
 import org.junit.Test
-import org.junit.rules.TemporaryFolder
 
 class GallerySinkTest {
-
-    @get:Rule
-    val tempFolder = TemporaryFolder()
 
     private class FakeScopedMediaStoreBackend : ScopedMediaStoreBackend<String> {
         val events = mutableListOf<String>()
@@ -78,6 +72,58 @@ class GallerySinkTest {
         }
     }
 
+    private class FakeLegacyDirectoryBackend : LegacyDirectoryBackend<String> {
+        val events = mutableListOf<String>()
+        val tempBuffer = ByteArrayOutputStream()
+        var committedBytes: ByteArray? = null
+        val exifStore = mutableMapOf<String, String?>()
+        var tempExists = false
+
+        override fun openTempWriteStream(displayName: String): OutputStream {
+            events += "openTemp:$displayName.tmp"
+            tempExists = true
+            return object : OutputStream() {
+                override fun write(b: Int) {
+                    tempBuffer.write(b)
+                }
+
+                override fun write(b: ByteArray, off: Int, len: Int) {
+                    tempBuffer.write(b, off, len)
+                }
+
+                override fun close() {
+                    events += "closeTemp:$displayName.tmp"
+                }
+            }
+        }
+
+        override fun applyExifToTemp(displayName: String, block: (ExifTagWriter) -> Unit) {
+            events += "applyExifToTemp:$displayName.tmp"
+            val writer = object : ExifTagWriter {
+                override fun setAttribute(tag: String, value: String?) {
+                    exifStore[tag] = value
+                }
+
+                override fun setLatLong(latitude: Double, longitude: Double) {}
+                override fun setAltitude(altitude: Double) {}
+            }
+            block(writer)
+        }
+
+        override fun commitTempAndAnnounce(displayName: String, mime: String): String {
+            events += "renameTempToFinal:$displayName"
+            events += "announceMediaStore:$displayName:$mime"
+            committedBytes = tempBuffer.toByteArray()
+            tempExists = false
+            return "content://media/external/images/media/99"
+        }
+
+        override fun deleteTemp(displayName: String) {
+            events += "deleteTemp:$displayName.tmp"
+            tempExists = false
+        }
+    }
+
     @Test
     fun shouldWriteStreamThenReopenRwForExifBeforePublishing_whenSavingOnApi29Plus() {
         val backend = FakeScopedMediaStoreBackend()
@@ -129,63 +175,51 @@ class GallerySinkTest {
     }
 
     @Test
-    fun shouldWriteToTempFileApplyExifAndAtomicallyRename_whenSavingOnLegacyApi24To28() {
-        val targetDir = tempFolder.newFolder("Pictures", "PhotoSync")
-        val appliedTags = mutableMapOf<String, String?>()
-        var announcedPath: String? = null
+    fun shouldWriteToTempApplyExifAndAtomicallyCommit_whenSavingOnLegacyApi24To28() {
+        val backend = FakeLegacyDirectoryBackend()
 
-        val result = saveViaLegacyDirectory(
-            targetDir = targetDir,
+        val result = saveViaLegacyBackend(
+            backend = backend,
             displayName = "IMG_0001_export.jpg",
+            mime = "image/jpeg",
             write = { out -> out.write("JPEG_BYTES".toByteArray()) },
-            applyExifToFile = { tmpFile, block ->
-                assertTrue("Temp file must exist during EXIF writeback", tmpFile.exists())
-                assertTrue("Temp file must have .tmp suffix", tmpFile.name.endsWith(".tmp"))
-                val writer = object : ExifTagWriter {
-                    override fun setAttribute(tag: String, value: String?) {
-                        appliedTags[tag] = value
-                    }
-                    override fun setLatLong(latitude: Double, longitude: Double) {}
-                    override fun setAltitude(altitude: Double) {}
-                }
-                block(writer)
-            },
-            writeExif = { exif -> exif.setAttribute("Orientation", "1") },
-            announceFile = { finalFile ->
-                announcedPath = finalFile.absolutePath
-                "content://media/external/images/media/99"
-            }
+            writeExif = { exif -> exif.setAttribute("Orientation", "1") }
         )
 
         assertEquals("content://media/external/images/media/99", result)
-        val finalFile = File(targetDir, "IMG_0001_export.jpg")
-        assertTrue(finalFile.exists())
-        assertEquals("JPEG_BYTES", finalFile.readText())
-        assertEquals("1", appliedTags["Orientation"])
-        assertEquals(finalFile.absolutePath, announcedPath)
-        assertTrue(
-            "No .tmp file should remain after atomic rename",
-            targetDir.listFiles().orEmpty().none { it.name.endsWith(".tmp") }
+        assertEquals("JPEG_BYTES", String(backend.committedBytes!!))
+        assertEquals("1", backend.exifStore["Orientation"])
+        assertFalse(backend.tempExists)
+        assertEquals(
+            listOf(
+                "openTemp:IMG_0001_export.jpg.tmp",
+                "closeTemp:IMG_0001_export.jpg.tmp",
+                "applyExifToTemp:IMG_0001_export.jpg.tmp",
+                "renameTempToFinal:IMG_0001_export.jpg",
+                "announceMediaStore:IMG_0001_export.jpg:image/jpeg"
+            ),
+            backend.events
         )
     }
 
     @Test
-    fun shouldCleanUpTempFileAndLeaveNoCorruptTarget_whenLegacyWriteOrExifFails() {
-        val targetDir = tempFolder.newFolder("Pictures", "PhotoSync_Fail")
+    fun shouldCleanUpTempAndNotCommit_whenLegacyWriteFails() {
+        val backend = FakeLegacyDirectoryBackend()
 
-        val result = saveViaLegacyDirectory<String>(
-            targetDir = targetDir,
+        val result = saveViaLegacyBackend(
+            backend = backend,
             displayName = "IMG_FAIL.jpg",
+            mime = "image/jpeg",
             write = { out ->
                 out.write("HALF_WRITTEN".toByteArray())
                 throw IOException("Disk full midway")
             },
-            applyExifToFile = { _, _ -> },
-            writeExif = null,
-            announceFile = { "should_not_be_called" }
+            writeExif = null
         )
 
         assertNull(result)
-        assertEquals(0, targetDir.listFiles().orEmpty().size)
+        assertNull(backend.committedBytes)
+        assertFalse(backend.tempExists)
+        assertTrue(backend.events.contains("deleteTemp:IMG_FAIL.jpg.tmp"))
     }
 }
