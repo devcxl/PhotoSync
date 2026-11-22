@@ -11,6 +11,8 @@ import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 
@@ -27,6 +29,18 @@ import cn.devcxl.photosync.editor.domain.SourceResidencyPlan
 import cn.devcxl.photosync.editor.domain.SourceResidencyPlanner
 import cn.devcxl.photosync.editor.lut.CubeLutStore
 import cn.devcxl.photosync.wrapper.JpegStreamWriter
+
+/**
+ * Process-wide concurrency gate for the full-resolution bake pipeline.
+ *
+ * A RAW bake holds a decoded `RGB16` source plus band FBOs; two of them at once would double the
+ * peak memory and can push a 50MP export past the 512MB budget. JPEG bakes are independent and are
+ * not serialized.
+ */
+object BakeConcurrencyGate {
+    /** Serializes RAW bakes; JPEG bakes never acquire it. */
+    val rawBakeMutex = Mutex()
+}
 
 /**
  * Full-resolution non-destructive bake: 1024px Pre-pass, three-tier source residency, column-band
@@ -46,9 +60,15 @@ class BakeExporter(
      * Bakes [request] into the system gallery.
      *
      * Cancellation is observed once per column band; a cancelled bake aborts the encoder and lets
-     * the sink delete its pending entry.
+     * the sink delete its pending entry. RAW requests additionally wait for
+     * [BakeConcurrencyGate.rawBakeMutex] so at most one RAW bake occupies memory at a time.
      */
-    suspend fun bake(request: BakeRequest): BakeResult = withContext(Dispatchers.Default) {
+    suspend fun bake(request: BakeRequest): BakeResult {
+        if (!request.isRaw) return runBake(request)
+        return BakeConcurrencyGate.rawBakeMutex.withLock { runBake(request) }
+    }
+
+    private suspend fun runBake(request: BakeRequest): BakeResult = withContext(Dispatchers.Default) {
         val coroutine = currentCoroutineContext()
         try {
             bakeBlocking(request, coroutine)

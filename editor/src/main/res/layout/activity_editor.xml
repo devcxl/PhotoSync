@@ -161,6 +161,28 @@
             android:textSize="12sp" />
     </LinearLayout>
 
+    <!-- Quiet "+N new photos" pill: background ingest must never steal focus from a gesture -->
+    <TextView
+        android:id="@+id/newSyncedPhotoPill"
+        android:layout_width="wrap_content"
+        android:layout_height="28dp"
+        android:layout_marginTop="62dp"
+        android:background="@drawable/bg_editor_new_photos_pill"
+        android:clickable="true"
+        android:focusable="false"
+        android:gravity="center"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:textColor="@color/editor_text_primary"
+        android:textSize="12sp"
+        android:textStyle="bold"
+        android:visibility="gone"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/editorTopBar"
+        tools:text="+3 新照片"
+        tools:visibility="visible" />
+
     <!-- Bottom 3-tier drawer (Variant A + B hybrid) -->
     <LinearLayout
         android:id="@+id/bottomPanel"
@@ -233,6 +255,10 @@
         <include
             android:id="@+id/portraitPanels"
             layout="@layout/editor_portrait_panels" />
+
+        <include
+            android:id="@+id/presetPanel"
+            layout="@layout/editor_preset_panel" />
 
         <!-- Tier 2: Sub-tool chip row -->
         <HorizontalScrollView

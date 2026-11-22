@@ -65,6 +65,48 @@ internal object PreviewCacheWriter {
         lut: Lut3dSamples? = null,
         skinMask: FloatArray? = null
     ): String? {
+        val rendered = renderLinearFrame(source, graph, warpField, lut, skinMask) ?: return null
+        return compressAndWrite(rendered, cacheDir, photoId)
+    }
+
+    /**
+     * Writes the preview of an 8-bit sRGB [source] straight into [outDir], which the caller owns.
+     *
+     * Used by the `LiveTetherPreset` ingestor to stage a JPEG in a temporary directory before the
+     * Room row (and therefore the final `edits/<photoId>/` directory name) exists.
+     */
+    fun writeBitmapPreviewTo(
+        source: Bitmap,
+        graph: EditGraph,
+        outDir: File,
+        warpField: WarpDisplacementField? = null,
+        lut: Lut3dSamples? = null,
+        skinMask: FloatArray? = null
+    ): String? {
+        val rendered = renderBitmapFrame(source, graph, warpField, lut, skinMask) ?: return null
+        return compressAndWriteTo(rendered, outDir)
+    }
+
+    /** Writes the preview of a 16-bit linear [source] straight into [outDir]. */
+    fun writeLinearPreviewTo(
+        source: LinearRawBuffer,
+        graph: EditGraph,
+        outDir: File,
+        warpField: WarpDisplacementField? = null,
+        lut: Lut3dSamples? = null,
+        skinMask: FloatArray? = null
+    ): String? {
+        val rendered = renderLinearFrame(source, graph, warpField, lut, skinMask) ?: return null
+        return compressAndWriteTo(rendered, outDir)
+    }
+
+    private fun renderLinearFrame(
+        source: LinearRawBuffer,
+        graph: EditGraph,
+        warpField: WarpDisplacementField?,
+        lut: Lut3dSamples?,
+        skinMask: FloatArray?
+    ): Bitmap? {
         val sourceAspect = source.width.toFloat() / source.height.toFloat()
         val outputAspect = GeometryMath.outputAspect(graph.geometry, sourceAspect)
         val (outW, outH) = previewSize(outputAspect)
@@ -90,13 +132,12 @@ internal object PreviewCacheWriter {
             fullResolutionShortEdge = minOf(source.width, source.height),
             skinMask = skinMask?.takeIf { it.size == SkinMaskMath.MASK_SIZE * SkinMaskMath.MASK_SIZE }
         )
-        val outBitmap = Bitmap.createBitmap(
+        return Bitmap.createBitmap(
             pixels,
             linearFrame.width,
             linearFrame.height,
             Bitmap.Config.ARGB_8888
         )
-        return compressAndWrite(outBitmap, cacheDir, photoId)
     }
 
     private fun renderBitmapFrame(
@@ -204,8 +245,20 @@ internal object PreviewCacheWriter {
             return null
         }
         editDir.listFiles()?.forEach { it.delete() }
+        return compressAndWriteTo(rendered, editDir)
+    }
 
-        val outFile = File(editDir, "preview_${System.currentTimeMillis()}.jpg")
+    /**
+     * Compresses [rendered] into `preview_<ts>.jpg` inside [outDir] and returns its absolute path.
+     *
+     * The bitmap is recycled on every path, including failures.
+     */
+    private fun compressAndWriteTo(rendered: Bitmap, outDir: File): String? {
+        if (!outDir.exists() && !outDir.mkdirs()) {
+            rendered.recycle()
+            return null
+        }
+        val outFile = File(outDir, "preview_${System.currentTimeMillis()}.jpg")
         return try {
             FileOutputStream(outFile).use { stream ->
                 if (!rendered.compress(Bitmap.CompressFormat.JPEG, PREVIEW_JPEG_QUALITY, stream)) {

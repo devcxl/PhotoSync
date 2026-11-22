@@ -151,6 +151,7 @@
     <string name="editor_lut_import_failed">LUT 导入失败，请重新选择 .cube 文件</string>
     <string name="editor_value_lut_modified">已应用</string>
     <string name="editor_value_lut_none">—</string>
+    <string name="editor_value_preset_modified">已套用</string>
 
     <!-- Film grain panel -->
     <string name="editor_grain_amount">数量</string>
@@ -213,4 +214,32 @@
     <string name="editor_aspect_square">1:1</string>
     <string name="editor_aspect_four_three">4:3</string>
     <string name="editor_aspect_sixteen_nine">16:9</string>
+
+    <!-- Preset panel -->
+    <string name="editor_tool_preset">预设</string>
+    <string name="editor_tool_preset_modified">预设 •</string>
+    <string name="editor_preset_save_current">＋ 保存当前为预设</string>
+    <string name="editor_preset_none">无预设</string>
+    <string name="editor_preset_saved">已保存预设「%1$s」</string>
+    <string name="editor_preset_save_failed">预设保存失败，请检查存储空间</string>
+    <string name="editor_preset_save_title">保存为预设</string>
+    <string name="editor_preset_save_hint">输入预设名称</string>
+    <string name="editor_preset_rename_title">重命名预设</string>
+    <string name="editor_preset_menu_rename">重命名</string>
+    <string name="editor_preset_menu_delete">删除</string>
+    <string name="editor_preset_menu_set_live">设为联机预设</string>
+    <string name="editor_preset_menu_clear_live">取消联机预设</string>
+    <string name="editor_preset_delete_title">删除预设「%1$s」？</string>
+    <string name="editor_preset_delete_confirm">删除</string>
+    <string name="editor_hint_confirm">确定</string>
+    <string name="editor_hint_cancel">取消</string>
+    <string name="editor_preset_live_badge" translatable="false">⚡</string>
+    <string name="editor_preset_live_on">已设为联机预设：新同步照片自动套用</string>
+    <string name="editor_preset_live_off">已取消联机预设</string>
+    <string name="editor_preset_applied">已套用预设「%1$s」</string>
+    <string name="editor_preset_cleared">已清除预设参数</string>
+    <string name="editor_preset_empty">暂无预设，点击上方按钮保存当前调色</string>
+
+    <!-- Tethered ingest pill -->
+    <string name="editor_new_photos_pill">+%1$d 新照片</string>
 </resources>

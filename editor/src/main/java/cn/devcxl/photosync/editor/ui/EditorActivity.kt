@@ -9,10 +9,14 @@ import android.view.View
 import android.widget.Toast
 
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 
 import cn.devcxl.photosync.editor.R
+import cn.devcxl.photosync.editor.contract.EditorHostRegistry
 import cn.devcxl.photosync.editor.contract.EditorLaunchArgs
 import cn.devcxl.photosync.editor.databinding.ActivityEditorBinding
 import cn.devcxl.photosync.editor.domain.BaseLook
@@ -66,6 +70,9 @@ class EditorActivity : AppCompatActivity(),
     private var isRaw: Boolean = false
     private var preferLinearSource: Boolean = false
 
+    /** Photos that synced while this activity was in front, shown as `+N 新照片`. */
+    private var syncedPhotoCount: Int = 0
+
     private val settleFullQualityRunnable = Runnable { renderCoordinator.renderCurrentGraph(useProxy = false) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -81,7 +88,7 @@ class EditorActivity : AppCompatActivity(),
         preferLinearSource = canvas.configureSurfaceView()
         canvas.attachOverlays()
         topBar = EditorTopBarBinder(binding, historyCoordinator, this).also { it.bind() }
-        panel = EditorPanelController(this, binding, undoController, this, lutStore)
+        panel = EditorPanelController(this, binding, undoController, this, lutStore, lifecycleScope)
         overlaySync = EditorOverlaySync(
             binding = binding,
             panel = panel,
@@ -93,6 +100,7 @@ class EditorActivity : AppCompatActivity(),
         initActionHosts()
         panel.selectGroup(EditorGroup.TONE)
         loadInitialPhotoAndEditState()
+        observeTetheredPhotoEvents()
     }
 
     private fun initCoordinators() {
@@ -166,6 +174,35 @@ class EditorActivity : AppCompatActivity(),
             onExportingChanged = topBar::setExportEnabled,
             onFinished = { renderCoordinator.updateHistoryButtons() }
         )
+    }
+
+    /**
+     * Counts photos the camera synced while the editor was in front.
+     *
+     * Only `RESUMED` collects: an editor in the background must not accumulate a pill the user never
+     * saw, and the ingest itself never touches this activity's window, so an active slider drag or a
+     * liquify stroke keeps its focus.
+     */
+    private fun observeTetheredPhotoEvents() {
+        val events = EditorHostRegistry.tetheredPhotoEvents ?: emptyFlow()
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                events.collect { incrementSyncedPhotoPill() }
+            }
+        }
+        binding.newSyncedPhotoPill.setOnClickListener { resetSyncedPhotoPill() }
+    }
+
+    private fun incrementSyncedPhotoPill() {
+        syncedPhotoCount++
+        binding.newSyncedPhotoPill.text =
+            getString(R.string.editor_new_photos_pill, syncedPhotoCount)
+        binding.newSyncedPhotoPill.visibility = View.VISIBLE
+    }
+
+    private fun resetSyncedPhotoPill() {
+        syncedPhotoCount = 0
+        binding.newSyncedPhotoPill.visibility = View.GONE
     }
 
     override fun onResume() {

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Translucent blue "未编辑原图 (Before)" pill, matching the editor's compare pill. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+
+    <solid android:color="#CC1D4ED8" />
+    <corners android:radius="13dp" />
+    <stroke
+        android:width="1dp"
+        android:color="#8093C5FD" />
+
+</shape>

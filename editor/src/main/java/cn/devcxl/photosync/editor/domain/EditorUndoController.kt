@@ -42,7 +42,8 @@ enum class EditParameterKey {
     DETAIL_VIGNETTE,
     PORTRAIT_SKIN,
     PORTRAIT_RESHAPE,
-    PORTRAIT_BODY
+    PORTRAIT_BODY,
+    PRESET
 }
 
 /**

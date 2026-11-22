@@ -5,8 +5,9 @@ import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
-import cn.devcxl.photosync.data.entity.PhotoEntity
 import kotlinx.coroutines.flow.Flow
+
+import cn.devcxl.photosync.data.entity.PhotoEntity
 
 /**
  * DAO for photo entities.
@@ -18,6 +19,12 @@ interface PhotoDao {
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(entity: PhotoEntity): Long
+
+    @Query("SELECT * FROM photos WHERE id = :id LIMIT 1")
+    suspend fun getById(id: Long): PhotoEntity?
+
+    @Query("SELECT * FROM photos WHERE id IN (:ids) ORDER BY created_at ASC")
+    suspend fun getByIds(ids: List<Long>): List<PhotoEntity>
 
     @Query("UPDATE photos SET uri_string = :uriString WHERE id = :id")
     suspend fun updateUriString(id: Long, uriString: String)
