@@ -1,7 +1,7 @@
 # 单屏 XML/ViewBinding 编辑器交互与手势冲突原型
 
 Type: prototype
-Status: open
+Status: resolved
 
 ## Question
 
@@ -15,3 +15,39 @@ Status: open
 4. **主界面 × 编辑器「联机暗房」交互布局**：
    - 主界面 `activity_main.xml` 增量控件布局：顶部栏 `editButton`、`photoEditedBadge`（「已编辑」胶囊）、长按大图对比原图（Before/After 提示胶囊）、可收起的底部「快捷预设栏（Quick Preset Strip）」与「联机自动套用预设（LiveTetherPreset）」开关、跨照片「复制/粘贴参数」入口及批量烘焙导出进度卡片；
    - 编辑器内顶部「RAW 基准观感（默认/线性中性）」切换开关、「保存为用户预设」入口，以及编辑期间后台 USB 新同步照片的免打扰轻提示胶囊。
+
+## Answer
+
+可交互 HTML 原型（含 3 套 UI 变体 `?variant=A|B|C` 切换器、可直接迁移至 Kotlin ViewModel 的纯函数状态机与 4 个分步引导场景）已归档于：
+[`prototype-editor-ui-and-state.html`](../prototype-editor-ui-and-state.html)。
+
+经原型比对，敲定采用 **「A + B + C 融合布局与手势路由状态机」**：
+
+### 1. 单屏层级布局与 XML/ViewBinding 模块拆分（严守单文件 ≤ 500 行）
+
+1. **`EditorActivity`（采用变体 A 的三层底部抽屉 + 变体 B 的零点磁吸刻度滑杆）**：
+   - **顶部悬浮玻璃栏（`editor_top_bar.xml`）**：左侧「`✓ 完成`」（秒存 `EditGraph` + 预览缓存并退回主界面）；中部「`↶ 撤销` / `↷ 重做`」、「`RAW:默认观感 | 线性中性`」基准切换胶囊、「`对比`」按钮、后台同步免打扰轻提示胶囊（`+N 新照片`）；右侧主按钮「`导出`」（立即触发全分辨率烘焙写入相册）。
+   - **中央画布区（`EditorCanvasView` 容器）**：底层 `GLSurfaceView`/`SurfaceView`（自建 EGL GLES 3.0）+ 顶层透明手势覆盖层（按当前工具动态切换 `CropOverlayView` / `LiquifyBrushOverlayView`）。
+   - **底部三层面板（`editor_bottom_panel.xml`，横屏 `layout-land` 自动移至右侧 `320dp` 垂直栏）**：
+     - **第 1 层（动态参数控件区 `ViewFlipper`）**：根据当前子工具切换为：① 变体 B 风格的带中心零点磁吸与双向填充条的刻度滑杆（`DialSeekBar`）；② 曲线 4 通道单调三次 Hermite 控制点网格（`CurveEditorView`）；③ 8 色带彩色圆点选择器 + H/S/L 三滑杆（`HslPanelView`）；④ 液化笔刷面板（大小/强度/推拉/恢复擦除）。
+     - **第 2 层（二级子工具横向 `RecyclerView` Chip 栏）**：展示当前分组下的子工具，任何非零参数子工具右上角亮起蓝色修改圆点 `•`（双击该 Chip 即可单独重置该项参数为 0）。
+     - **第 3 层（一级分组固定 6 Tab）**：`预设` · `几何` · `影调` · `色彩` · `细节` · `人像`。
+2. **`MainActivity` 联机暗房增量控件（融合变体 C 的同屏快修体验）**：
+   - 顶部栏 `photoMetaPill` 增加 `photoEditedBadge`（「已编辑」蓝色胶囊）；右侧 `infoToggleButton` 与 `exportButton` 之间新增圆形玻璃图标按钮 `editButton`（「编辑」）；
+   - 底部 `bottomFilmstripContainer` 上方新增可折叠的 **「快捷预设与联机操作栏（`quick_preset_strip.xml`）」**：包含「无预设（原图）」+ 用户保存的 `Preset` 横向 Chip、**「⚡ 联机自动套用（`LiveTetherPreset`）」开关**，以及 **「复制参数 / 粘贴参数」** 快捷按钮；
+   - 右上角复用 `transferStatusCard` 样式展示后台批量烘焙导出队列进度（`正在导出 4/12…`）。
+
+### 2. 画布手势路由与冲突消解状态机
+
+| 当前活动工具 | 单指按下与拖拽 (`pointerCount == 1`) | 双指捏合与拖拽 (`pointerCount >= 2`) | 长按画布空白区 (`> 250ms` 未移动) |
+|---|---|---|---|
+| **普通调色 / 预设 / 细节 / 人像滑杆** | 平移已放大的画布（1.0x 下忽略） | 自由缩放（`1.0x–8.0x`）与平移画布 | 按住显示未编辑原图（`Before`），松手恢复（`After`） |
+| **几何 · 裁切 / 拉直 / 透视** | 命中角点/边线时拖拽裁切框或透视四角；命中刻度盘时旋转拉直并实时内接矩形 | 缩放与平移画布底图 | 不触发对比（避免打断精细对齐） |
+| **色彩 · 曲线** | 曲线网格内：添加/拖拽控制点（拖出网格下边缘删除点）；画布区：平移画布 | 画布区双指缩放/平移 | 画布区长按对比原图 |
+| **几何 · 液化画笔** | 在画布上涂抹，按屏幕坐标反算图像 UV 并在半清位移场纹理上累积位移向量 | **双指按下瞬间立即取消当前未移动超过 `8dp` 的单指画笔**，无缝切为画布缩放/平移，严防双指缩放误涂抹 | 不触发对比（避免与慢速起笔冲突） |
+
+### 3. 高频渲染节流与 300ms 撤销栈合并契约
+
+1. **拖动期（`PROXY_1024_FAST`）**：滑杆 `onProgressChanged` 连续触发时，GL 线程绑定 `1024px` 代理纹理，且若未修改空间细节参数则直接复用几何/细节缓存、仅跑点运算 Shader（耗时 `≤ 8ms`）。
+2. **300ms 撤销事务窗口**：首次改动参数时压入一次 `EditGraph` 不可变快照并开启 `300ms` 去抖计时器；窗口内对同一滑杆的连续变动直接覆盖栈顶状态，松手（`onStopTrackingTouch`）或超时后封口事务，确保一次完整拖拽只占 1 步 Undo（上限 50 步）。
+3. **松手定格期（`SETTLING_150MS` → `IDLE_FULL_16F`）**：手指松开后 `150ms` 内若无新输入，GL 线程触发全预览分辨率 `RGBA16F` 完整 6-Pass 渲染（含阶段 ④ 引导滤波/金字塔，耗时 `≤ 33ms`）。

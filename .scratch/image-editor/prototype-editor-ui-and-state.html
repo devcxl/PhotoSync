@@ -1,0 +1,1059 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PhotoSync 图片编辑器 UI 变体与手势/渲染状态机原型 (PROTOTYPE)</title>
+<style>
+  :root {
+    --darkroom-bg: #000000;
+    --darkroom-surface: #14161C;
+    --darkroom-surface-elevated: #1B1E26;
+    --darkroom-glass-bg: rgba(14, 16, 20, 0.78);
+    --darkroom-glass-border: rgba(255, 255, 255, 0.15);
+    --text-primary: #F4F5F7;
+    --text-secondary: #A1A7B3;
+    --text-muted: #6C7382;
+    --accent-blue: #3B82F6;
+    --accent-blue-pill: rgba(37, 99, 235, 0.86);
+    --accent-blue-border: rgba(147, 197, 253, 0.5);
+    --toggle-on-text: #BFDBFE;
+    --status-ready: #F59E0B;
+    --status-connected: #22C55E;
+    --status-error: #EF4444;
+    --badge-raw-bg: rgba(245, 158, 11, 0.22);
+    --badge-raw-border: rgba(245, 158, 11, 0.35);
+    --badge-raw-text: #FCD34D;
+    --exported-bg: rgba(20, 83, 45, 0.72);
+    --exported-border: rgba(34, 197, 94, 0.55);
+    --exported-text: #86EFAC;
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0B0D11;
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    line-height: 1.5;
+    padding: 20px 20px 96px;
+  }
+
+  .proto-banner {
+    max-width: 1320px;
+    margin: 0 auto 20px;
+    background: var(--darkroom-surface);
+    border: 1px solid var(--darkroom-glass-border);
+    border-radius: 10px;
+    padding: 16px 20px;
+  }
+  .proto-banner h1 { font-size: 18px; margin-bottom: 6px; }
+  .proto-banner p { font-size: 13px; color: var(--text-secondary); }
+
+  .workspace {
+    max-width: 1320px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 420px 1fr;
+    gap: 24px;
+    align-items: start;
+  }
+  @media (max-width: 980px) {
+    .workspace { grid-template-columns: 1fr; }
+  }
+
+  /* Phone Simulator */
+  .phone-frame {
+    background: var(--darkroom-bg);
+    border: 2px solid #2A2F3D;
+    border-radius: 28px;
+    overflow: hidden;
+    height: 760px;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    box-shadow: 0 20px 50px rgba(0,0,0,0.65);
+    user-select: none;
+  }
+
+  .glass-pill {
+    background: var(--darkroom-glass-bg);
+    border: 1px solid var(--darkroom-glass-border);
+    border-radius: 999px;
+    padding: 5px 11px;
+    font-size: 12px;
+    color: var(--text-primary);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    backdrop-filter: blur(8px);
+  }
+  .glass-btn {
+    background: var(--darkroom-glass-bg);
+    border: 1px solid var(--darkroom-glass-border);
+    border-radius: 999px;
+    height: 34px;
+    padding: 0 12px;
+    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+  }
+  .glass-btn.active, .glass-btn.primary {
+    background: var(--accent-blue-pill);
+    border-color: var(--accent-blue-border);
+    color: #fff;
+  }
+  .glass-btn:disabled {
+    opacity: 0.38;
+    cursor: not-allowed;
+  }
+
+  .badge-raw {
+    background: var(--badge-raw-bg);
+    border: 1px solid var(--badge-raw-border);
+    color: var(--badge-raw-text);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 4px;
+  }
+  .badge-edited {
+    background: rgba(59, 130, 246, 0.22);
+    border: 1px solid var(--accent-blue-border);
+    color: var(--toggle-on-text);
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 999px;
+  }
+  .badge-tether {
+    background: var(--exported-bg);
+    border: 1px solid var(--exported-border);
+    color: var(--exported-text);
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 999px;
+  }
+
+  /* Top Bar inside phone */
+  .phone-topbar {
+    padding: 12px 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    background: linear-gradient(180deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0) 100%);
+    z-index: 5;
+  }
+
+  /* SurfaceView Canvas Mock */
+  .canvas-area {
+    flex: 1;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(circle at 50% 42%, #242B38 0%, #090A0F 78%);
+    overflow: hidden;
+  }
+  .photo-preview {
+    width: 86%;
+    height: 72%;
+    border-radius: 6px;
+    background: linear-gradient(135deg, #2D3A4B 0%, #584B53 48%, #1E242B 100%);
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 12px;
+    border: 1px solid rgba(255,255,255,0.12);
+    transition: filter 0.15s ease, transform 0.15s ease;
+  }
+  .crop-grid {
+    position: absolute;
+    inset: 14px;
+    border: 1.5px solid #fff;
+    background-image:
+      linear-gradient(to right, rgba(255,255,255,0.25) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255,255,255,0.25) 1px, transparent 1px);
+    background-size: 33.33% 33.33%;
+    pointer-events: none;
+  }
+  .liquify-cursor {
+    position: absolute;
+    width: 56px;
+    height: 56px;
+    border: 1.5px dashed var(--accent-blue);
+    background: rgba(59, 130, 246, 0.15);
+    border-radius: 50%;
+    top: 42%;
+    left: 44%;
+    pointer-events: none;
+  }
+
+  /* Bottom panels for Variants A, B, C */
+  .bottom-panel-a {
+    background: var(--darkroom-surface);
+    border-top: 1px solid var(--darkroom-glass-border);
+    padding: 12px 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .bottom-panel-b {
+    position: absolute;
+    bottom: 14px;
+    left: 12px;
+    right: 12px;
+    background: rgba(20, 22, 28, 0.86);
+    border: 1px solid var(--darkroom-glass-border);
+    border-radius: 20px;
+    padding: 12px 14px;
+    backdrop-filter: blur(12px);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .bottom-panel-c {
+    background: var(--darkroom-surface);
+    border-top: 1px solid var(--darkroom-glass-border);
+    padding: 10px 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .chip-row {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+  .chip {
+    background: var(--darkroom-surface-elevated);
+    border: 1px solid rgba(255,255,255,0.08);
+    color: var(--text-secondary);
+    font-size: 11px;
+    padding: 5px 10px;
+    border-radius: 999px;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .chip.active {
+    background: rgba(59, 130, 246, 0.2);
+    border-color: var(--accent-blue);
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+  .chip.modified::after {
+    content: "•";
+    color: var(--accent-blue);
+    margin-left: 4px;
+  }
+
+  .tab-row {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 4px;
+    border-top: 1px solid rgba(255,255,255,0.07);
+    padding-top: 8px;
+  }
+  .tab-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 6px 2px;
+    border-radius: 6px;
+    cursor: pointer;
+    text-align: center;
+  }
+  .tab-btn.active {
+    color: var(--text-primary);
+    background: var(--darkroom-surface-elevated);
+  }
+
+  .slider-box {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .slider-box input[type=range] {
+    flex: 1;
+    accent-color: var(--accent-blue);
+  }
+  .dial-scale {
+    height: 32px;
+    background: repeating-linear-gradient(
+      90deg,
+      rgba(255,255,255,0.35) 0px,
+      rgba(255,255,255,0.35) 1px,
+      transparent 1px,
+      transparent 10px
+    );
+    border-radius: 6px;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(255,255,255,0.1);
+  }
+  .dial-center-pin {
+    width: 2px;
+    height: 22px;
+    background: var(--status-ready);
+  }
+
+  .filmstrip-mini {
+    display: flex;
+    gap: 6px;
+    padding: 4px;
+    background: #0D0F14;
+    border-radius: 8px;
+  }
+  .thumb-item {
+    width: 44px;
+    height: 44px;
+    border-radius: 5px;
+    background: #27303F;
+    border: 1.5px solid transparent;
+    position: relative;
+    font-size: 9px;
+    font-family: var(--font-mono);
+    display: flex;
+    align-items: flex-end;
+    padding: 2px 4px;
+    cursor: pointer;
+  }
+  .thumb-item.current { border-color: var(--accent-blue); }
+  .thumb-item.edited::before {
+    content: "E";
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    background: var(--accent-blue);
+    color: #fff;
+    font-size: 8px;
+    padding: 0 3px;
+    border-radius: 3px;
+  }
+
+  /* Logic & State Inspector Panel */
+  .inspector {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .card {
+    background: var(--darkroom-surface);
+    border: 1px solid var(--darkroom-glass-border);
+    border-radius: 12px;
+    padding: 16px 18px;
+  }
+  .card h2 {
+    font-size: 14px;
+    margin-bottom: 10px;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .state-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+  .state-cell {
+    background: var(--darkroom-surface-elevated);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 8px;
+    padding: 9px 12px;
+  }
+  .state-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-bottom: 2px;
+  }
+  .state-val {
+    font-size: 13px;
+    font-family: var(--font-mono);
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  .last-transition {
+    margin-top: 10px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    background: rgba(59, 130, 246, 0.14);
+    border: 1px solid var(--accent-blue-border);
+    font-size: 12px;
+    color: var(--toggle-on-text);
+  }
+
+  .btn-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .action-btn {
+    background: var(--darkroom-surface-elevated);
+    border: 1px solid rgba(255,255,255,0.14);
+    color: var(--text-primary);
+    font-size: 12px;
+    padding: 7px 11px;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .action-btn:hover { border-color: var(--accent-blue); }
+  .action-btn.step-active {
+    background: var(--accent-blue-pill);
+    border-color: var(--accent-blue-border);
+    font-weight: 600;
+  }
+
+  .walkthrough-tabs {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+  }
+
+  /* Floating Variant Switcher */
+  .prototype-switcher {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #F4F5F7;
+    color: #0B0D11;
+    border-radius: 999px;
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+    z-index: 100;
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .prototype-switcher button {
+    background: #0B0D11;
+    color: #F4F5F7;
+    border: none;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-weight: 700;
+  }
+</style>
+</head>
+<body>
+
+<div class="proto-banner">
+  <h1>[PROTOTYPE] PhotoSync 单屏编辑器 UI 变体与手势/渲染/联机暗房状态机</h1>
+  <p>
+    本原型同时验证两个核心问题：① <strong>UI 结构变体（底部悬浮栏或键盘 ← / → 切换 A / B / C）</strong>：在纯 XML + ViewBinding（无 Compose）下，6 大分组 30 项能力与联机暗房控件如何排布；② <strong>交互与渲染状态机（右侧面板）</strong>：不同工具态下的单指/双指手势冲突路由、1024px 拖拽代理与 300ms 撤销栈合并、以及 USB 联机来新图时的免打扰与自动套预设行为。
+  </p>
+</div>
+
+<div class="workspace">
+  <!-- Left: Phone UI Variant Preview -->
+  <div class="phone-frame" id="phoneFrame"></div>
+
+  <!-- Right: Pure State Machine & Walkthroughs -->
+  <div class="inspector">
+    <div class="card">
+      <h2>
+        <span>当前状态机快照 (Editor & Tether State)</span>
+        <span class="badge-tether" id="surfaceModeBadge">表面：编辑器</span>
+      </h2>
+      <div class="state-grid" id="stateGrid"></div>
+      <div class="last-transition" id="lastTransition">点击下方按钮或引导场景推进状态机…</div>
+    </div>
+
+    <div class="card">
+      <h2>分步引导场景 (Guided Walkthroughs)</h2>
+      <div class="walkthrough-tabs" id="walkthroughTabs"></div>
+      <p id="walkthroughDesc" style="font-size:12px; color:var(--text-secondary); margin-bottom:8px;"></p>
+      <div class="btn-group" id="walkthroughSteps"></div>
+    </div>
+
+    <div class="card">
+      <h2>自由操作台 (Free-Play Actions)</h2>
+      <div style="font-size:11px; color:var(--text-muted); margin-bottom:4px;">视图与工具切换</div>
+      <div class="btn-group" id="freePlayToolBtns"></div>
+      <div style="font-size:11px; color:var(--text-muted); margin:10px 0 4px;">画布手势与滑杆输入</div>
+      <div class="btn-group" id="freePlayGestureBtns"></div>
+      <div style="font-size:11px; color:var(--text-muted); margin:10px 0 4px;">联机暗房 (USB PTP 同步 / 预设 / 复制粘贴 / 导出)</div>
+      <div class="btn-group" id="freePlayTetherBtns"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Floating Bottom Switcher -->
+<div class="prototype-switcher">
+  <button id="prevVariantBtn" title="上一变体 (←)">←</button>
+  <span id="variantLabel">变体 A</span>
+  <button id="nextVariantBtn" title="下一变体 (→)">→</button>
+</div>
+
+<!-- 1. Pure Portable State Machine Module (Zero DOM dependency, directly liftable to Kotlin ViewModel) -->
+<script>
+const EditorStateMachine = (() => {
+  const GROUPS = {
+    PRESET:   { label: "预设", tools: ["联机预设", "内置预设", "导入.cube"] },
+    GEOMETRY: { label: "几何", tools: ["裁切/拉直", "旋转/翻转", "透视", "液化画笔"] },
+    TONE:     { label: "影调", tools: ["曝光", "光感", "亮度", "对比度", "高光", "阴影", "白色色阶", "黑色色阶"] },
+    COLOR:    { label: "色彩", tools: ["色温/色调", "饱和/自然", "曲线", "HSL 8色带", "色调分离", "褪色"] },
+    DETAIL:   { label: "细节", tools: ["锐化", "清晰度", "纹理", "降噪", "去雾", "色散/晕影/颗粒"] },
+    PORTRAIT: { label: "人像", tools: ["美肤", "面部重塑", "美体"] }
+  };
+
+  function initialState() {
+    return {
+      screen: "EDITOR",                // "MAIN_GALLERY" | "EDITOR"
+      photoId: 12,
+      photoName: "DSC04821.ARW",
+      isRaw: true,
+      baseLook: "camera_default",      // "camera_default" | "linear_neutral"
+      activeGroup: "TONE",
+      activeTool: "曝光",
+      sliderValue: 0,
+      hasActiveEdit: false,
+      comparingOriginal: false,
+      renderTier: "IDLE_FULL_16F",     // "PROXY_1024_FAST" | "SETTLING_150MS" | "IDLE_FULL_16F"
+      gestureRoute: "CANVAS_PAN_ZOOM", // "CANVAS_PAN_ZOOM" | "CROP_HANDLE_DRAG" | "CURVE_KNOT_DRAG" | "LIQUIFY_STROKE"
+      undoDepth: 0,
+      redoDepth: 0,
+      pendingTxWindowMs: 0,
+      liveTetherPreset: null,          // e.g. "日系胶片_2383"
+      clipboardMask: null,             // e.g. "TONE+COLOR+DETAIL (排除几何/液化)"
+      backgroundSyncedCount: 0,
+      batchBakeProgress: null,         // e.g. "3 / 15"
+      portraitMulticlassReady: false,  // 16.37MB model downloaded?
+      lastEvent: "初始化：进入 DSC04821.ARW 编辑器（RAW 默认套用 camera_default 基准观感，与浏览页 0 跳变）"
+    };
+  }
+
+  function resolveGestureRoute(group, tool, pointerCount) {
+    if (pointerCount >= 2) return "CANVAS_TWO_FINGER_PAN_ZOOM (所有工具下双指均缩放/平移画布)";
+    if (group === "GEOMETRY" && (tool === "裁切/拉直" || tool === "透视")) {
+      return "CROP_PERSPECTIVE_HANDLE (单指拖拽角点/刻度盘，自动内接矩形裁切)";
+    }
+    if (group === "GEOMETRY" && tool === "液化画笔") {
+      return "LIQUIFY_BRUSH_STROKE (单指在画布涂抹累积半清位移场纹理)";
+    }
+    if (group === "COLOR" && tool === "曲线") {
+      return "CURVE_HERMITE_KNOT (曲线网格内单指拖拽控制点，画布区单指平移)";
+    }
+    return "CANVAS_SINGLE_PAN_HOLD_COMPARE (单指平移画布，长按画面切换未编辑原图)";
+  }
+
+  function transition(state, action) {
+    const s = { ...state };
+    switch (action.type) {
+      case "SWITCH_SCREEN": {
+        s.screen = s.screen === "EDITOR" ? "MAIN_GALLERY" : "EDITOR";
+        s.comparingOriginal = false;
+        if (s.screen === "MAIN_GALLERY") {
+          s.backgroundSyncedCount = 0;
+          s.lastEvent = s.hasActiveEdit
+            ? "点「完成」秒退回主界面：保存 EditGraph JSON + 写出屏幕级预览缓存 cacheDir/edits/12/hash.jpg，主界面亮起「已编辑」标签"
+            : "退回主界面浏览页（未产生修改）";
+        } else {
+          s.lastEvent = "从主界面点击「编辑 (editButton)」进入 EditorActivity";
+        }
+        return s;
+      }
+      case "SELECT_TOOL": {
+        s.activeGroup = action.group;
+        s.activeTool = action.tool;
+        s.gestureRoute = resolveGestureRoute(s.activeGroup, s.activeTool, 1);
+        if (s.activeGroup === "PORTRAIT" && !s.portraitMulticlassReady) {
+          s.lastEvent = `切换至 [${GROUPS[action.group].label} · ${action.tool}]：内置 face_landmarker (3.3MB) 与 selfie_segmenter (250KB) 已就绪；后台按需拉取 16.37MB 精细皮肤分割模型`;
+        } else {
+          s.lastEvent = `切换工具至 [${GROUPS[action.group].label} · ${action.tool}]，单指手势路由更新为 ${s.gestureRoute}`;
+        }
+        return s;
+      }
+      case "SLIDER_DRAG_TICK": {
+        s.sliderValue = action.value;
+        s.hasActiveEdit = true;
+        s.renderTier = "PROXY_1024_FAST (仅跑阶段①②③点运算 ≤8ms)";
+        if (s.pendingTxWindowMs === 0) {
+          s.undoDepth = Math.min(50, s.undoDepth + 1);
+          s.redoDepth = 0;
+          s.pendingTxWindowMs = 300;
+          s.lastEvent = `开始拖动「${s.activeTool}」→ ${action.value}：开启 300ms 撤销合并窗口（Undo 栈 +1 至 ${s.undoDepth}），切 1024px 代理分辨率实时渲染`;
+        } else {
+          s.lastEvent = `300ms 窗口内连续拖动「${s.activeTool}」→ ${action.value}：合并进当前撤销事务（Undo 栈保持 ${s.undoDepth} 不膨胀）`;
+        }
+        return s;
+      }
+      case "SLIDER_RELEASE": {
+        s.pendingTxWindowMs = 0;
+        s.renderTier = "IDLE_FULL_16F (150ms 后补全阶段④空间细节金字塔 ≤33ms)";
+        s.lastEvent = `手指松开滑杆：关闭 300ms 事务合并窗口，150ms 延迟后触发全质量 RGBA16F 6-Pass 渲染`;
+        return s;
+      }
+      case "CANVAS_SINGLE_FINGER_DRAG": {
+        s.gestureRoute = resolveGestureRoute(s.activeGroup, s.activeTool, 1);
+        if (s.activeTool === "液化画笔") {
+          s.hasActiveEdit = true;
+          s.undoDepth = Math.min(50, s.undoDepth + 1);
+          s.lastEvent = "画布单指拖拽 → 路由给「液化画笔」：在半分辨率位移场纹理上累加笔刷向量，Undo 栈 +1";
+        } else if (s.activeTool === "裁切/拉直" || s.activeTool === "透视") {
+          s.hasActiveEdit = true;
+          s.undoDepth = Math.min(50, s.undoDepth + 1);
+          s.lastEvent = `画布单指拖拽 → 路由给「${s.activeTool}」控制框：实时更新单应矩阵 H⁻¹ 并自动求最大内接无黑边矩形`;
+        } else {
+          s.lastEvent = "画布单指拖拽 → 普通调色态：仅平移查看画布放大区域，不触发参数修改";
+        }
+        return s;
+      }
+      case "CANVAS_TWO_FINGER_PINCH": {
+        s.gestureRoute = resolveGestureRoute(s.activeGroup, s.activeTool, 2);
+        s.lastEvent = `画布双指捏合（当前工具：${s.activeTool}）→ 强制优先路由给画布缩放/平移，中止当前未落笔的单指画笔，防止误涂抹`;
+        return s;
+      }
+      case "HOLD_COMPARE_TOGGLE": {
+        s.comparingOriginal = !s.comparingOriginal;
+        s.lastEvent = s.comparingOriginal
+          ? "按住画面不放（Before）：旁路全部 EditGraph 算子，显示未编辑原图"
+          : "松开手指（After）：恢复显示应用 EditGraph 后的画面";
+        return s;
+      }
+      case "TOGGLE_RAW_BASE_LOOK": {
+        s.baseLook = s.baseLook === "camera_default" ? "linear_neutral" : "camera_default";
+        s.hasActiveEdit = true;
+        s.lastEvent = s.baseLook === "camera_default"
+          ? "切换 RAW 基准观感 → camera_default（复刻浏览页 autoBright + 0.78 gamma + 0.12 S曲线）"
+          : "切换 RAW 基准观感 → linear_neutral（关闭默认曲线，回到纯线性平直起点供重度调色）";
+        return s;
+      }
+      case "UNDO": {
+        if (s.undoDepth > 0) {
+          s.undoDepth--;
+          s.redoDepth++;
+          s.hasActiveEdit = s.undoDepth > 0;
+          s.lastEvent = `执行撤销 (Undo)：回退至上一不可变 EditGraph 快照（剩余 Undo=${s.undoDepth}, Redo=${s.redoDepth}）`;
+        } else {
+          s.lastEvent = "撤销栈已空，当前即为初始状态";
+        }
+        return s;
+      }
+      case "SAVE_AND_ACTIVATE_TETHER_PRESET": {
+        s.liveTetherPreset = "人像柔光_Kodak2383";
+        s.lastEvent = "将当前 EditGraph 保存为用户预设「人像柔光_Kodak2383」，并开启 LiveTetherPreset（新同步照片自动套用）";
+        return s;
+      }
+      case "USB_PTP_NEW_PHOTO_ARRIVED": {
+        const autoApplied = s.liveTetherPreset ? `，已自动绑定预设「${s.liveTetherPreset}」并生成预览缓存` : "";
+        if (s.screen === "EDITOR") {
+          s.backgroundSyncedCount++;
+          s.lastEvent = `USB 相机传来新照片 DSC04822.ARW：因当前处于编辑器内，触发「免打扰保护」——后台静默入库${autoApplied}，顶部胶囊轻提示「+1 新照片」，绝不抢焦点！`;
+        } else {
+          s.photoId++;
+          s.photoName = `DSC048${10 + s.photoId}.ARW`;
+          s.hasActiveEdit = Boolean(s.liveTetherPreset);
+          s.lastEvent = `USB 相机传来新照片 ${s.photoName}：主界面 AutoFollow 自动切至新图${autoApplied}，直接呈现成片效果！`;
+        }
+        return s;
+      }
+      case "COPY_EDITS": {
+        s.clipboardMask = "影调+色彩+细节+LUT (已排除裁切/透视/液化单图几何项)";
+        s.lastEvent = "复制编辑参数：已将当前 EditGraph（自动排除单图裁切与液化位移）存入剪贴板";
+        return s;
+      }
+      case "PASTE_EDITS_TO_NEXT": {
+        s.photoId++;
+        s.photoName = `DSC048${10 + s.photoId}.ARW`;
+        s.hasActiveEdit = true;
+        s.undoDepth = 1;
+        s.lastEvent = `切换至 ${s.photoName} 并粘贴参数：秒级复用剪贴板中的「${s.clipboardMask || "默认调色"}」并刷新预览缓存`;
+        return s;
+      }
+      case "TRIGGER_BATCH_BAKE": {
+        s.batchBakeProgress = "导出队列进行中 (4 / 12 张 · 列带 2048×512 流式编码)";
+        s.lastEvent = "启动后台批量烘焙队列：WorkManager 串行跑 1024px Pre-pass + 2048×512 列带流式 libjpeg-turbo 编码 + ExifInterface(\"rw\") 写回";
+        return s;
+      }
+      default:
+        return s;
+    }
+  }
+
+  return { GROUPS, initialState, transition };
+})();
+</script>
+
+<!-- 2. Throwaway Prototype UI Shell (3 Variants + Walkthrough Driver) -->
+<script>
+(() => {
+  const VARIANTS = {
+    A: {
+      key: "A",
+      name: "变体 A：经典三层底部抽屉（Lightroom 风，横屏自动转右侧栏）"
+    },
+    B: {
+      key: "B",
+      name: "变体 B：极简悬浮刻度拨盘 + 顶部直方图（Darkroom 风，最大画布占比）"
+    },
+    C: {
+      key: "C",
+      name: "变体 C：联机暗房同屏工作台（常驻底部胶片条 + 快捷预设 & 复制粘贴）"
+    }
+  };
+
+  const WALKTHROUGHS = [
+    {
+      title: "场景 1：滑杆节流与 300ms 撤销合并",
+      desc: "验证连续拖动滑杆时不会一步一帧塞满 50 步撤销栈，且拖动用 1024px 代理、松手 150ms 后出全清细节。",
+      steps: [
+        { label: "① 选「影调 · 光感」", action: { type: "SELECT_TOOL", group: "TONE", tool: "光感" } },
+        { label: "② 拖动到 +25", action: { type: "SLIDER_DRAG_TICK", value: 25 } },
+        { label: "③ 300ms 内继续拖到 +60", action: { type: "SLIDER_DRAG_TICK", value: 60 } },
+        { label: "④ 松开手指 (触发 150ms 全清渲染)", action: { type: "SLIDER_RELEASE" } },
+        { label: "⑤ 点一次撤销 (一次回退到 0)", action: { type: "UNDO" } }
+      ]
+    },
+    {
+      title: "场景 2：工具态手势冲突消解",
+      desc: "验证普通调色、裁切/透视、液化画笔下，单指拖拽与双指缩放如何无冲突路由。",
+      steps: [
+        { label: "① 普通态单指拖拽 (平移画布)", action: { type: "CANVAS_SINGLE_FINGER_DRAG" } },
+        { label: "② 切「几何 · 液化画笔」", action: { type: "SELECT_TOOL", group: "GEOMETRY", tool: "液化画笔" } },
+        { label: "③ 画布单指涂抹 (累积位移场)", action: { type: "CANVAS_SINGLE_FINGER_DRAG" } },
+        { label: "④ 双指捏合 (强制切回画布缩放防误涂)", action: { type: "CANVAS_TWO_FINGER_PINCH" } },
+        { label: "⑤ 切「几何 · 裁切/拉直」并单指拖角点", action: { type: "SELECT_TOOL", group: "GEOMETRY", tool: "裁切/拉直" } }
+      ]
+    },
+    {
+      title: "场景 3：联机拍摄边拍边套 Look & 免打扰",
+      desc: "验证摄影师调好首张照片存为 LiveTetherPreset 后，在编辑器内来新图不打断、在主界面来新图直接呈现成片。",
+      steps: [
+        { label: "① 调曝光 +40 并松手", action: { type: "SLIDER_DRAG_TICK", value: 40 } },
+        { label: "② 存为「联机自动预设」", action: { type: "SAVE_AND_ACTIVATE_TETHER_PRESET" } },
+        { label: "③ 编辑中相机拍新图 (静默入库不打断)", action: { type: "USB_PTP_NEW_PHOTO_ARRIVED" } },
+        { label: "④ 点「完成」退回主界面", action: { type: "SWITCH_SCREEN" } },
+        { label: "⑤ 主界面相机再拍新图 (自动跳新图并已套好预设)", action: { type: "USB_PTP_NEW_PHOTO_ARRIVED" } }
+      ]
+    },
+    {
+      title: "场景 4：跨照片复制粘贴 & 批量烘焙队列",
+      desc: "验证复制调色参数（自动剔除单图裁切/液化）、粘贴到下一张并启动后台流式分块导出队列。",
+      steps: [
+        { label: "① 复制当前照片参数 (排除几何)", action: { type: "COPY_EDITS" } },
+        { label: "② 切下一张并粘贴参数", action: { type: "PASTE_EDITS_TO_NEXT" } },
+        { label: "③ 按住画面对比未编辑原图 (Before)", action: { type: "HOLD_COMPARE_TOGGLE" } },
+        { label: "④ 松手恢复编辑后效果 (After)", action: { type: "HOLD_COMPARE_TOGGLE" } },
+        { label: "⑤ 加入后台批量烘焙导出队列", action: { type: "TRIGGER_BATCH_BAKE" } }
+      ]
+    }
+  ];
+
+  const params = new URLSearchParams(window.location.search);
+  let currentVariant = VARIANTS[params.get("variant")] ? params.get("variant") : "A";
+  let state = EditorStateMachine.initialState();
+  let activeWalkthroughIdx = 0;
+  let activeStepIdx = 0;
+
+  function dispatch(action) {
+    state = EditorStateMachine.transition(state, action);
+    renderAll();
+  }
+
+  function setVariant(v) {
+    currentVariant = v;
+    const url = new URL(window.location.href);
+    url.searchParams.set("variant", v);
+    window.history.replaceState({}, "", url);
+    renderAll();
+  }
+
+  function renderPhone() {
+    const el = document.getElementById("phoneFrame");
+    const gInfo = EditorStateMachine.GROUPS[state.activeGroup];
+    const isCrop = state.activeGroup === "GEOMETRY" && (state.activeTool === "裁切/拉直" || state.activeTool === "透视");
+    const isLiquify = state.activeGroup === "GEOMETRY" && state.activeTool === "液化画笔";
+    const filterStyle = state.comparingOriginal
+      ? "none"
+      : `brightness(${100 + state.sliderValue * 0.35}%) contrast(${state.baseLook === "camera_default" ? 108 : 96}%) saturate(${state.hasActiveEdit ? 118 : 100}%)`;
+
+    if (state.screen === "MAIN_GALLERY") {
+      el.innerHTML = `
+        <div class="phone-topbar">
+          <div class="glass-pill"><span style="width:7px;height:7px;border-radius:50%;background:var(--status-connected)"></span>已连接 A7M4</div>
+          <div class="glass-pill">
+            <span style="font-family:var(--font-mono);font-weight:700">${state.photoId} / 24</span>
+            <span style="font-family:var(--font-mono);color:var(--text-secondary)">${state.photoName}</span>
+            <span class="badge-raw">RAW</span>
+            ${state.hasActiveEdit ? '<span class="badge-edited">已编辑</span>' : ''}
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="glass-btn active" onclick="window._protoDispatch({type:'SWITCH_SCREEN'})">✎ 编辑</button>
+            <button class="glass-btn" onclick="window._protoDispatch({type:'TRIGGER_BATCH_BAKE'})">⤓ 导出</button>
+          </div>
+        </div>
+        <div class="canvas-area">
+          <div class="photo-preview" style="filter:${filterStyle}">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span class="glass-pill" style="font-size:11px">${state.comparingOriginal ? "对比中：未编辑原图 (Before)" : (state.hasActiveEdit ? "主界面预览：已应用 EditGraph 缓存" : "主界面预览：原图")}</span>
+              ${state.liveTetherPreset ? `<span class="badge-tether">⚡ 联机自动预设: ${state.liveTetherPreset}</span>` : ""}
+            </div>
+            <div style="text-align:center;color:rgba(255,255,255,0.75);font-size:12px">
+              [主界面 ViewPager2 大图区]<br>长按画面实时对比原图 · 点右上角「✎ 编辑」进入精修
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <button class="glass-btn" onmousedown="window._protoDispatch({type:'HOLD_COMPARE_TOGGLE'})" onmouseup="window._protoDispatch({type:'HOLD_COMPARE_TOGGLE'})">按住对比原图</button>
+              <div style="display:flex;gap:6px">
+                <button class="glass-btn" onclick="window._protoDispatch({type:'COPY_EDITS'})">复制参数</button>
+                <button class="glass-btn" onclick="window._protoDispatch({type:'PASTE_EDITS_TO_NEXT'})">粘贴至下一张</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="bottom-panel-c">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="font-size:11px;color:var(--text-secondary)">主界面快捷预设栏 (零跳转换 Look)</span>
+            <span style="font-size:11px;color:var(--exported-text)">${state.batchBakeProgress || "导出队列空闲"}</span>
+          </div>
+          <div class="chip-row">
+            <span class="chip ${!state.liveTetherPreset ? 'active' : ''}">无预设 (原图)</span>
+            <span class="chip ${state.liveTetherPreset ? 'active' : ''}" onclick="window._protoDispatch({type:'SAVE_AND_ACTIVATE_TETHER_PRESET'})">⚡ 人像柔光_Kodak2383 (自动套用)</span>
+            <span class="chip">清透风光</span>
+            <span class="chip">高反差黑白</span>
+          </div>
+          <div class="filmstrip-mini">
+            <div class="thumb-item edited">4819</div>
+            <div class="thumb-item edited">4820</div>
+            <div class="thumb-item current ${state.hasActiveEdit ? 'edited' : ''}">${state.photoName.slice(4,8)}</div>
+            <div class="thumb-item">+新图</div>
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    // EDITOR screen with 3 distinct structural variants
+    const topBarHtml = `
+      <div class="phone-topbar">
+        <button class="glass-btn" onclick="window._protoDispatch({type:'SWITCH_SCREEN'})">✓ 完成</button>
+        <div style="display:flex;gap:5px;align-items:center">
+          <button class="glass-btn" ${state.undoDepth === 0 ? "disabled" : ""} onclick="window._protoDispatch({type:'UNDO'})">↶ ${state.undoDepth}</button>
+          <button class="glass-btn" onclick="window._protoDispatch({type:'TOGGLE_RAW_BASE_LOOK'})" title="切换 RAW 0参数起点">
+            ${state.baseLook === "camera_default" ? "RAW:默认观感" : "RAW:线性中性"}
+          </button>
+          <button class="glass-btn" onclick="window._protoDispatch({type:'HOLD_COMPARE_TOGGLE'})">${state.comparingOriginal ? "原图中" : "对比"}</button>
+        </div>
+        <button class="glass-btn primary" onclick="window._protoDispatch({type:'TRIGGER_BATCH_BAKE'})">导出</button>
+      </div>
+    `;
+
+    const canvasInnerHtml = `
+      <div class="canvas-area">
+        <div class="photo-preview" style="filter:${filterStyle}">
+          ${isCrop ? '<div class="crop-grid"></div>' : ''}
+          ${isLiquify ? '<div class="liquify-cursor"></div>' : ''}
+          <div style="display:flex;justify-content:space-between;align-items:center;z-index:2">
+            <span class="glass-pill" style="font-size:11px;font-family:var(--font-mono)">${state.renderTier.split(" ")[0]}</span>
+            ${state.backgroundSyncedCount > 0 ? `<span class="badge-tether">后台已静默同步 +${state.backgroundSyncedCount} 张 (免打扰)</span>` : ''}
+          </div>
+          <div style="text-align:center;z-index:2">
+            <div style="font-size:13px;font-weight:700">[GLES 3.0 SurfaceView · ${state.photoName}]</div>
+            <div style="font-size:11px;color:var(--text-secondary);margin-top:4px">${state.gestureRoute}</div>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;z-index:2">
+            <span style="font-size:11px;color:var(--text-secondary)">当前：${gInfo.label} · ${state.activeTool} (${state.sliderValue})</span>
+            <button class="glass-btn" style="height:26px;font-size:11px" onclick="window._protoDispatch({type:'SAVE_AND_ACTIVATE_TETHER_PRESET'})">+存为联机预设</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    const groupTabsHtml = Object.entries(EditorStateMachine.GROUPS).map(([k, v]) =>
+      `<button class="tab-btn ${state.activeGroup === k ? 'active' : ''}" onclick="window._protoDispatch({type:'SELECT_TOOL',group:'${k}',tool:'${v.tools[0]}'})">${v.label}</button>`
+    ).join("");
+
+    const subChipsHtml = gInfo.tools.map(t =>
+      `<span class="chip ${state.activeTool === t ? 'active' : ''} ${state.hasActiveEdit && state.activeTool === t ? 'modified' : ''}" onclick="window._protoDispatch({type:'SELECT_TOOL',group:'${state.activeGroup}',tool:'${t}'})">${t}</span>`
+    ).join("");
+
+    if (currentVariant === "A") {
+      el.innerHTML = `
+        ${topBarHtml}
+        ${canvasInnerHtml}
+        <div class="bottom-panel-a">
+          <div class="slider-box">
+            <span style="font-size:12px;width:72px">${state.activeTool}</span>
+            <input type="range" min="-100" max="100" value="${state.sliderValue}"
+              oninput="window._protoDispatch({type:'SLIDER_DRAG_TICK',value:Number(this.value)})"
+              onchange="window._protoDispatch({type:'SLIDER_RELEASE'})">
+            <span style="font-family:var(--font-mono);font-size:12px;width:36px;text-align:right">${state.sliderValue}</span>
+          </div>
+          <div class="chip-row">${subChipsHtml}</div>
+          <div class="tab-row">${groupTabsHtml}</div>
+        </div>
+      `;
+    } else if (currentVariant === "B") {
+      el.innerHTML = `
+        ${topBarHtml}
+        <div style="position:absolute;top:54px;left:14px;z-index:6" class="glass-pill">
+          <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-secondary)">RGB 直方图 ▂▄▆█▅▃▁ · F16</span>
+        </div>
+        ${canvasInnerHtml}
+        <div class="bottom-panel-b">
+          <div style="display:flex;justify-content:space-between;font-size:12px">
+            <span style="font-weight:700">${gInfo.label} · ${state.activeTool}</span>
+            <span style="font-family:var(--font-mono);color:var(--accent-blue)">${state.sliderValue > 0 ? "+" + state.sliderValue : state.sliderValue}</span>
+          </div>
+          <div class="dial-scale" onclick="window._protoDispatch({type:'SLIDER_DRAG_TICK',value:35});window._protoDispatch({type:'SLIDER_RELEASE'})" title="点击模拟拨盘滑动">
+            <div class="dial-center-pin"></div>
+          </div>
+          <div class="chip-row">${subChipsHtml}</div>
+          <div class="tab-row">${groupTabsHtml}</div>
+        </div>
+      `;
+    } else {
+      el.innerHTML = `
+        ${topBarHtml}
+        ${canvasInnerHtml}
+        <div class="bottom-panel-c">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div style="display:flex;gap:6px">
+              <button class="glass-btn" style="height:26px;font-size:11px" onclick="window._protoDispatch({type:'COPY_EDITS'})">复制参数</button>
+              <button class="glass-btn" style="height:26px;font-size:11px" onclick="window._protoDispatch({type:'PASTE_EDITS_TO_NEXT'})">粘贴至下一张</button>
+            </div>
+            <span class="badge-tether">${state.liveTetherPreset ? "⚡ 自动预设: " + state.liveTetherPreset : "联机预设未开启"}</span>
+          </div>
+          <div class="slider-box">
+            <span style="font-size:12px;width:72px">${state.activeTool}</span>
+            <input type="range" min="-100" max="100" value="${state.sliderValue}"
+              oninput="window._protoDispatch({type:'SLIDER_DRAG_TICK',value:Number(this.value)})"
+              onchange="window._protoDispatch({type:'SLIDER_RELEASE'})">
+            <span style="font-family:var(--font-mono);font-size:12px;width:36px;text-align:right">${state.sliderValue}</span>
+          </div>
+          <div class="chip-row">${subChipsHtml}</div>
+          <div class="tab-row">${groupTabsHtml}</div>
+          <div class="filmstrip-mini">
+            <div class="thumb-item edited">4820</div>
+            <div class="thumb-item current ${state.hasActiveEdit ? 'edited' : ''}">${state.photoName.slice(4,8)}</div>
+            <div class="thumb-item" onclick="window._protoDispatch({type:'PASTE_EDITS_TO_NEXT'})">4822</div>
+          </div>
+        </div>
+      `;
+    }
+  }
+
+  function renderInspector() {
+    document.getElementById("surfaceModeBadge").textContent =
+      state.screen === "EDITOR" ? "当前视图：EditorActivity" : "当前视图：MainActivity (暗房主界面)";
+    const cells = [
+      ["当前照片 / RAW 基底", `${state.photoName} (${state.baseLook})`],
+      ["活动分组 / 工具", `${EditorStateMachine.GROUPS[state.activeGroup].label} · ${state.activeTool} (${state.sliderValue})`],
+      ["画布单指/双指手势路由", state.gestureRoute],
+      ["GPU 渲染精度与节流档位", state.renderTier],
+      ["Undo / Redo 栈 (300ms 合并)", `Undo: ${state.undoDepth} / 50 · Redo: ${state.redoDepth}`],
+      ["联机自动预设 (LiveTetherPreset)", state.liveTetherPreset || "未激活"],
+      ["参数剪贴板 (CopyMask)", state.clipboardMask || "空"],
+      ["后台批量烘焙 / 免打扰新图", `${state.batchBakeProgress || "空闲"} · 后台新图 +${state.backgroundSyncedCount}`]
+    ];
+    document.getElementById("stateGrid").innerHTML = cells.map(([k, v]) => `
+      <div class="state-cell">
+        <div class="state-label">${k}</div>
+        <div class="state-val">${v}</div>
+      </div>
+    `).join("");
+    document.getElementById("lastTransition").textContent = "最新状态跃迁：" + state.lastEvent;
+
+    // Walkthroughs
+    document.getElementById("walkthroughTabs").innerHTML = WALKTHROUGHS.map((w, i) => `
+      <button class="action-btn ${i === activeWalkthroughIdx ? 'step-active' : ''}" onclick="window._selectWalkthrough(${i})">${w.title}</button>
+    `).join("");
+    const curW = WALKTHROUGHS[activeWalkthroughIdx];
+    document.getElementById("walkthroughDesc").textContent = curW.desc;
+    document.getElementById("walkthroughSteps").innerHTML = curW.steps.map((st, i) => `
+      <button class="action-btn ${i === activeStepIdx ? 'step-active' : ''}" onclick="window._runWalkthroughStep(${i})">${st.label}</button>
+    `).join("");
+
+    // Variant label
+    document.getElementById("variantLabel").textContent = VARIANTS[currentVariant].name;
+  }
+
+  function initFreePlayButtons() {
+    document.getElementById("freePlayToolBtns").innerHTML = `
+      <button class="action-btn" onclick="window._protoDispatch({type:'SWITCH_SCREEN'})">切换 主界面 ↔ 编辑器</button>
+      <button class="action-btn" onclick="window._protoDispatch({type:'SELECT_TOOL',group:'TONE',tool:'光感'})">工具：影调 · 光感</button>
+      <button class="action-btn" onclick="window._protoDispatch({type:'SELECT_TOOL',group:'COLOR',tool:'曲线'})">工具：色彩 · 曲线</button>
+      <button class="action-btn" onclick="window._protoDispatch({type:'SELECT_TOOL',group:'GEOMETRY',tool:'裁切/拉直'})">工具：几何 · 裁切/拉直</button>
+      <button class="action-btn" onclick="window._protoDispatch({type:'SELECT_TOOL',group:'GEOMETRY',tool:'液化画笔'})">工具：几何 · 液化画笔</button>
+      <button class="action-btn" onclick="window._protoDispatch({type:'SELECT_TOOL',group:'PORTRAIT',tool:'美肤'})">工具：人像 · 美肤 (按需加载模型)</button>
+      <button class="action-btn" onclick="window._protoDispatch({type:'TOGGLE_RAW_BASE_LOOK'})">切换 RAW 默认/线性基底</button>
+    `;
+    document.getElementById("freePlayGestureBtns").innerHTML = `
+      <button class="action-btn" onclick="window._protoDispatch({type:'SLIDER_DRAG_TICK',value:30})">滑杆拖动 (+30)</button>
+      <button class="action-btn" onclick="window._protoDispatch({type:'SLIDER_DRAG_TICK',value:55})">300ms 内续拖 (+55)</button>
+      <button class="action-btn" onclick="window._protoDispatch({type:'SLIDER_RELEASE'})">松开滑杆 (触发全清细节)</button>
+      <button class="action-btn" onclick="window._protoDispatch({type:'CANVAS_SINGLE_FINGER_DRAG'})">画布单指拖拽</button>
+      <button class="action-btn" onclick="window._protoDispatch({type:'CANVAS_TWO_FINGER_PINCH'})">画布双指捏合缩放</button>
+      <button class="action-btn" onclick="window._protoDispatch({type:'HOLD_COMPARE_TOGGLE'})">按住/松开 对比原图</button>
+      <button class="action-btn" onclick="window._protoDispatch({type:'UNDO'})">撤销 (Undo)</button>
+    `;
+    document.getElementById("freePlayTetherBtns").innerHTML = `
+      <button class="action-btn" onclick="window._protoDispatch({type:'SAVE_AND_ACTIVATE_TETHER_PRESET'})">存为「联机自动预设」</button>
+      <button class="action-btn" onclick="window._protoDispatch({type:'USB_PTP_NEW_PHOTO_ARRIVED'})">模拟 USB 相机拍入新照片</button>
+      <button class="action-btn" onclick="window._protoDispatch({type:'COPY_EDITS'})">复制当前参数 (排除几何)</button>
+      <button class="action-btn" onclick="window._protoDispatch({type:'PASTE_EDITS_TO_NEXT'})">切下一张并粘贴参数</button>
+      <button class="action-btn" onclick="window._protoDispatch({type:'TRIGGER_BATCH_BAKE'})">启动后台批量烘焙队列</button>
+    `;
+  }
+
+  window._protoDispatch = dispatch;
+  window._selectWalkthrough = (idx) => {
+    activeWalkthroughIdx = idx;
+    activeStepIdx = 0;
+    state = EditorStateMachine.initialState();
+    renderAll();
+  };
+  window._runWalkthroughStep = (idx) => {
+    activeStepIdx = Math.min(WALKTHROUGHS[activeWalkthroughIdx].steps.length - 1, idx + 1);
+    dispatch(WALKTHROUGHS[activeWalkthroughIdx].steps[idx].action);
+  };
+
+  const keys = Object.keys(VARIANTS);
+  document.getElementById("prevVariantBtn").onclick = () => {
+    const idx = (keys.indexOf(currentVariant) - 1 + keys.length) % keys.length;
+    setVariant(keys[idx]);
+  };
+  document.getElementById("nextVariantBtn").onclick = () => {
+    const idx = (keys.indexOf(currentVariant) + 1) % keys.length;
+    setVariant(keys[idx]);
+  };
+  window.addEventListener("keydown", (e) => {
+    if (["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) return;
+    if (e.key === "ArrowLeft") document.getElementById("prevVariantBtn").click();
+    if (e.key === "ArrowRight") document.getElementById("nextVariantBtn").click();
+  });
+
+  function renderAll() {
+    renderPhone();
+    renderInspector();
+  }
+
+  initFreePlayButtons();
+  renderAll();
+})();
+</script>
+</body>
+</html>
