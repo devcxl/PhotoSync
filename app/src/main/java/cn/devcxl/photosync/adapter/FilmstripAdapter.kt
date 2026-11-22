@@ -40,6 +40,7 @@ class FilmstripAdapter(
     companion object {
         private val PAYLOAD_SELECTION = Any()
         private val PAYLOAD_THUMBNAIL = Any()
+        private val PAYLOAD_EDITED = Any()
     }
 
     private val items = mutableListOf<PhotoEntity>()
@@ -75,6 +76,7 @@ class FilmstripAdapter(
         holder.bind(
             bitmap = bitmap,
             isRaw = isRaw,
+            isEdited = hasEditPreview,
             isExported = !entity.uriString.isNullOrBlank(),
             isSelected = isSelected
         ) {
@@ -93,6 +95,9 @@ class FilmstripAdapter(
         val entity = items[position]
         if (payloads.contains(PAYLOAD_THUMBNAIL)) {
             holder.bindBitmap(thumbnailProvider(entity.path))
+        }
+        if (payloads.contains(PAYLOAD_EDITED)) {
+            holder.bindEdited(hasEditPreviewProvider(entity.id))
         }
         if (payloads.contains(PAYLOAD_SELECTION)) {
             holder.bindSelection(position == selectedPosition)
@@ -142,25 +147,31 @@ class FilmstripAdapter(
     fun notifyPathChanged(path: String) {
         val idx = items.indexOfFirst { it.path == path }
         if (idx >= 0) {
-            mainHandler.post { notifyItemChanged(idx, PAYLOAD_THUMBNAIL) }
+            mainHandler.post {
+                notifyItemChanged(idx, PAYLOAD_THUMBNAIL)
+                notifyItemChanged(idx, PAYLOAD_EDITED)
+            }
         }
     }
 
     class VH(itemView: View) : RecyclerView.ViewHolder(itemView) {
         private val thumbImage: ImageView = itemView.findViewById(R.id.thumbImage)
         private val thumbRawBadge: TextView = itemView.findViewById(R.id.thumbRawBadge)
+        private val thumbEditedBadge: TextView = itemView.findViewById(R.id.thumbEditedBadge)
         private val thumbExportedBadge: TextView = itemView.findViewById(R.id.thumbExportedBadge)
         private val thumbBorderOverlay: View = itemView.findViewById(R.id.thumbBorderOverlay)
 
         fun bind(
             bitmap: Bitmap?,
             isRaw: Boolean,
+            isEdited: Boolean,
             isExported: Boolean,
             isSelected: Boolean,
             onClick: () -> Unit
         ) {
             bindBitmap(bitmap)
             thumbRawBadge.visibility = if (isRaw) View.VISIBLE else View.GONE
+            bindEdited(isEdited)
             thumbExportedBadge.visibility = if (isExported) View.VISIBLE else View.GONE
             bindSelection(isSelected)
             itemView.setOnClickListener { onClick() }
@@ -168,6 +179,10 @@ class FilmstripAdapter(
 
         fun bindBitmap(bitmap: Bitmap?) {
             thumbImage.setImageBitmap(bitmap)
+        }
+
+        fun bindEdited(isEdited: Boolean) {
+            thumbEditedBadge.visibility = if (isEdited) View.VISIBLE else View.GONE
         }
 
         fun bindSelection(isSelected: Boolean) {

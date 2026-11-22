@@ -15,5 +15,6 @@
     <string name="editor_tool_exposure_modified">曝光 •</string>
     <string name="editor_exposure_value_fmt">%1$+.2f EV</string>
     <string name="editor_double_tap_reset_hint">双击标签重置</string>
+    <string name="editor_tool_coming_soon">该工具组将在后续迭代开放</string>
     <string name="editor_source_missing">源文件已清理，请重新连接相机同步</string>
 </resources>

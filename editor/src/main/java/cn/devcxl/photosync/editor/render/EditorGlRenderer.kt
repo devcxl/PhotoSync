@@ -13,8 +13,8 @@ import android.opengl.GLUtils
  * GLES 3.0 renderer for the editor preview canvas.
  *
  * Maintains both a `1024px` drag-proxy texture (`PROXY_1024_FAST`) and a full-preview
- * texture (`IDLE_FULL_16F`). Slider dragging binds the proxy texture for `<= 8ms` response,
- * while releasing the slider switches back to the full texture after `150ms`.
+ * texture (`IDLE_FULL_16F`). Retains bitmap references across EGL context/surface
+ * recreations so returning from background never leaves a black canvas.
  */
 internal class EditorGlRenderer : GLSurfaceView.Renderer {
 
@@ -27,10 +27,19 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
     private var viewportHeight: Int = 1
 
     @Volatile
-    private var pendingFullBitmap: Bitmap? = null
+    private var stagedFullBitmap: Bitmap? = null
 
     @Volatile
-    private var pendingProxyBitmap: Bitmap? = null
+    private var stagedProxyBitmap: Bitmap? = null
+
+    @Volatile
+    private var needsFullUpload: Boolean = false
+
+    @Volatile
+    private var needsProxyUpload: Boolean = false
+
+    @Volatile
+    var preferEs3: Boolean = true
 
     @Volatile
     var exposureEv: Float = 0.0f
@@ -43,9 +52,11 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         GLES20.glClearColor(0.0f, 0.0f, 0.0f, 1.0f)
-        program.init()
+        program.init(preferEs3)
         proxyTextureId = 0
         fullTextureId = 0
+        needsFullUpload = stagedFullBitmap != null
+        needsProxyUpload = stagedProxyBitmap != null
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
@@ -81,20 +92,37 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
     fun setSourceBitmaps(fullBitmap: Bitmap, proxyBitmap: Bitmap) {
         imageWidth = fullBitmap.width.coerceAtLeast(1)
         imageHeight = fullBitmap.height.coerceAtLeast(1)
-        pendingFullBitmap = fullBitmap
-        pendingProxyBitmap = proxyBitmap
+        stagedFullBitmap = fullBitmap
+        stagedProxyBitmap = proxyBitmap
+        needsFullUpload = true
+        needsProxyUpload = true
+    }
+
+    /**
+     * Clears bitmap references when the hosting activity is destroyed so recycled bitmaps are
+     * never touched on a late GL draw.
+     */
+    fun clearBitmaps() {
+        stagedFullBitmap = null
+        stagedProxyBitmap = null
+        needsFullUpload = false
+        needsProxyUpload = false
     }
 
     private fun uploadPendingBitmapsIfNeeded() {
-        val full = pendingFullBitmap
-        if (full != null && !full.isRecycled) {
-            pendingFullBitmap = null
-            fullTextureId = uploadTexture(full, fullTextureId)
+        if (needsFullUpload) {
+            val full = stagedFullBitmap
+            needsFullUpload = false
+            if (full != null && !full.isRecycled) {
+                fullTextureId = uploadTexture(full, fullTextureId)
+            }
         }
-        val proxy = pendingProxyBitmap
-        if (proxy != null && !proxy.isRecycled) {
-            pendingProxyBitmap = null
-            proxyTextureId = uploadTexture(proxy, proxyTextureId)
+        if (needsProxyUpload) {
+            val proxy = stagedProxyBitmap
+            needsProxyUpload = false
+            if (proxy != null && !proxy.isRecycled) {
+                proxyTextureId = uploadTexture(proxy, proxyTextureId)
+            }
         }
     }
 

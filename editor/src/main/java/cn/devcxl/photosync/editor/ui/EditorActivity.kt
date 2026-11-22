@@ -87,6 +87,7 @@ class EditorActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         mainHandler.removeCallbacks(settleFullQualityRunnable)
+        renderer.clearBitmaps()
         recyclePreviewBitmaps()
         super.onDestroy()
     }
@@ -95,6 +96,7 @@ class EditorActivity : AppCompatActivity() {
     private fun setupGlSurfaceView() {
         val am = getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
         val supportsEs3 = (am?.deviceConfigurationInfo?.reqGlEsVersion ?: 0) >= 0x30000
+        renderer.preferEs3 = supportsEs3
         binding.glSurfaceView.setEGLContextClientVersion(if (supportsEs3) 3 else 2)
         binding.glSurfaceView.setRenderer(renderer)
         binding.glSurfaceView.renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
@@ -181,6 +183,18 @@ class EditorActivity : AppCompatActivity() {
             false
         }
         binding.btnDone.setOnClickListener { saveEditAndFinish() }
+        val upcomingTabs = listOf(
+            binding.tabPreset,
+            binding.tabGeometry,
+            binding.tabColor,
+            binding.tabDetail,
+            binding.tabPortrait
+        )
+        upcomingTabs.forEach { tab ->
+            tab.setOnClickListener {
+                Toast.makeText(this, R.string.editor_tool_coming_soon, Toast.LENGTH_SHORT).show()
+            }
+        }
         updateControlsUi()
     }
 

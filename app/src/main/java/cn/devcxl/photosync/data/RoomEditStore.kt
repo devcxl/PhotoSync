@@ -36,16 +36,15 @@ class RoomEditStore(
             deleteEditForPhoto(photoId)
             return
         }
-        val existingId = photoEditDao.getByPhotoId(photoId)?.id ?: 0L
         val entity = PhotoEditEntity(
-            id = existingId,
+            id = 0L,
             photoId = photoId,
             schemaVersion = sanitized.schema,
             graphJson = EditGraphJsonCodec.encode(sanitized),
             previewCachePath = previewCachePath,
             updatedAt = System.currentTimeMillis()
         )
-        photoEditDao.upsert(entity)
+        photoEditDao.upsertByPhotoId(entity)
     }
 
     override suspend fun deleteEditForPhoto(photoId: Long) {

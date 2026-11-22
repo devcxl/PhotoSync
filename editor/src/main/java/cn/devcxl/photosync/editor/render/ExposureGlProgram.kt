@@ -10,8 +10,8 @@ import timber.log.Timber
 /**
  * Compiles and executes the linear-light exposure and soft-shoulder GLSL shader program.
  *
- * Uses `#version 300 es` by default and automatically falls back to `#version 100` if the
- * driver rejects ES 3.0 shader compilation (Tier 3 resilience).
+ * Uses `#version 300 es` when [preferEs3] is true, and falls back to `#version 100` with
+ * identical piecewise sRGB and `tanh` soft-shoulder math if ES 3.0 is unavailable or fails.
  */
 internal class ExposureGlProgram {
 
@@ -32,10 +32,17 @@ internal class ExposureGlProgram {
             position(0)
         }
 
-    fun init() {
-        programId = buildProgram(VERTEX_SHADER_ES3, FRAGMENT_SHADER_ES3)
+    fun init(preferEs3: Boolean = true) {
+        programId = if (preferEs3) {
+            buildProgram(VERTEX_SHADER_ES3, FRAGMENT_SHADER_ES3).also { id ->
+                if (id == 0) {
+                    Timber.w("GLES 3.0 shader compile failed; falling back to GLES 2.0 shader")
+                }
+            }
+        } else {
+            0
+        }
         if (programId == 0) {
-            Timber.w("GLES 3.0 shader compile failed; falling back to GLES 2.0 exposure shader")
             programId = buildProgram(VERTEX_SHADER_ES2, FRAGMENT_SHADER_ES2)
         }
         if (programId == 0) {
@@ -197,11 +204,36 @@ internal class ExposureGlProgram {
         """.trimIndent()
 
         private val FRAGMENT_SHADER_ES2 = """
-            precision mediump float;
+            precision highp float;
             varying vec2 vTexCoord;
             uniform sampler2D uTex0;
             uniform float uExposureEv;
             uniform int uCompareOriginal;
+
+            vec3 decodeSrgb(vec3 c) {
+                vec3 lo = c / 12.92;
+                vec3 hi = pow((c + 0.055) / 1.055, vec3(2.4));
+                return mix(lo, hi, step(vec3(0.04045), c));
+            }
+
+            vec3 encodeSrgb(vec3 c) {
+                vec3 lo = c * 12.92;
+                vec3 hi = 1.055 * pow(max(c, vec3(0.0)), vec3(1.0 / 2.4)) - 0.055;
+                return mix(lo, hi, step(vec3(0.0031308), c));
+            }
+
+            vec3 tanhApprox(vec3 x) {
+                vec3 e2 = exp(clamp(2.0 * x, vec3(-20.0), vec3(20.0)));
+                return (e2 - vec3(1.0)) / (e2 + vec3(1.0));
+            }
+
+            vec3 softShoulder(vec3 c) {
+                float t0 = 0.85;
+                float span = 0.15;
+                vec3 over = max(c - vec3(t0), vec3(0.0)) / span;
+                vec3 rolled = vec3(t0) + span * tanhApprox(over);
+                return mix(c, rolled, step(vec3(t0), c));
+            }
 
             void main() {
                 vec4 src = texture2D(uTex0, vTexCoord);
@@ -209,9 +241,9 @@ internal class ExposureGlProgram {
                     gl_FragColor = src;
                     return;
                 }
-                vec3 lin = pow(max(src.rgb, vec3(0.0)), vec3(2.2)) * pow(2.0, uExposureEv);
-                vec3 rolled = lin / (vec3(1.0) + max(lin - vec3(0.85), vec3(0.0)));
-                vec3 outSrgb = clamp(pow(max(rolled, vec3(0.0)), vec3(1.0 / 2.2)), 0.0, 1.0);
+                vec3 lin = decodeSrgb(src.rgb) * pow(2.0, uExposureEv);
+                vec3 rolled = softShoulder(max(lin, vec3(0.0)));
+                vec3 outSrgb = clamp(encodeSrgb(rolled), 0.0, 1.0);
                 gl_FragColor = vec4(outSrgb, src.a);
             }
         """.trimIndent()

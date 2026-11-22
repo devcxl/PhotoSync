@@ -99,5 +99,6 @@
 
     <!-- Non-destructive photo editor (Ticket #02) -->
     <string name="edited_badge">✎ 已编辑</string>
+    <string name="filmstrip_edited_mark">✎</string>
     <string name="edit_photo">编辑照片</string>
 </resources>
