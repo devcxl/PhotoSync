@@ -10,6 +10,7 @@ import timber.log.Timber
 import cn.devcxl.photosync.editor.domain.BaseLook
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.GeometryMath
+import cn.devcxl.photosync.editor.domain.ToneShaderParams
 import cn.devcxl.photosync.wrapper.LinearRawBuffer
 
 /**
@@ -17,7 +18,7 @@ import cn.devcxl.photosync.wrapper.LinearRawBuffer
  * combination of homography, output aspect ratio, CA coefficients and tone parameters.
  */
 internal data class RenderFrameState(
-    val exposureEv: Float = 0.0f,
+    val toneParams: ToneShaderParams = ToneShaderParams(),
     val baseLook: BaseLook = BaseLook.CAMERA_DEFAULT,
     val useFastProxy: Boolean = false,
     val geometryActive: Boolean = false,
@@ -51,8 +52,9 @@ internal data class CanvasViewportTransform(
  * 1. **Pass A** ([GeometryCaGlProgram]) renders the upright source (`GL_RGBA16F` for RAW,
  *    `GL_RGBA8` for JPEG) through `H^-1` into an offscreen target sized to the cropped aspect
  *    ratio, applying aspect-corrected circular pre-crop lateral CA resampling.
- * 2. **Pass B** ([ExposureGlProgram]) applies RAW `BaseLook` compensation, linear-light exposure,
- *    soft-shoulder highlight roll-off, and canvas pan/zoom.
+ * 2. **Pass B** ([ExposureGlProgram]) applies RAW `BaseLook` compensation, the D65-anchored
+ *    Bradford white balance, linear exposure / brightness / highlight trims, the soft-shoulder
+ *    roll-off, display-domain blacks / contrast / glow, and canvas pan/zoom.
  */
 internal class EditorGlRenderer : GLSurfaceView.Renderer {
 
@@ -201,7 +203,7 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
             RenderFrameState.IDENTITY_MATRIX
         }
         frameState = RenderFrameState(
-            exposureEv = graph.tone.exposure,
+            toneParams = ToneShaderParams.from(graph),
             baseLook = graph.baseLook,
             useFastProxy = useFastProxy,
             geometryActive = geometryActive,
@@ -277,7 +279,6 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
         exposureProgram.draw(
             ExposureDrawParams(
                 textureId = textureId,
-                exposureEv = state.exposureEv,
                 compareOriginal = comparingOriginal,
                 scaleX = scaleX,
                 scaleY = scaleY,
@@ -285,7 +286,8 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
                 offsetY = viewport.offsetY,
                 isLinearInput = inputIsLinear,
                 baseLook = state.baseLook,
-                autoBrightGain = autoBrightGain
+                autoBrightGain = autoBrightGain,
+                toneParams = state.toneParams
             )
         )
     }

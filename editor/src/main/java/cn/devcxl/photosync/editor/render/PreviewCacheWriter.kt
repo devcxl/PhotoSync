@@ -2,7 +2,6 @@ package cn.devcxl.photosync.editor.render
 
 import java.io.File
 import java.io.FileOutputStream
-import kotlin.math.abs
 import kotlin.math.roundToInt
 
 import android.graphics.Bitmap
@@ -12,6 +11,8 @@ import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.ExposureShaderMath
 import cn.devcxl.photosync.editor.domain.GeometryMath
 import cn.devcxl.photosync.editor.domain.LinearRawPreviewRenderer
+import cn.devcxl.photosync.editor.domain.ToneShaderMath
+import cn.devcxl.photosync.editor.domain.ToneShaderParams
 import cn.devcxl.photosync.wrapper.LinearRawBuffer
 
 /**
@@ -19,12 +20,17 @@ import cn.devcxl.photosync.wrapper.LinearRawBuffer
  * gallery and filmstrip.
  *
  * Applies the full Pass A (crop, rotate, straighten, perspective, lateral CA) + Pass B
- * (`BaseLook` + linear-light exposure) contract so the cached thumbnail matches the GL canvas.
+ * (`BaseLook`, D65-anchored white balance, linear tone, display tone) contract so the cached
+ * thumbnail matches the GL canvas. The tone math is shared with the shader through
+ * [ToneShaderMath]; the bitmap path only skips `BaseLook` because 8-bit sources already carry it.
  */
 internal object PreviewCacheWriter {
 
     private const val PREVIEW_JPEG_QUALITY = 92
     private const val PREVIEW_MAX_EDGE_PX = 1280
+    private const val CHANNELS_RGB = 3
+    private const val EIGHT_BIT_MAX = 255
+    private const val ALPHA_MASK = -0x1000000
 
     /**
      * Writes the preview cache for an 8-bit sRGB [source] bitmap.
@@ -65,11 +71,7 @@ internal object PreviewCacheWriter {
         } else {
             source.downscaledTo(PREVIEW_MAX_EDGE_PX)
         }
-        val pixels = LinearRawPreviewRenderer.renderArgb(
-            linearFrame,
-            graph.baseLook,
-            graph.tone.exposure
-        )
+        val pixels = LinearRawPreviewRenderer.renderArgb(linearFrame, graph)
         val outBitmap = Bitmap.createBitmap(
             pixels,
             linearFrame.width,
@@ -93,11 +95,38 @@ internal object PreviewCacheWriter {
             caRedK = GeometryMath.lateralCaKFromSlider(ca.redCyan),
             caBlueK = GeometryMath.lateralCaKFromSlider(ca.blueYellow)
         )
-        if (abs(graph.tone.exposure) >= 1e-4f) {
-            applyExposure(resampled, graph.tone.exposure)
-        }
+        applyToneToDisplayPixels(resampled, ToneShaderParams.from(graph))
         return resampled
     }
+
+    /**
+     * Runs the Pass B upper half over an already display-encoded bitmap, matching the shader path
+     * for 8-bit sources (decode sRGB, tone, re-encode).
+     */
+    private fun applyToneToDisplayPixels(bitmap: Bitmap, params: ToneShaderParams) {
+        if (params.isIdentity) return
+        val width = bitmap.width
+        val height = bitmap.height
+        val pixels = IntArray(width * height)
+        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+        val linear = FloatArray(CHANNELS_RGB)
+        val display = FloatArray(CHANNELS_RGB)
+        for (index in pixels.indices) {
+            val pixel = pixels[index]
+            linear[0] = ExposureShaderMath.decodeSrgb(((pixel ushr 16) and 0xFF) / 255.0f)
+            linear[1] = ExposureShaderMath.decodeSrgb(((pixel ushr 8) and 0xFF) / 255.0f)
+            linear[2] = ExposureShaderMath.decodeSrgb((pixel and 0xFF) / 255.0f)
+            ToneShaderMath.apply(params, linear, display)
+            pixels[index] = (pixel and ALPHA_MASK) or
+                (quantize(display[0]) shl 16) or
+                (quantize(display[1]) shl 8) or
+                quantize(display[2])
+        }
+        bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
+    }
+
+    private fun quantize(display: Float): Int =
+        (display.coerceIn(0.0f, 1.0f) * EIGHT_BIT_MAX + 0.5f).toInt().coerceIn(0, EIGHT_BIT_MAX)
 
     private fun compressAndWrite(rendered: Bitmap, cacheDir: File, photoId: Long): String? {
         val editDir = File(cacheDir, EditorCachePaths.photoEditDirName(photoId))
@@ -128,22 +157,5 @@ internal object PreviewCacheWriter {
         } else {
             (PREVIEW_MAX_EDGE_PX * aspect).roundToInt().coerceAtLeast(1) to PREVIEW_MAX_EDGE_PX
         }
-    }
-
-    private fun applyExposure(bitmap: Bitmap, exposureEv: Float) {
-        val width = bitmap.width
-        val height = bitmap.height
-        val pixels = IntArray(width * height)
-        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
-        val lut = ExposureShaderMath.buildExposureLut8(exposureEv)
-        for (index in pixels.indices) {
-            val pixel = pixels[index]
-            val alpha = pixel and -0x1000000
-            val red = lut[(pixel ushr 16) and 0xFF]
-            val green = lut[(pixel ushr 8) and 0xFF]
-            val blue = lut[pixel and 0xFF]
-            pixels[index] = alpha or (red shl 16) or (green shl 8) or blue
-        }
-        bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
     }
 }

@@ -7,9 +7,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Verifies the CPU gallery-preview renderer against the canonical [CameraDefaultLookMath]
- * pipeline. The renderer uses lookup tables for speed while the shader math is evaluated
- * directly, so agreement within one 8-bit step proves the fast path never drifts.
+ * Verifies the CPU gallery-preview renderer against the canonical [CameraDefaultLookMath] and
+ * [ExposureShaderMath] pipeline. The renderer uses a lookup table for the per-channel base look
+ * while the reference evaluates the curve directly, so agreement within one 8-bit step proves the
+ * fast path never drifts.
  */
 class LinearRawPreviewRendererTest {
 
@@ -17,8 +18,7 @@ class LinearRawPreviewRendererTest {
     fun shouldMatchCameraDefaultReferenceForMidGray_whenRenderingLinearBuffer() {
         val pixels = LinearRawPreviewRenderer.renderArgb(
             source = grayBuffer(0.18f, gain = 1.0f),
-            baseLook = BaseLook.CAMERA_DEFAULT,
-            exposureEv = 0.0f
+            graph = EditGraph(baseLook = BaseLook.CAMERA_DEFAULT)
         )
 
         assertEquals(1, pixels.size)
@@ -30,16 +30,10 @@ class LinearRawPreviewRendererTest {
     @Test
     fun shouldStayWithinOneEightBitStep_whenComparingLookupTableRenderToReferenceMath() {
         val source = gradientBuffer(size = 8)
-        val cases = listOf(
-            Triple(BaseLook.CAMERA_DEFAULT, 0.0f, 0),
-            Triple(BaseLook.CAMERA_DEFAULT, 0.7f, 1),
-            Triple(BaseLook.LINEAR_NEUTRAL, 0.0f, 2),
-            Triple(BaseLook.LINEAR_NEUTRAL, -1.3f, 3)
-        )
         val sample = FloatArray(4)
 
-        for ((baseLook, exposureEv, _) in cases) {
-            val pixels = LinearRawPreviewRenderer.renderArgb(source, baseLook, exposureEv)
+        for (baseLook in BaseLook.entries) {
+            val pixels = LinearRawPreviewRenderer.renderArgb(source, EditGraph(baseLook = baseLook))
             for (index in pixels.indices) {
                 source.readPixel(index, sample)
                 val reference = CameraDefaultLookMath.renderLinearToSrgb(
@@ -47,12 +41,12 @@ class LinearRawPreviewRendererTest {
                     linearGreen = sample[1],
                     linearBlue = sample[2],
                     autoBrightGain = source.autoBrightGain,
-                    exposureEv = exposureEv,
+                    exposureEv = 0.0f,
                     baseLook = baseLook
                 )
-                assertChannelClose("R", reference[0], pixels[index], 16)
-                assertChannelClose("G", reference[1], pixels[index], 8)
-                assertChannelClose("B", reference[2], pixels[index], 0)
+                assertChannelClose("R $baseLook", reference[0], pixels[index], 16)
+                assertChannelClose("G $baseLook", reference[1], pixels[index], 8)
+                assertChannelClose("B $baseLook", reference[2], pixels[index], 0)
             }
         }
     }
@@ -60,8 +54,14 @@ class LinearRawPreviewRendererTest {
     @Test
     fun shouldRenderBrighterPixels_whenExposureIsRaised() {
         val source = grayBuffer(0.3f, gain = 1.0f)
-        val neutral = LinearRawPreviewRenderer.renderArgb(source, BaseLook.LINEAR_NEUTRAL, 0.0f)
-        val lifted = LinearRawPreviewRenderer.renderArgb(source, BaseLook.LINEAR_NEUTRAL, 1.0f)
+        val neutral = LinearRawPreviewRenderer.renderArgb(
+            source,
+            EditGraph(baseLook = BaseLook.LINEAR_NEUTRAL)
+        )
+        val lifted = LinearRawPreviewRenderer.renderArgb(
+            source,
+            EditGraph(baseLook = BaseLook.LINEAR_NEUTRAL, tone = ToneOps(exposure = 1.0f))
+        )
 
         assertTrue((lifted[0] and 0xFF) > (neutral[0] and 0xFF))
     }
@@ -69,8 +69,14 @@ class LinearRawPreviewRendererTest {
     @Test
     fun shouldRenderDarkerMidGray_whenBaseLookIsLinearNeutral() {
         val source = grayBuffer(0.18f, gain = 1.0f)
-        val cameraDefault = LinearRawPreviewRenderer.renderArgb(source, BaseLook.CAMERA_DEFAULT, 0.0f)
-        val linearNeutral = LinearRawPreviewRenderer.renderArgb(source, BaseLook.LINEAR_NEUTRAL, 0.0f)
+        val cameraDefault = LinearRawPreviewRenderer.renderArgb(
+            source,
+            EditGraph(baseLook = BaseLook.CAMERA_DEFAULT)
+        )
+        val linearNeutral = LinearRawPreviewRenderer.renderArgb(
+            source,
+            EditGraph(baseLook = BaseLook.LINEAR_NEUTRAL)
+        )
 
         assertTrue((linearNeutral[0] and 0xFF) < (cameraDefault[0] and 0xFF))
         assertEquals(118, linearNeutral[0] and 0xFF)
@@ -80,13 +86,11 @@ class LinearRawPreviewRendererTest {
     fun shouldApplyAutoBrightGain_whenBufferReportsGainAboveOne() {
         val plain = LinearRawPreviewRenderer.renderArgb(
             source = grayBuffer(0.1f, gain = 1.0f),
-            baseLook = BaseLook.CAMERA_DEFAULT,
-            exposureEv = 0.0f
+            graph = EditGraph(baseLook = BaseLook.CAMERA_DEFAULT)
         )
         val gained = LinearRawPreviewRenderer.renderArgb(
             source = grayBuffer(0.1f, gain = 2.0f),
-            baseLook = BaseLook.CAMERA_DEFAULT,
-            exposureEv = 0.0f
+            graph = EditGraph(baseLook = BaseLook.CAMERA_DEFAULT)
         )
 
         assertTrue((gained[0] and 0xFF) > (plain[0] and 0xFF))
