@@ -35,6 +35,7 @@ dependencies {
     implementation libs.androidx.activity.ktx
     implementation libs.androidx.lifecycle.runtime.ktx
     implementation libs.androidx.exifinterface
+    implementation libs.mediapipe.tasks.vision
     implementation libs.timber
 
     testImplementation libs.junit

@@ -59,6 +59,20 @@ android {
             minifyEnabled = true
             shrinkResources = true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+
+            // MediaPipe ships x86/x86_64 native libraries that a phone never loads; an AAB ignores
+            // `splits.abi` and would otherwise pack all four ABIs (+26.36 MB).
+            packaging {
+                jniLibs {
+                    excludes += ["lib/x86/**", "lib/x86_64/**"]
+                }
+            }
+
+            // GitHub Releases distributes the AAB directly, so the native symbol tables (+6.21 MB
+            // for two ABIs) buy nothing.
+            ndk {
+                debugSymbolLevel = "none"
+            }
         }
     }
     compileOptions {

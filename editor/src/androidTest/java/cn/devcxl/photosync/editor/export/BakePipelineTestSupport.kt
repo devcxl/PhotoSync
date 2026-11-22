@@ -111,7 +111,7 @@ internal class BakeTestSession private constructor(
                 return null
             }
             val outSize = ColumnBandTiling.outputSize(source.width, source.height, graph.geometry)
-            chain.stageGraph(liquifyMesh = null, graphCurve = graph.color.curve, lut = null)
+            chain.stageGraph(warpField = null, skinMask = null, graphCurve = graph.color.curve, lut = null)
             val frame = BakeFrameFactory.create(graph, source, outSize.first, outSize.second)
             val prepass = BakePrepass(chain, source)
             prepass.prepare(frame, outSize.first, outSize.second)

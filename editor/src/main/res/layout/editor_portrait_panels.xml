@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/portraitPanelsRoot"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="4dp"
+    android:visibility="gone">
+
+    <cn.devcxl.photosync.editor.ui.widgets.SkinPanelView
+        android:id="@+id/skinPanelView"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:visibility="gone" />
+
+    <cn.devcxl.photosync.editor.ui.widgets.FaceReshapePanelView
+        android:id="@+id/faceReshapePanelView"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:visibility="gone" />
+
+    <cn.devcxl.photosync.editor.ui.widgets.BodyReshapePanelView
+        android:id="@+id/bodyReshapePanelView"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:visibility="gone" />
+
+</FrameLayout>

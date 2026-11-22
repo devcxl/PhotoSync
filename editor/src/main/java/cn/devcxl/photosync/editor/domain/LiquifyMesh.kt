@@ -21,10 +21,10 @@ import kotlin.math.min
  * Instances are mutable accumulators owned by a single editor session; [copy] snapshots the state
  * for preemption rollback and [toHalfFloatBits] produces the compact persistence form.
  */
-internal class LiquifyMesh private constructor(private val cells: FloatArray) {
+internal class LiquifyMesh private constructor(private val cells: FloatArray) : WarpDisplacementField {
 
     /** Edge length of the square displacement grid. */
-    val gridSize: Int
+    override val gridSize: Int
         get() = GRID_SIZE
 
     /** Deep copy of this field, used to snapshot the state before a stroke. */
@@ -34,10 +34,10 @@ internal class LiquifyMesh private constructor(private val cells: FloatArray) {
      * Returns true when every cell is within [ZERO_TOLERANCE] of zero, i.e. the edit is visually
      * identical to no liquify at all and `EditGraph.geometry.liquify` should be cleared.
      */
-    fun isZero(): Boolean = cells.all { abs(it) < ZERO_TOLERANCE }
+    override fun isZero(): Boolean = cells.all { abs(it) < ZERO_TOLERANCE }
 
     /** Raw interleaved component at [index]; exposed for the persistence codec and tests. */
-    fun displacementRaw(index: Int): Float = cells[index]
+    override fun displacementRaw(index: Int): Float = cells[index]
 
     /** True when [other] holds exactly the same displacement values. */
     fun contentEquals(other: LiquifyMesh): Boolean = cells.contentEquals(other.cells)
@@ -47,7 +47,7 @@ internal class LiquifyMesh private constructor(private val cells: FloatArray) {
      *
      * @return The displacement at that coordinate; `(0, 0)` outside the grid.
      */
-    fun displacementAt(u: Float, v: Float): Uv {
+    override fun displacementAt(u: Float, v: Float): Uv {
         if (!u.isFinite() || !v.isFinite()) return Uv(0.0f, 0.0f)
         val x = (u * GRID_SIZE - HALF_TEXEL).coerceIn(0.0f, LAST_INDEX)
         val y = (v * GRID_SIZE - HALF_TEXEL).coerceIn(0.0f, LAST_INDEX)
@@ -119,7 +119,7 @@ internal class LiquifyMesh private constructor(private val cells: FloatArray) {
      * Decodes the grid into [destination], reusing the caller's buffer so a live brush stroke does
      * not allocate a new 64 KiB array for every texture upload.
      */
-    fun readHalfFloatBitsInto(destination: ShortArray) {
+    override fun readHalfFloatBitsInto(destination: ShortArray) {
         require(destination.size == COMPONENT_COUNT) {
             "liquify half-float grid must hold $COMPONENT_COUNT values"
         }

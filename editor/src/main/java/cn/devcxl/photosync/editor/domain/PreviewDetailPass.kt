@@ -26,6 +26,8 @@ object PreviewDetailPass {
      * @param argb Packed `ARGB_8888` pixels of the post-`Pass B` frame, row-major.
      * @param fullResolutionShortEdge Short edge of the original photo, used to keep the sharpening
      *   radius physically identical to a full-resolution bake.
+     * @param skinMask Optional portrait analysis mask; skin smoothing is a no-op without it, exactly
+     *   like the GLES chain, which drops the stage when no mask texture is bound.
      * @return The same array when Pass C is short-circuited, otherwise a new pixel array.
      */
     fun apply(
@@ -33,11 +35,17 @@ object PreviewDetailPass {
         width: Int,
         height: Int,
         graph: EditGraph,
-        fullResolutionShortEdge: Int = min(width, height)
+        fullResolutionShortEdge: Int = min(width, height),
+        skinMask: FloatArray? = null
     ): IntArray {
         require(argb.size == width * height) { "Pixels must match the ${width}x$height frame" }
         val params = SpatialDetailParams.from(graph)
-        if (params.isZeroDrawCallShortCircuit) return argb
+        val plan = SpatialDetailPlanner.plan(
+            params,
+            prepassAvailable = params.needsPrepass,
+            skinMaskAvailable = skinMask != null
+        )
+        if (plan.isZeroDrawCallShortCircuit) return argb
         val srgb = FloatArray(argb.size * CHANNELS)
         for (index in argb.indices) {
             val pixel = argb[index]
@@ -55,6 +63,7 @@ object PreviewDetailPass {
             height = height,
             params = params,
             analysis = analysis,
+            skinMask = skinMask,
             resolutionScale = scale.coerceIn(MIN_RESOLUTION_SCALE, 1.0f)
         )
         return repack(srgb, argb, width, height)

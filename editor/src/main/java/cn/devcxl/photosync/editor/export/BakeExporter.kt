@@ -117,8 +117,17 @@ class BakeExporter(
         val prepass = BakePrepass(chain, source)
         try {
             val outSize = ColumnBandTiling.outputSize(source.width, source.height, graph.geometry)
+            val portrait = BakePortraitSupport.resolve(
+                context = context,
+                filesDir = filesDir,
+                sourcePath = request.sourcePath,
+                isRaw = request.isRaw,
+                graph = graph,
+                liquifyMesh = loadLiquifyMesh(graph)
+            )
             chain.stageGraph(
-                liquifyMesh = loadLiquifyMesh(graph),
+                warpField = portrait.warpField,
+                skinMask = portrait.skinMask,
                 graphCurve = graph.color.curve,
                 lut = loadLut(graph)
             )

@@ -12,6 +12,7 @@ import cn.devcxl.photosync.editor.domain.GeometryMath
 import cn.devcxl.photosync.editor.domain.LiquifyMesh
 import cn.devcxl.photosync.editor.domain.Lut3dSamples
 import cn.devcxl.photosync.editor.domain.PassDEffectsParams
+import cn.devcxl.photosync.editor.domain.PortraitWarpComposer
 import cn.devcxl.photosync.editor.domain.SpatialDetailParams
 import cn.devcxl.photosync.editor.domain.ToneShaderParams
 
@@ -46,6 +47,12 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
     @Volatile private var linearInput: Boolean = false
     @Volatile private var autoBrightGain: Float = 1.0f
     @Volatile private var stagedSource: EditorSource? = null
+
+    @Volatile private var liquifyMesh: LiquifyMesh? = null
+
+    @Volatile private var portraitFaceWarp: FloatArray? = null
+
+    @Volatile private var portraitBodyWarp: FloatArray? = null
 
     @Volatile
     var preferEs3: Boolean = true
@@ -82,7 +89,7 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
 
     override fun onDrawFrame(gl: GL10?) {
         if (pipeline.uploadPending(preferEs3)) {
-            frameState = frameState.copy(liquifyWarp = false)
+            frameState = frameState.copy(warpActive = false)
         }
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
 
@@ -130,7 +137,32 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
 
     /** Stages the liquify displacement grid for the next frame. */
     fun setLiquifyMesh(mesh: LiquifyMesh?) {
-        frameState = frameState.copy(liquifyWarp = pipeline.stageLiquifyMesh(mesh))
+        liquifyMesh = mesh
+        publishWarp()
+    }
+
+    /**
+     * Stages the portrait face MLS and body warp meshes.
+     *
+     * The renderer is the single composition point: `uWarpTex` receives
+     * `Δuv_face + Δuv_body + Δuv_liquify`, so Pass A still performs exactly one texture fetch.
+     */
+    fun setPortraitWarp(faceWarp: FloatArray?, bodyWarp: FloatArray?) {
+        portraitFaceWarp = faceWarp
+        portraitBodyWarp = bodyWarp
+        publishWarp()
+    }
+
+    /** Stages the portrait `skinMask` that gates Pass C Stage 0 and the sharpening suppression. */
+    fun setSkinMask(mask: FloatArray?) {
+        pipeline.stageSkinMask(mask)
+        pipeline.invalidatePrepass()
+        prepassRevision++
+    }
+
+    private fun publishWarp() {
+        val composed = PortraitWarpComposer.compose(portraitFaceWarp, portraitBodyWarp, liquifyMesh)
+        frameState = frameState.copy(warpActive = pipeline.stageWarpField(composed))
         pipeline.invalidatePrepass()
         prepassRevision++
     }
@@ -146,8 +178,8 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
         val aspect = sourceAspect()
         val geometry = graph.geometry
         val aberration = graph.effects.ca
-        val liquifyWarp = pipeline.isLiquifyWarpActive
-        val geometryActive = graph.requiresPassAGeometry(hasWarp = liquifyWarp)
+        val warpActive = pipeline.isWarpActive
+        val geometryActive = graph.requiresPassAGeometry(hasWarp = warpActive)
         val outputAspect = if (geometryActive) GeometryMath.outputAspect(geometry, aspect) else aspect
         val inverseMatrix = if (geometryActive) {
             GeometryMath.buildPassAInverseMatrix(geometry, aspect).toColumnMajorFloatArray()
@@ -168,10 +200,10 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
             lateralCaRedK = GeometryMath.lateralCaKFromSlider(aberration.redCyan),
             lateralCaBlueK = GeometryMath.lateralCaKFromSlider(aberration.blueYellow),
             outputAspectRatio = outputAspect,
-            liquifyWarp = liquifyWarp
+            warpActive = warpActive
         )
         isPassCActive = !useFastProxy && !spatialParams.isZeroDrawCallShortCircuit
-        val prepassSig = prepassSignature(graph, liquifyWarp)
+        val prepassSig = prepassSignature(graph, warpActive, portraitFaceWarp, portraitBodyWarp)
         if (prepassSig != lastPrepassInputSignature) {
             lastPrepassInputSignature = prepassSig
             pipeline.invalidatePrepass()
@@ -179,13 +211,20 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
         }
     }
 
-    private fun prepassSignature(graph: EditGraph, liquifyWarp: Boolean): Int {
+    private fun prepassSignature(
+        graph: EditGraph,
+        warpActive: Boolean,
+        faceWarp: FloatArray?,
+        bodyWarp: FloatArray?
+    ): Int {
         var hash = graph.baseLook.hashCode()
         hash = 31 * hash + graph.geometry.hashCode()
         hash = 31 * hash + graph.tone.hashCode()
         hash = 31 * hash + graph.color.copy(lut = null).hashCode()
         hash = 31 * hash + graph.effects.ca.hashCode()
-        hash = 31 * hash + liquifyWarp.hashCode()
+        hash = 31 * hash + warpActive.hashCode()
+        hash = 31 * hash + (faceWarp?.contentHashCode() ?: 0)
+        hash = 31 * hash + (bodyWarp?.contentHashCode() ?: 0)
         return hash
     }
 

@@ -16,6 +16,6 @@
 # debugging stack traces.
 #-keepattributes SourceFile,LineNumberTable
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# MediaPipe Tasks Vision resolves its JNI bridge by class name and ships no consumer
+# ProGuard rules, so R8 must not rename or strip the library.
+-keep class com.google.mediapipe.** { *; }

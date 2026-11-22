@@ -4,30 +4,24 @@ import android.opengl.GLES20
 import timber.log.Timber
 
 import cn.devcxl.photosync.editor.domain.CurveOps
-import cn.devcxl.photosync.editor.domain.LiquifyMesh
 import cn.devcxl.photosync.editor.domain.Lut3dSamples
 import cn.devcxl.photosync.editor.domain.PassDEffectsMath
+import cn.devcxl.photosync.editor.domain.SpatialDetailPlanner
+import cn.devcxl.photosync.editor.domain.WarpDisplacementField
 
 /**
  * Owns every GL object of the preview chain and executes one frame:
  *
- * 1. **Pass A** ([GeometryCaGlProgram]) resamples the source through `H^-1`, the liquify warp and
- *    lateral CA into [OffscreenColorTarget].
+ * 1. **Pass A** ([GeometryCaGlProgram]) resamples the source through `H^-1`, the composed warp
+ *    (`uWarpTex` = face MLS + body + liquify) and lateral CA into [OffscreenColorTarget].
  * 2. **Pass B** ([ExposureGlProgram]) applies `BaseLook`, Bradford WB, linear/display tone (B1) and
  *    display color (B2).
- * 3. **Pass C** ([SpatialDetailRenderer]) runs the 1024px Pre-pass + spatial-detail chain when
- *    non-neutral outside a fast proxy drag, otherwise short-circuits at **0 FBO draw calls**.
+ * 3. **Pass C** ([SpatialDetailRenderer]) runs the 1024px Pre-pass + spatial-detail chain
+ *    (skin smoothing, NR, dehaze, clarity/texture, sharpening) when non-neutral outside a fast
+ *    proxy drag, otherwise short-circuits at **0 FBO draw calls**.
  * 4. **Pass D** ([EffectsOutputStage]) adds the 3D LUT, film grain, post-crop vignette and dithering.
  */
 internal class PreviewPassPipeline {
-
-    private data class FrameInput(
-        val textureId: Int,
-        val isLinear: Boolean,
-        val aspect: Float,
-        val texelWidth: Int,
-        val texelHeight: Int
-    )
 
     private val exposureProgram = ExposureGlProgram()
     private val geometryProgram = GeometryCaGlProgram()
@@ -35,12 +29,13 @@ internal class PreviewPassPipeline {
     private val effectsStage = EffectsOutputStage(exposureProgram)
     private val geometryTarget = OffscreenColorTarget()
     private val textures = EditorSourceTextures()
-    private val warpTexture = LiquifyWarpTexture()
+    private val warpTexture = WarpTexture()
+    private val skinMaskTexture = SkinMaskTexture()
     private val curveLutTexture = CurveLutTexture()
     private var geometryFallbackLogged = false
 
-    /** True when a non-zero liquify mesh must be sampled by the next Pass A draw. */
-    val isLiquifyWarpActive: Boolean
+    /** True when a non-zero composed warp must be sampled by the next Pass A draw. */
+    val isWarpActive: Boolean
         get() = warpTexture.isWarpActive
 
     /** FBO draw calls Pass C issued in the most recent frame. */
@@ -60,6 +55,7 @@ internal class PreviewPassPipeline {
         geometryFallbackLogged = false
         lastPassCDrawCalls = 0
         warpTexture.invalidate()
+        skinMaskTexture.invalidate()
         curveLutTexture.invalidate()
         textures.invalidateContext()
         if (preferEs3) geometryProgram.init()
@@ -71,8 +67,11 @@ internal class PreviewPassPipeline {
     /** Drops the staged source without touching GL objects. */
     fun releaseSource() = textures.clear()
 
-    /** Stages the liquify grid and returns whether the warp is active. */
-    fun stageLiquifyMesh(mesh: LiquifyMesh?): Boolean = warpTexture.stage(mesh)
+    /** Stages the composed `uWarpTex` field (face MLS + body + liquify). */
+    fun stageWarpField(field: WarpDisplacementField?): Boolean = warpTexture.stage(field)
+
+    /** Stages the portrait `skinMask`; `null` unbinds the Stage 0 / sharpening suppression mask. */
+    fun stageSkinMask(mask: FloatArray?): Boolean = skinMaskTexture.stage(mask)
 
     /** Stages the 1D tone-curve LUT for the next frame. */
     fun stageCurve(curve: CurveOps) = curveLutTexture.stage(curve)
@@ -94,6 +93,7 @@ internal class PreviewPassPipeline {
     fun uploadPending(preferEs3: Boolean): Boolean {
         textures.uploadPending()
         val warpFailed = warpTexture.uploadIfNeeded()
+        skinMaskTexture.uploadIfNeeded()
         curveLutTexture.uploadIfNeeded(preferEs3)
         effectsStage.uploadPending(preferEs3)
         return warpFailed
@@ -102,7 +102,7 @@ internal class PreviewPassPipeline {
     /** Draws one frame (`Pass A -> Pass B -> Pass C -> Pass D`) into the default framebuffer. */
     fun drawFrame(request: PreviewFrameRequest) {
         GLES20.glViewport(0, 0, request.viewportWidth, request.viewportHeight)
-        val source = FrameInput(
+        val source = PreviewFrameInput(
             textureId = request.sourceTextureId,
             isLinear = request.isLinearInput,
             aspect = request.sourceAspect,
@@ -130,11 +130,11 @@ internal class PreviewPassPipeline {
         }
     }
 
-    private fun renderGeometryPass(request: PreviewFrameRequest, source: FrameInput): FrameInput {
+    private fun renderGeometryPass(request: PreviewFrameRequest, source: PreviewFrameInput): PreviewFrameInput {
         val state = request.state
-        if ((!state.geometryActive && !state.liquifyWarp) || !geometryProgram.isReady) return source
+        if ((!state.geometryActive && !state.warpActive) || !geometryProgram.isReady) return source
         val aspect = state.outputAspectRatio.takeIf { it.isFinite() && it > 0.0f } ?: source.aspect
-        val (scaleX, scaleY) = letterboxScale(request, aspect)
+        val (scaleX, scaleY) = PreviewDrawRequests.letterboxScale(request, aspect)
         val (targetWidth, targetHeight) = OffscreenColorTarget.targetSizeFor(
             request.viewportWidth, request.viewportHeight, scaleX, scaleY
         )
@@ -153,14 +153,14 @@ internal class PreviewPassPipeline {
                 caBlueK = state.lateralCaBlueK,
                 srcAspect = request.sourceAspect,
                 encodeSrgbWithDither = request.isLinearInput && !geometryTarget.isHalfFloatTarget,
-                warpTextureId = if (state.liquifyWarp) warpTexture.textureId else 0,
+                warpTextureId = if (state.warpActive) warpTexture.textureId else 0,
                 warpDecodeScale = warpTexture.decodeScale,
                 warpDecodeOffset = warpTexture.decodeOffset
             )
         )
         geometryTarget.unbind()
         GLES20.glViewport(0, 0, request.viewportWidth, request.viewportHeight)
-        return FrameInput(
+        return PreviewFrameInput(
             textureId = geometryTarget.textureId,
             isLinear = request.isLinearInput && geometryTarget.isHalfFloatTarget,
             aspect = aspect,
@@ -169,13 +169,19 @@ internal class PreviewPassPipeline {
         )
     }
 
-    private fun renderSpatialDetailIfActive(request: PreviewFrameRequest, frame: FrameInput): Int {
+    private fun renderSpatialDetailIfActive(request: PreviewFrameRequest, frame: PreviewFrameInput): Int {
         val state = request.state
-        if (state.useFastProxy || state.spatialParams.isZeroDrawCallShortCircuit || !spatialDetail.isReady) {
+        val skinMaskAvailable = skinMaskTexture.isActive
+        val plan = SpatialDetailPlanner.plan(
+            state.spatialParams,
+            prepassAvailable = true,
+            skinMaskAvailable = skinMaskAvailable
+        )
+        if (state.useFastProxy || plan.isZeroDrawCallShortCircuit || !spatialDetail.isReady) {
             lastPassCDrawCalls = 0
             return 0
         }
-        val (scaleX, scaleY) = letterboxScale(request, frame.aspect)
+        val (scaleX, scaleY) = PreviewDrawRequests.letterboxScale(request, frame.aspect)
         val (targetWidth, targetHeight) = OffscreenColorTarget.targetSizeFor(
             request.viewportWidth, request.viewportHeight, scaleX, scaleY
         )
@@ -186,12 +192,20 @@ internal class PreviewPassPipeline {
             targetWidth = targetWidth,
             targetHeight = targetHeight,
             fullResolutionShortEdge = request.fullResolutionShortEdge,
+            skinMaskTextureId = if (skinMaskTexture.isActive) skinMaskTexture.textureId else 0,
             allowHalfFloat = true
         ) { target ->
             target.bind()
             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
             val dither = if (target.isHalfFloatTarget) 0.0f else PassDEffectsMath.DITHER_AMPLITUDE
-            exposureProgram.draw(passBDrawParams(request, frame, 1.0f, 1.0f, 0.0f, 0.0f, dither))
+            exposureProgram.draw(
+                PreviewDrawRequests.offscreenPassB(
+                    request = request,
+                    frame = frame,
+                    curveTextureId = curveLutTexture.textureId,
+                    ditherAmp = dither
+                )
+            )
             target.unbind()
             true
         }
@@ -200,8 +214,8 @@ internal class PreviewPassPipeline {
         return outputTex
     }
 
-    private fun presentPassC(request: PreviewFrameRequest, frame: FrameInput, textureId: Int) {
-        val (scaleX, scaleY) = letterboxScale(request, frame.aspect)
+    private fun presentPassC(request: PreviewFrameRequest, frame: PreviewFrameInput, textureId: Int) {
+        val (scaleX, scaleY) = PreviewDrawRequests.letterboxScale(request, frame.aspect)
         spatialDetail.present(
             textureId = textureId,
             viewportWidth = request.viewportWidth,
@@ -213,77 +227,32 @@ internal class PreviewPassPipeline {
         )
     }
 
-    private fun drawPassB(request: PreviewFrameRequest, frame: FrameInput) {
-        val (scaleX, scaleY) = letterboxScale(request, frame.aspect)
+    private fun drawPassB(request: PreviewFrameRequest, frame: PreviewFrameInput) {
         exposureProgram.draw(
-            passBDrawParams(
-                request, frame, scaleX, scaleY,
-                request.canvas.offsetX, request.canvas.offsetY, PassDEffectsMath.DITHER_AMPLITUDE
+            PreviewDrawRequests.viewportPassB(
+                request = request,
+                frame = frame,
+                curveTextureId = curveLutTexture.textureId,
+                ditherAmp = PassDEffectsMath.DITHER_AMPLITUDE
             )
         )
     }
 
-    private fun drawPassD(request: PreviewFrameRequest, frame: FrameInput) {
-        if (!effectsStage.draw(buildEffectsRequest(request, frame))) {
+    private fun drawPassD(request: PreviewFrameRequest, frame: PreviewFrameInput) {
+        if (!effectsStage.draw(PreviewDrawRequests.effects(request, frame, curveLutTexture.textureId))) {
             drawPassB(request, frame)
         }
     }
 
-    private fun drawPassDFromTexture(request: PreviewFrameRequest, frame: FrameInput, textureId: Int) {
-        effectsStage.drawFromTexture(textureId, buildEffectsRequest(request, frame))
-    }
-
-    private fun buildEffectsRequest(request: PreviewFrameRequest, frame: FrameInput): EffectsStageRequest {
-        val (scaleX, scaleY) = letterboxScale(request, frame.aspect)
-        val (targetWidth, targetHeight) = OffscreenColorTarget.targetSizeFor(
-            request.viewportWidth, request.viewportHeight, scaleX, scaleY
-        )
-        return EffectsStageRequest(
-            viewportWidth = request.viewportWidth,
-            viewportHeight = request.viewportHeight,
-            scaleX = scaleX,
-            scaleY = scaleY,
-            offsetX = request.canvas.offsetX,
-            offsetY = request.canvas.offsetY,
-            effects = request.state.effectsParams,
-            passBDraw = passBDrawParams(request, frame, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f),
-            pixelScaleX = targetWidth,
-            pixelScaleY = targetHeight
-        )
-    }
-
-    private fun passBDrawParams(
+    private fun drawPassDFromTexture(
         request: PreviewFrameRequest,
-        frame: FrameInput,
-        scaleX: Float,
-        scaleY: Float,
-        offsetX: Float,
-        offsetY: Float,
-        ditherAmp: Float
-    ): ExposureDrawParams {
-        val state = request.state
-        return ExposureDrawParams(
-            textureId = frame.textureId,
-            compareOriginal = request.compareOriginal,
-            scaleX = scaleX,
-            scaleY = scaleY,
-            offsetX = offsetX,
-            offsetY = offsetY,
-            isLinearInput = frame.isLinear,
-            baseLook = state.baseLook,
-            autoBrightGain = request.autoBrightGain,
-            toneParams = state.toneParams,
-            colorParams = state.colorParams,
-            curveTextureId = curveLutTexture.textureId,
-            texelWidth = frame.texelWidth,
-            texelHeight = frame.texelHeight,
-            ditherAmp = ditherAmp
+        frame: PreviewFrameInput,
+        textureId: Int
+    ) {
+        effectsStage.drawFromTexture(
+            textureId,
+            PreviewDrawRequests.effects(request, frame, curveLutTexture.textureId)
         )
-    }
-
-    private fun letterboxScale(request: PreviewFrameRequest, imageAspect: Float): Pair<Float, Float> {
-        val viewAspect = request.viewportWidth.toFloat() / request.viewportHeight.toFloat()
-        return CanvasLetterbox.scale(imageAspect, viewAspect, request.canvas.scale)
     }
 
     private fun logGeometryFallbackOnce() {

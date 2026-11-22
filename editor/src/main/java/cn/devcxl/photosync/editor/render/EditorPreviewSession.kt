@@ -6,6 +6,7 @@ import timber.log.Timber
 
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.LiquifyMesh
+import cn.devcxl.photosync.editor.domain.WarpDisplacementField
 import cn.devcxl.photosync.editor.domain.Lut3dSamples
 import cn.devcxl.photosync.editor.lut.CubeLutStore
 
@@ -85,10 +86,16 @@ internal class EditorPreviewSession(
     /**
      * Renders the screen-sized preview cache for [graph]. Blocking: call from an IO dispatcher.
      *
-     * @param liquifyMesh The photo's displacement grid so the cache matches the canvas exactly.
+     * @param warpField Composed displacement grid (face MLS + body + liquify) so the cache matches
+     *   the canvas exactly.
+     * @param skinMask Portrait analysis mask, or `null` when the portrait group is unused.
      * @return Absolute path of the written JPEG, or `null` when nothing was written.
      */
-    fun writePreviewCache(graph: EditGraph, liquifyMesh: LiquifyMesh? = null): String? {
+    fun writePreviewCache(
+        graph: EditGraph,
+        warpField: WarpDisplacementField? = null,
+        skinMask: FloatArray? = null
+    ): String? {
         val lut = loadLutFor(graph)
         return when (val current = source) {
             null -> null
@@ -97,16 +104,18 @@ internal class EditorPreviewSession(
                 graph = graph,
                 cacheDir = cacheDir,
                 photoId = photoId,
-                liquifyMesh = liquifyMesh,
-                lut = lut
+                warpField = warpField,
+                lut = lut,
+                skinMask = skinMask
             )
             is EditorSource.BitmapSource -> PreviewCacheWriter.writePreviewCache(
                 source = current.full,
                 graph = graph,
                 cacheDir = cacheDir,
                 photoId = photoId,
-                liquifyMesh = liquifyMesh,
-                lut = lut
+                warpField = warpField,
+                lut = lut,
+                skinMask = skinMask
             )
         }
     }

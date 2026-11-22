@@ -23,7 +23,8 @@ internal object LinearRawPreviewRenderer {
         source: LinearRawBuffer,
         graph: EditGraph,
         lut: Lut3dSamples? = null,
-        fullResolutionShortEdge: Int = minOf(source.width, source.height)
+        fullResolutionShortEdge: Int = minOf(source.width, source.height),
+        skinMask: FloatArray? = null
     ): IntArray {
         val toneParams = ToneShaderParams.from(graph)
         val colorParams = ColorGradingParams.from(graph)
@@ -51,7 +52,8 @@ internal object LinearRawPreviewRenderer {
             width = width,
             height = height,
             graph = graph,
-            fullResolutionShortEdge = fullResolutionShortEdge
+            fullResolutionShortEdge = fullResolutionShortEdge,
+            skinMask = skinMask
         )
         return applyPassDEffects(detailed, width, height, graph, lut)
     }

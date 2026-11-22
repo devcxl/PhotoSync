@@ -112,4 +112,50 @@ class SpatialDetailPlannerTest {
         assertFalse(params.isZeroDrawCallShortCircuit)
         assertTrue(params.hasSkinSmoothing)
     }
+
+    @Test
+    fun shouldPlanSkinSmoothingAsStageZero_whenTheSkinMaskIsAvailable() {
+        val graph = EditGraph(
+            portrait = PortraitOps(skin = SkinOps(smooth = 40, evenTone = 20)),
+            detail = DetailOps(sharpen = SharpenOps(amount = 30))
+        )
+
+        val plan = SpatialDetailPlanner.plan(
+            SpatialDetailParams.from(graph),
+            prepassAvailable = true,
+            skinMaskAvailable = true
+        )
+
+        assertEquals(
+            listOf(SpatialDetailStage.SKIN_SMOOTHING, SpatialDetailStage.SHARPEN),
+            plan.stages
+        )
+        assertTrue(plan.skippedStages.isEmpty())
+    }
+
+    @Test
+    fun shouldDropSkinSmoothing_whenNoAnalysisMaskIsBound() {
+        val params = SpatialDetailParams.from(
+            EditGraph(portrait = PortraitOps(skin = SkinOps(smooth = 55)))
+        )
+
+        val plan = SpatialDetailPlanner.plan(
+            params,
+            prepassAvailable = true,
+            skinMaskAvailable = false
+        )
+
+        assertTrue(plan.isZeroDrawCallShortCircuit)
+        assertEquals(listOf(SpatialDetailStage.SKIN_SMOOTHING), plan.skippedStages)
+    }
+
+    @Test
+    fun shouldIgnoreSkinTextureAlone_whenSmoothingAndEvenToneAreNeutral() {
+        val params = SpatialDetailParams.from(
+            EditGraph(portrait = PortraitOps(skin = SkinOps(texture = 90)))
+        )
+
+        assertFalse(params.hasSkinFrequencySeparation)
+        assertTrue(params.isZeroDrawCallShortCircuit)
+    }
 }

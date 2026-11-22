@@ -6,7 +6,6 @@ import cn.devcxl.photosync.editor.domain.BaseLook
 import cn.devcxl.photosync.editor.domain.ColorGradingParams
 import cn.devcxl.photosync.editor.domain.ColumnBand
 import cn.devcxl.photosync.editor.domain.CurveOps
-import cn.devcxl.photosync.editor.domain.LiquifyMesh
 import cn.devcxl.photosync.editor.domain.Lut3dSamples
 import cn.devcxl.photosync.editor.domain.PassDEffectsMath
 import cn.devcxl.photosync.editor.domain.PassDEffectsParams
@@ -15,6 +14,9 @@ import cn.devcxl.photosync.editor.domain.SpatialDetailParams
 import cn.devcxl.photosync.editor.domain.SpatialDetailPlanner
 import cn.devcxl.photosync.editor.domain.TileUvTransform
 import cn.devcxl.photosync.editor.domain.ToneShaderParams
+import cn.devcxl.photosync.editor.domain.WarpDisplacementField
+import cn.devcxl.photosync.editor.lut.Lut3dTexture
+import cn.devcxl.photosync.editor.render.CurveLutTexture
 import cn.devcxl.photosync.editor.render.EffectsDrawParams
 import cn.devcxl.photosync.editor.render.EffectsOutputGlProgram
 import cn.devcxl.photosync.editor.render.ExposureDrawParams
@@ -22,15 +24,12 @@ import cn.devcxl.photosync.editor.render.ExposureGlProgram
 import cn.devcxl.photosync.editor.render.GeometryCaGlProgram
 import cn.devcxl.photosync.editor.render.GeometryDrawParams
 import cn.devcxl.photosync.editor.render.GlCapabilities
-import cn.devcxl.photosync.editor.render.LiquifyWarpTexture
 import cn.devcxl.photosync.editor.render.OffscreenColorTarget
+import cn.devcxl.photosync.editor.render.SkinMaskTexture
 import cn.devcxl.photosync.editor.render.SpatialDetailGlChain
-import cn.devcxl.photosync.editor.lut.Lut3dTexture
-import cn.devcxl.photosync.editor.render.CurveLutTexture
+import cn.devcxl.photosync.editor.render.WarpTexture
 
-/**
- * Every graph-derived uniform one bake band needs, plus the band geometry and its source binding.
- */
+/** Every graph-derived uniform one bake band needs, plus the band geometry and source binding. */
 internal data class BakeFrame(
     val sourceTextureId: Int,
     val srcSliceRect: SourceSliceRect,
@@ -54,10 +53,8 @@ internal data class BakeFrame(
 /**
  * Runs the physical `Pass A -> Pass B -> Pass C -> Pass D` chain for one bake band.
  *
- * The same shader programs as the preview are used; the column-band affine
- * ([TileUvTransform]) and the Tier 2 sub-slice ([SourceSliceRect]) are the only extra uniforms, and
- * both default to identity in the preview. Pass D always writes `GL_RGBA8` because its output is
- * the `glReadPixels` source.
+ * Uses the exact same shader programs as the preview, including the unified `uWarpTex`
+ * (face MLS + body + liquify) and `uSkinMaskTex` (Pass C skin smoothing + sharpening suppression).
  */
 internal class BakePassChain {
 
@@ -65,7 +62,8 @@ internal class BakePassChain {
     private val exposureProgram = ExposureGlProgram()
     private val spatialChain = SpatialDetailGlChain()
     private val effectsProgram = EffectsOutputGlProgram()
-    private val warpTexture = LiquifyWarpTexture()
+    private val warpTexture = WarpTexture()
+    private val skinMaskTexture = SkinMaskTexture()
     private val curveLutTexture = CurveLutTexture()
     private val lutTexture = Lut3dTexture()
 
@@ -80,11 +78,7 @@ internal class BakePassChain {
     var isReady: Boolean = false
         private set
 
-    /**
-     * Compiles the programs and probes capabilities. Must run with the EGL context current.
-     *
-     * @return True when the full four-pass chain is available.
-     */
+    /** Compiles the programs and probes capabilities. Must run with the EGL context current. */
     fun init(): Boolean {
         GlCapabilities.invalidate()
         GlCapabilities.refresh()
@@ -94,18 +88,23 @@ internal class BakePassChain {
         val passD = effectsProgram.init()
         warpTexture.stage(null)
         warpTexture.uploadIfNeeded()
+        skinMaskTexture.stage(null)
+        skinMaskTexture.uploadIfNeeded()
         isReady = passA && passC && passD && GlCapabilities.supportsHalfFloatTargets
         return isReady
     }
 
-    /** Stages the liquify grid, 1D tone curve and 3D LUT, then uploads them on the GL thread. */
+    /** Stages the unified warp grid, optional `skinMask`, 1D tone curve and 3D LUT on GL thread. */
     fun stageGraph(
-        liquifyMesh: LiquifyMesh?,
+        warpField: WarpDisplacementField?,
+        skinMask: FloatArray?,
         graphCurve: CurveOps,
         lut: Lut3dSamples?
     ) {
-        warpTexture.stage(liquifyMesh)
+        warpTexture.stage(warpField)
         warpTexture.uploadIfNeeded()
+        skinMaskTexture.stage(skinMask)
+        skinMaskTexture.uploadIfNeeded()
         curveLutTexture.stage(graphCurve)
         curveLutTexture.uploadIfNeeded(preferEs3 = true)
         lutTexture.stage(lut)
@@ -118,9 +117,7 @@ internal class BakePassChain {
         atmosphericLight = light
     }
 
-    /**
-     * Renders the `Pass A + Pass B` frame of [frame] into [target]; used by the 1024px Pre-pass.
-     */
+    /** Renders the `Pass A + Pass B` frame of [frame] into [target]; used by the 1024px Pre-pass. */
     fun renderPrepassFrame(target: OffscreenColorTarget, frame: BakeFrame): Boolean {
         if (!drawPassA(frame, geometryTarget)) return false
         target.bind()
@@ -138,9 +135,7 @@ internal class BakePassChain {
         return true
     }
 
-    /**
-     * Renders one band into [outputTarget] and returns its framebuffer, or `0` on failure.
-     */
+    /** Renders one band into [outputTarget] and returns its framebuffer, or `0` on failure. */
     fun renderBand(frame: BakeFrame): Int {
         val width = frame.band.fboWidth
         val height = frame.band.fboHeight
@@ -150,7 +145,7 @@ internal class BakePassChain {
         passBTarget.bind()
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
         exposureProgram.draw(
-            passBParams(frame, passBTarget.textureId, width, height, ditherAmp = 0.0f)
+            passBParams(frame, geometryTarget.textureId, width, height, ditherAmp = 0.0f)
         )
         passBTarget.unbind()
 
@@ -185,6 +180,7 @@ internal class BakePassChain {
         spatialChain.release()
         effectsProgram.release()
         warpTexture.release()
+        skinMaskTexture.release()
         curveLutTexture.release()
         lutTexture.release()
         geometryTarget.release()
@@ -220,7 +216,8 @@ internal class BakePassChain {
     private fun renderSpatialDetail(frame: BakeFrame, width: Int, height: Int): Int {
         val plan = SpatialDetailPlanner.plan(
             params = frame.spatialParams,
-            prepassAvailable = prepassTextureId != 0
+            prepassAvailable = prepassTextureId != 0,
+            skinMaskAvailable = skinMaskTexture.isActive
         )
         if (plan.stages.isEmpty()) return 0
         return spatialChain.run(
@@ -231,6 +228,7 @@ internal class BakePassChain {
             params = frame.spatialParams,
             plan = plan,
             prepassTextureId = prepassTextureId,
+            skinMaskTextureId = if (skinMaskTexture.isActive) skinMaskTexture.textureId else 0,
             atmosphericLight = atmosphericLight,
             guideTransform = frame.band.tileUv
         )

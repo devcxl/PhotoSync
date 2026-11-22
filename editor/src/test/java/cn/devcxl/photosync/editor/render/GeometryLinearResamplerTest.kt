@@ -87,7 +87,7 @@ class GeometryLinearResamplerTest {
             outputHeight = 1,
             caRedK = 0.0f,
             caBlueK = 0.0f,
-            liquifyMesh = warp
+            warpField = warp
         )
 
         val plainLeft = FloatArray(4)

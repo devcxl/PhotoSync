@@ -146,3 +146,27 @@ _Avoid_: 清晰度、纹理
 **Pass C（空间细节管线）**:
 融合逻辑阶段 ④ 的多级空间处理链（降噪 → 去雾 → 清晰度/纹理 → Y 锐化）；当细节参数与 `glow` 全为 0 时以 0 次 FBO Draw Call 彻底短路。
 _Avoid_: 点运算色彩（Pass B）、效果输出（Pass D）
+
+**Skin Smoothing（美肤）**:
+Pass C 开头的频率分离阶段：按 `skinMask` 加权压暗高频细节（`smooth`）、保留可调比例的皮肤纹理（`texture`）并把中频 CbCr 拉向其低频均值（`evenTone`）。
+_Avoid_: 降噪（Noise Reduction 作用于全图亮度与色度）、滤镜磨皮
+
+**SkinMask（皮肤遮罩）**:
+`256×256` 的皮肤权重图；模型就绪时由 6 类分割的 `body-skin ∪ face-skin − hair` 合成，未就绪时退化为 1 类人像前景 + 更严格的 OKLCH 肤色门控，两者都扣除眼、眉、外唇保护多边形。
+_Avoid_: 人脸框、蒙版图层
+
+**Face Reshape（面部重塑）**:
+在每张人脸的旋转不变局部坐标系上，用 Schaefer MLS 相似变换把瘦脸/大眼/缩鼻/下巴/额头/微笑六个滑杆转成 `128×128` 位移网格（最多 5 张脸，含图像边框与脸周 1.8× 不动的锚点）。
+_Avoid_: 人脸变形滤镜、2D 贴纸
+
+**Body Reshape（美体）**:
+按人像掩码与画布腰部/髋部引导横线执行的「瘦腰 + 拉腿」位移场；拉腿在髋线以下应用 `C¹` 连续纵向逆映射，画幅比例保持不变。
+_Avoid_: 拉长腿滤镜、人体变形
+
+**uWarpTex（统一形变纹理）**:
+把面部重塑、美体与液化三份 `128×128` 位移网格逐格相加后上传的单张 `GL_RG16F` 纹理，Pass A 几何阶段只采样一次。
+_Avoid_: 液化纹理、位移贴图（指代单项而非合成结果）
+
+**PortraitModel（人像模型包）**:
+随 APK 内置的 `face_landmarker.task` 与 `selfie_segmenter.tflite`，加上首次进入人像面板时按需下载并经 SHA-256 校验的 `selfie_multiclass_256x256.tflite`。
+_Avoid_: 插件、模型文件（指代整套分发方案时）

@@ -16,8 +16,8 @@ import cn.devcxl.photosync.editor.domain.TileUvTransform
  * every stage reads a complete frame and never its own write.
  *
  * Scales `sharpenRadiusPx` by `workingShortEdge / fullResolutionShortEdge` to match the full-res
- * Bake and CPU preview cache, and applies `1/255` triangular dithering whenever writing to a Tier 2
- * `GL_RGBA8` target.
+ * Bake and CPU preview cache, applies `1/255` triangular dithering whenever writing to a Tier 2
+ * `GL_RGBA8` target, and offsets Pre-pass lookups via [TileUvTransform] during tiled exports.
  */
 internal class SpatialDetailGlChain {
 
@@ -58,6 +58,7 @@ internal class SpatialDetailGlChain {
         params: SpatialDetailParams,
         plan: SpatialDetailPlan,
         prepassTextureId: Int,
+        skinMaskTextureId: Int,
         atmosphericLight: FloatArray,
         guideTransform: TileUvTransform = TileUvTransform.IDENTITY
     ): Int {
@@ -82,6 +83,10 @@ internal class SpatialDetailGlChain {
                     stage = stage,
                     inputTextureId = current,
                     prepassTextureId = if (needsPrepass(stage)) prepassTextureId else 0,
+                    skinMaskTextureId = if (needsSkinMask(stage)) skinMaskTextureId else 0,
+                    skinSmooth = params.skinSmooth,
+                    skinTexture = params.skinTexture,
+                    skinEvenTone = params.skinEvenTone,
                     dehazeStrength = params.dehaze,
                     atmosphericLight = atmosphericLight,
                     clarity = params.clarity,
@@ -112,6 +117,10 @@ internal class SpatialDetailGlChain {
 
     private fun needsPrepass(stage: SpatialDetailStage): Boolean =
         stage == SpatialDetailStage.DEHAZE || stage == SpatialDetailStage.CLARITY_TEXTURE
+
+    /** Stage 0 weights its smoothing by the mask, Stage 4 suppresses sharpening with it. */
+    private fun needsSkinMask(stage: SpatialDetailStage): Boolean =
+        stage == SpatialDetailStage.SKIN_SMOOTHING || stage == SpatialDetailStage.SHARPEN
 
     private companion object {
         private const val MIN_RESOLUTION_SCALE = 0.05f

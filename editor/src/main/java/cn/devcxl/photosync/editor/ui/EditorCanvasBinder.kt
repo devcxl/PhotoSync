@@ -10,6 +10,7 @@ import cn.devcxl.photosync.editor.domain.EditorUndoController
 import cn.devcxl.photosync.editor.domain.LiquifySession
 import cn.devcxl.photosync.editor.render.EditorGlRenderer
 import cn.devcxl.photosync.editor.ui.gesture.CanvasTransform
+import cn.devcxl.photosync.editor.ui.widgets.BodyGuideOverlayView
 
 /**
  * Configures the GL preview surface and wires the crop and liquify overlay gestures.
@@ -47,6 +48,12 @@ internal class EditorCanvasBinder(
 
         /** The user asked to clear every liquify displacement. */
         fun onLiquifyResetRequested()
+
+        /** A Body Reshaping guide line moved. */
+        fun onBodyGuidesChanged(waistY: Float, hipY: Float)
+
+        /** A Body Reshaping guide drag ended and its undo step must be sealed. */
+        fun onBodyGuidesCommitted()
     }
 
     /**
@@ -84,13 +91,21 @@ internal class EditorCanvasBinder(
             onCanvasTransformChanged = host::onCanvasTransformChanged,
             onResetRequested = host::onLiquifyResetRequested
         )
+        binding.bodyGuideOverlayView.listener = object : BodyGuideOverlayView.Listener {
+            override fun onGuidesChanged(waistY: Float, hipY: Float) =
+                host.onBodyGuidesChanged(waistY, hipY)
+
+            override fun onGuidesChangeFinished() = host.onBodyGuidesCommitted()
+        }
         binding.liquifyBrushOverlayView.visibility = View.GONE
+        binding.bodyGuideOverlayView.visibility = View.GONE
     }
 
     /** Drops the overlay listeners so a leaked view cannot call back after destruction. */
     fun detachOverlays() {
         binding.cropOverlayView.listener = null
         binding.liquifyBrushOverlayView.listener = null
+        binding.bodyGuideOverlayView.listener = null
     }
 
     private companion object {

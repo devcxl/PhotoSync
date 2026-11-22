@@ -48,7 +48,16 @@ internal enum class EditorControlStyle {
     SHARPEN,
 
     /** Noise reduction panel: luma, chroma and detail rows. */
-    NOISE_REDUCTION
+    NOISE_REDUCTION,
+
+    /** Portrait skin smoothing panel: smooth, texture and even-tone rows. */
+    SKIN,
+
+    /** Portrait face reshaping panel: the six MLS axes. */
+    FACE_RESHAPE,
+
+    /** Portrait body reshaping panel: waist and legs. */
+    BODY_RESHAPE
 }
 
 /**
@@ -84,7 +93,7 @@ internal data class EditorToolSpec(
 /**
  * Registry of the tools delivered so far: geometry (including liquify), tone, white balance,
  * display color, the Pass C spatial-detail group, the Pass D effect panels (3D LUT, film grain,
- * post-crop vignette) and lens dispersion / defringe.
+ * post-crop vignette), lens dispersion / defringe and the Portrait group (skin, face and body).
  */
 internal object EditorToolCatalog {
 
@@ -97,7 +106,8 @@ internal object EditorToolCatalog {
                 EditorToneDetailSpecs.toneSpecs() +
                 EditorColorSpecs.colourSpecs() +
                 EditorSpatialDetailSpecs.spatialDetailSpecs() +
-                EditorToneDetailSpecs.detailSpecs()
+                EditorToneDetailSpecs.detailSpecs() +
+                EditorPortraitSpecs.portraitSpecs()
             )
             .associateBy { it.tool }
 

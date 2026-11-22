@@ -174,6 +174,28 @@
     <string name="editor_value_liquify_modified">已涂抹</string>
     <string name="editor_value_liquify_none">—</string>
 
+    <!-- Portrait group -->
+    <string name="editor_tool_skin_smooth">美肤</string>
+    <string name="editor_tool_skin_smooth_modified">美肤 •</string>
+    <string name="editor_tool_face_reshape">面部重塑</string>
+    <string name="editor_tool_face_reshape_modified">面部重塑 •</string>
+    <string name="editor_tool_body_reshape">美体</string>
+    <string name="editor_tool_body_reshape_modified">美体 •</string>
+    <string name="editor_skin_smooth">平滑</string>
+    <string name="editor_skin_texture">纹理</string>
+    <string name="editor_skin_even_tone">匀肤</string>
+    <string name="editor_reshape_face">瘦脸</string>
+    <string name="editor_reshape_eyes">大眼</string>
+    <string name="editor_reshape_nose">缩鼻</string>
+    <string name="editor_reshape_chin">下巴</string>
+    <string name="editor_reshape_forehead">额头</string>
+    <string name="editor_reshape_smile">微笑</string>
+    <string name="editor_body_waist">瘦腰</string>
+    <string name="editor_body_legs">拉腿</string>
+    <string name="editor_value_skin_modified">已磨皮</string>
+    <string name="editor_value_reshape_modified">已重塑</string>
+    <string name="editor_value_body_modified">已塑形</string>
+
     <!-- Value formats -->
     <string name="editor_value_degrees_fmt">%1$+.1f°</string>
     <string name="editor_value_plain_degrees_fmt">%1$.0f°</string>
