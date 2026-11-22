@@ -24,7 +24,9 @@ internal data class ExposureDrawParams(
     val colorParams: ColorGradingParams = ColorGradingParams(),
     val curveTextureId: Int = 0,
     val texelWidth: Int = 1,
-    val texelHeight: Int = 1
+    val texelHeight: Int = 1,
+    /** Triangular dither amplitude in display units; `1/255` for 8-bit targets. */
+    val ditherAmp: Float = 0.0f
 )
 
 /**
@@ -69,6 +71,7 @@ internal class ExposureGlProgram {
     private var uSplitHiAbLoc: Int = -1
     private var uSplitShAbLoc: Int = -1
     private var uSplitBalanceLoc: Int = -1
+    private var uDitherAmpLoc: Int = -1
 
     private val quad = QuadMesh()
 
@@ -128,6 +131,7 @@ internal class ExposureGlProgram {
             if (params.baseLook == BaseLook.CAMERA_DEFAULT) 1 else 0
         )
         GLES20.glUniform1f(uAutoBrightGainLoc, params.autoBrightGain)
+        GLES20.glUniform1f(uDitherAmpLoc, params.ditherAmp)
         applyToneUniforms(params)
         applyColorUniforms(params)
 
@@ -155,6 +159,7 @@ internal class ExposureGlProgram {
         uShadowsLoc = GLES20.glGetUniformLocation(programId, "uShadows")
         uWhitesLoc = GLES20.glGetUniformLocation(programId, "uWhites")
         uBlacksLoc = GLES20.glGetUniformLocation(programId, "uBlacks")
+        uDitherAmpLoc = GLES20.glGetUniformLocation(programId, "uDitherAmp")
     }
 
     private fun resolveColorLocations() {

@@ -57,7 +57,8 @@ class ToneColorToolCatalogTest {
                 EditorTool.CURVE,
                 EditorTool.HSL,
                 EditorTool.SPLIT_TONING,
-                EditorTool.FADE
+                EditorTool.FADE,
+                EditorTool.LUT
             ),
             tools
         )
@@ -72,7 +73,9 @@ class ToneColorToolCatalogTest {
             listOf(
                 EditorTool.DISPERSION_RED_CYAN,
                 EditorTool.DISPERSION_BLUE_YELLOW,
-                EditorTool.DEFRINGE
+                EditorTool.DEFRINGE,
+                EditorTool.GRAIN,
+                EditorTool.VIGNETTE
             ),
             tools
         )

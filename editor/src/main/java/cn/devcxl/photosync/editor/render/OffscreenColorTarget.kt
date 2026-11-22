@@ -8,16 +8,17 @@ import android.opengl.GLES30
 import timber.log.Timber
 
 /**
- * Offscreen colour target for Pass A (geometry + lateral CA resampling).
+ * Reusable offscreen colour target used by every intermediate preview pass (Pass A geometry and the
+ * Pass B staging target Pass D reads).
  *
- * Picks the highest available tier from the 4-tier GPU fallback matrix:
+ * Picks the highest available tier from the fallback matrix:
  * - Tier 1: `GL_RGBA16F` when `EXT_color_buffer_half_float` is complete.
- * - Tier 2: `GL_RGBA8` otherwise, which is still exact for the 8-bit sRGB preview source.
+ * - Tier 2: `GL_RGBA8` otherwise, where each pass dithers its own output.
  *
  * The attachment is only reallocated when the requested size drifts by more than
  * [SIZE_TOLERANCE_PX], so a live crop or straighten drag does not thrash GPU memory.
  */
-internal class PassAFrameBuffer {
+internal class OffscreenColorTarget {
 
     var textureId: Int = 0
         private set
@@ -95,7 +96,7 @@ internal class PassAFrameBuffer {
     }
 
     private fun allocate(targetWidth: Int, targetHeight: Int, allowHalfFloat: Boolean) {
-        val useHalfFloat = allowHalfFloat && isHalfFloatColorBufferSupported()
+        val useHalfFloat = allowHalfFloat && GlCapabilities.supportsHalfFloatTargets
         width = targetWidth
         height = targetHeight
         isHalfFloatTarget = useHalfFloat
@@ -133,7 +134,7 @@ internal class PassAFrameBuffer {
         )
         val status = GLES20.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER)
         if (status != GLES30.GL_FRAMEBUFFER_COMPLETE) {
-            Timber.e("Pass A framebuffer incomplete (status=%d); disabling geometry pass", status)
+            Timber.e("Offscreen target framebuffer incomplete (status=%d); disabling the pass", status)
             isDisabled = true
             release()
         }
@@ -141,21 +142,10 @@ internal class PassAFrameBuffer {
     }
 
     companion object {
-        private const val SIZE_TOLERANCE_PX = 2
-        private const val EXT_HALF_FLOAT_COLOR_BUFFER = "GL_EXT_color_buffer_half_float"
-        private const val EXT_FLOAT_COLOR_BUFFER = "GL_EXT_color_buffer_float"
+        /** Longest edge of any preview working texture; keeps every device's FBO inside limits. */
+        const val MAX_PREVIEW_EDGE_PX = 2048
 
-        /**
-         * Resolves whether `GL_RGBA16F` attachments are colour-renderable on this driver.
-         */
-        fun queryHalfFloatColorBufferSupport(): Boolean {
-            val extensions = GLES20.glGetString(GLES20.GL_EXTENSIONS).orEmpty()
-            val version = GLES20.glGetString(GLES20.GL_VERSION).orEmpty()
-            return extensions.contains(EXT_HALF_FLOAT_COLOR_BUFFER) ||
-                extensions.contains(EXT_FLOAT_COLOR_BUFFER) ||
-                version.contains("OpenGL ES 3.1") ||
-                version.contains("OpenGL ES 3.2")
-        }
+        private const val SIZE_TOLERANCE_PX = 2
 
         /**
          * Computes the attachment size for a letterboxed image rect inside a viewport.
@@ -165,7 +155,7 @@ internal class PassAFrameBuffer {
             viewportHeight: Int,
             scaleX: Float,
             scaleY: Float,
-            maxEdgePx: Int
+            maxEdgePx: Int = MAX_PREVIEW_EDGE_PX
         ): Pair<Int, Int> {
             val rawWidth = (viewportWidth * scaleX).roundToInt().coerceAtLeast(1)
             val rawHeight = (viewportHeight * scaleY).roundToInt().coerceAtLeast(1)
@@ -175,19 +165,5 @@ internal class PassAFrameBuffer {
             return ((rawWidth * shrink).roundToInt().coerceAtLeast(1)) to
                 ((rawHeight * shrink).roundToInt().coerceAtLeast(1))
         }
-
-        private var cachedHalfFloatSupport: Boolean? = null
-
-        /**
-         * Re-queries and caches the Tier 1 capability, which must happen on the GL thread right
-         * after a context is created.
-         */
-        fun cacheCapabilities() {
-            cachedHalfFloatSupport = queryHalfFloatColorBufferSupport()
-            Timber.i("Pass A target tier: halfFloatColorBuffer=%b", cachedHalfFloatSupport)
-        }
-
-        private fun isHalfFloatColorBufferSupported(): Boolean =
-            cachedHalfFloatSupport ?: queryHalfFloatColorBufferSupport()
     }
 }

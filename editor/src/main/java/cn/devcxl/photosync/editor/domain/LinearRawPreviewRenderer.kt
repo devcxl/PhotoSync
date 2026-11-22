@@ -19,7 +19,11 @@ internal object LinearRawPreviewRenderer {
     private const val CHANNELS_RGB = 3
 
     /** Renders [source] into packed `ARGB_8888` pixels, row-major. */
-    fun renderArgb(source: LinearRawBuffer, graph: EditGraph): IntArray {
+    fun renderArgb(
+        source: LinearRawBuffer,
+        graph: EditGraph,
+        lut: Lut3dSamples? = null
+    ): IntArray {
         val toneParams = ToneShaderParams.from(graph)
         val colorParams = ColorGradingParams.from(graph)
         val curveLut = if (colorParams.hasCurve) CurveLutBuilder.buildFloatLut(graph.color.curve) else null
@@ -29,20 +33,39 @@ internal object LinearRawPreviewRenderer {
         val height = source.height
         val pixelCount = width * height
         val argb = IntArray(pixelCount)
-        val scratch = PassBColorMath.Scratch()
 
         if (colorParams.defringe > 0.0f) {
-            return renderWithDefringe(
+            renderWithDefringe(
                 source, gain, graph.baseLook, lookLut,
-                toneParams, colorParams, curveLut, width, height, argb, scratch
+                toneParams, colorParams, curveLut, width, height, argb, PassBColorMath.Scratch()
+            )
+        } else {
+            renderStraight(
+                source, gain, graph.baseLook, lookLut,
+                toneParams, colorParams, curveLut, pixelCount, argb, PassBColorMath.Scratch()
             )
         }
+        return applyPassDEffects(argb, width, height, graph, lut)
+    }
+
+    private fun renderStraight(
+        source: LinearRawBuffer,
+        gain: Float,
+        baseLook: BaseLook,
+        lookLut: FloatArray,
+        toneParams: ToneShaderParams,
+        colorParams: ColorGradingParams,
+        curveLut: FloatArray?,
+        pixelCount: Int,
+        argb: IntArray,
+        scratch: PassBColorMath.Scratch
+    ) {
         val sample = FloatArray(CHANNELS)
         val display = FloatArray(CHANNELS_RGB)
         val linear = FloatArray(CHANNELS_RGB)
         for (index in 0 until pixelCount) {
             source.readPixel(index, sample)
-            computeBaseLookLinear(sample, gain, graph.baseLook, lookLut, linear, display)
+            computeBaseLookLinear(sample, gain, baseLook, lookLut, linear, display)
             if (toneParams.isIdentity && colorParams.isIdentity) {
                 argb[index] = packLinearAsSrgb(linear)
             } else {
@@ -50,7 +73,17 @@ internal object LinearRawPreviewRenderer {
                 argb[index] = Srgb8Packer.packRgb(display[0], display[1], display[2])
             }
         }
-        return argb
+    }
+
+    private fun applyPassDEffects(
+        argb: IntArray,
+        width: Int,
+        height: Int,
+        graph: EditGraph,
+        lut: Lut3dSamples?
+    ): IntArray {
+        val params = PassDEffectsParams.from(graph, width.toFloat() / height.toFloat())
+        return PassDEffectsMath.applyDisplayEffects(argb, width, height, params, lut)
     }
 
     private fun renderWithDefringe(

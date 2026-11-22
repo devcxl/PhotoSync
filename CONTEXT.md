@@ -105,3 +105,20 @@ _Avoid_: 横向色散、色差缩放
 **Pass B2（显示域色彩管线）**:
 融合物理 Pass B 下半段的处理链：1D 曲线 LUT → 软色域压缩 → OKLCH 饱和度/自然饱和度/HSL/去紫边 → 笛卡尔 OKLab 色调分离 → 褪色。
 _Avoid_: 影调曲线（Pass B1）、空间细节（Pass C）
+
+**3D LUT（外部查找表）**:
+用户经系统文件选择器导入的 `.cube` 三维查找表；导入时一次性校验并预烘焙为固定 `33×33×33 RGBA16F` 的
+`.lut16f` 二进制缓存（8B 魔数 + 287,496B），渲染时在 `sampler3D` 上做四面体插值并按强度与原图混合。
+_Avoid_: 滤镜、预设（Preset 是可继续微调的参数组合）
+
+**Grain（胶片颗粒）**:
+在 Post-crop 成片全局坐标上叠加的确定性双八度值噪声，带持久化 `seed` 与中间调包络 `sqrt(4Y(1-Y))`，保证预览与分块导出的颗粒图案一致。
+_Avoid_: 噪点、降噪（Noise Reduction 是反向过程）
+
+**Vignette（Post-crop 晕影）**:
+以裁切后画幅为坐标系、按 `[mid - 0.5*feather, mid + 0.5*feather]` 平滑过渡的角部明暗调节；`roundness` 在椭圆、矩形与归一化圆之间连续插值。
+_Avoid_: 暗角（Fade 的纯黑端点抬升）、镜头暗角（光学属性）
+
+**Pass D（效果与输出量化）**:
+融合逻辑阶段 ⑤ 与 ⑥ 的物理 Pass：3D LUT 四面体插值 → 全局颗粒 → Post-crop 晕影 → `1/255` 三角抖动量化；输入是 Pass B（或 Pass C）已编码的显示域 sRGB。
+_Avoid_: 调色 Pass（Pass B）、空间细节 Pass（Pass C）

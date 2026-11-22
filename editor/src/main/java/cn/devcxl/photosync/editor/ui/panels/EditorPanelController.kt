@@ -1,10 +1,7 @@
 package cn.devcxl.photosync.editor.ui.panels
 
-import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Typeface
-import android.view.GestureDetector
-import android.view.MotionEvent
 import android.view.View
 import android.widget.TextView
 import android.widget.Toast
@@ -17,6 +14,7 @@ import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.EditParameterKey
 import cn.devcxl.photosync.editor.domain.EditorUndoController
 import cn.devcxl.photosync.editor.domain.LiquifyBrushSettings
+import cn.devcxl.photosync.editor.lut.CubeLutStore
 import cn.devcxl.photosync.editor.ui.gesture.CropHandleMath
 import cn.devcxl.photosync.editor.ui.gesture.EditorGroup
 import cn.devcxl.photosync.editor.ui.gesture.EditorTool
@@ -25,13 +23,15 @@ import cn.devcxl.photosync.editor.ui.widgets.DialSeekBar
 /**
  * Binds the three-tier bottom drawer to the edit graph: six category tabs, the sub-tool chips of the
  * active category, the tier-1 control slot (`DialSeekBar`, `CurveEditorView`, `HslPanelView`,
- * `SplitToningPanelView` or `LiquifyBrushPanel`), the crop aspect chips and the value read-out.
+ * `SplitToningPanelView`, `LutPanelView`, `GrainPanelView`, `VignettePanelView` or
+ * `LiquifyBrushPanel`), the crop aspect chips and the value read-out.
  */
 internal class EditorPanelController(
     private val context: Context,
     private val binding: ActivityEditorBinding,
     private val undoController: EditorUndoController,
-    private val host: Host
+    private val host: Host,
+    lutStore: CubeLutStore
 ) {
 
     /** Host callbacks that keep the preview canvas in sync with the drawer. */
@@ -48,6 +48,8 @@ internal class EditorPanelController(
         fun onLiquifySettingsChanged(settings: LiquifyBrushSettings)
         /** The user asked to clear every liquify displacement. */
         fun onLiquifyResetRequested()
+        /** The user asked to import a `.cube` LUT through the system file chooser. */
+        fun onLutImportRequested()
     }
 
     var currentGroup: EditorGroup = EditorGroup.TONE
@@ -61,7 +63,6 @@ internal class EditorPanelController(
         private set
 
     private val formatter = EditorReadoutFormatter(context)
-    private val density = context.resources.displayMetrics.density
     private val liquifyPanel = LiquifyBrushPanelController(
         context = context,
         binding = binding,
@@ -84,6 +85,20 @@ internal class EditorPanelController(
             refresh()
         }
     )
+    private val effectsPanels = EffectsPanelsBinder(
+        binding = binding,
+        undoController = undoController,
+        lutStore = lutStore,
+        onImportRequested = host::onLutImportRequested,
+        onEdited = { graph, key ->
+            refreshHeaderReadout(graph)
+            host.onGraphEdited(graph, key)
+        },
+        onCommitted = { graph, key ->
+            host.onGraphCommitted(graph, key)
+            refresh()
+        }
+    )
     private val aspectRow = CropAspectChipRow(context, binding, ::applyAspectPreset)
     private val tabViews: Map<EditorGroup, TextView> = mapOf(
         EditorGroup.PRESET to binding.tabPreset,
@@ -93,7 +108,15 @@ internal class EditorPanelController(
         EditorGroup.DETAIL to binding.tabDetail,
         EditorGroup.PORTRAIT to binding.tabPortrait
     )
-    private val chipViews = mutableMapOf<EditorTool, TextView>()
+    private val chipRow = SubToolChipRow(
+        context = context,
+        binding = binding,
+        onSelected = { spec -> selectTool(spec.tool) },
+        onResetRequested = { spec ->
+            resetTool(spec)
+            selectTool(spec.tool, applyInstantAction = false)
+        }
+    )
     private var dialTool: EditorTool? = null
 
     init {
@@ -101,17 +124,19 @@ internal class EditorPanelController(
         setupDial()
         liquifyPanel.setVisible(false)
         colorPanels.showFor(null)
+        effectsPanels.showFor(null)
         aspectRow.setVisible(false)
     }
 
     /** Re-reads the graph and refreshes every chip state, panel and read-out. */
     fun refresh() {
         val graph = undoController.currentGraph
-        chipViews.forEach { (tool, view) -> bindChip(graph, tool, view) }
+        chipRow.refresh(graph, currentTool)
         dialTool?.let { tool ->
             EditorToolCatalog.specFor(tool)?.let { binding.dialSeekBar.setValue(it.readValue(graph)) }
         }
         colorPanels.refresh(graph)
+        effectsPanels.refresh(graph)
         refreshHeaderReadout(graph)
         aspectRow.setVisible(currentTool == EditorTool.CROP)
         aspectRow.refresh(lockedAspect, host.previewAspect())
@@ -126,7 +151,7 @@ internal class EditorPanelController(
             enterUnavailableGroup(group)
             return
         }
-        buildChips(tools)
+        chipRow.build(tools)
         selectTool(tools.first().tool, applyInstantAction = false)
     }
 
@@ -169,10 +194,11 @@ internal class EditorPanelController(
     private fun enterUnavailableGroup(group: EditorGroup) {
         currentTool = EditorTool.NONE
         dialTool = null
-        buildChips(emptyList())
+        chipRow.build(emptyList())
         binding.dialSeekBar.visibility = View.GONE
         liquifyPanel.setVisible(false)
         colorPanels.showFor(null)
+        effectsPanels.showFor(null)
         aspectRow.setVisible(false)
         binding.activeToolLabel.text = tabViews[group]?.text
         binding.activeValueText.setText(R.string.editor_tool_coming_soon)
@@ -200,45 +226,6 @@ internal class EditorPanelController(
         }
     }
 
-    @SuppressLint("ClickableViewAccessibility")
-    private fun buildChips(tools: List<EditorToolSpec>) {
-        binding.subToolChipContainer.removeAllViews()
-        chipViews.clear()
-        tools.forEach { spec ->
-            val chip = PanelChipFactory.create(
-                context = context,
-                labelRes = spec.labelRes,
-                heightPx = (CHIP_HEIGHT_DP * density).toInt(),
-                textSizeSp = 12.0f,
-                paddingPx = (CHIP_PADDING_DP * density).toInt()
-            )
-            val detector = GestureDetector(
-                context,
-                object : GestureDetector.SimpleOnGestureListener() {
-                    override fun onDown(e: MotionEvent): Boolean = true
-
-                    override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-                        selectTool(spec.tool)
-                        return true
-                    }
-
-                    override fun onDoubleTap(e: MotionEvent): Boolean {
-                        resetTool(spec)
-                        selectTool(spec.tool, applyInstantAction = false)
-                        return true
-                    }
-                }
-            )
-            chip.setOnTouchListener { view, event ->
-                detector.onTouchEvent(event)
-                if (event.actionMasked == MotionEvent.ACTION_UP) view.performClick()
-                true
-            }
-            chipViews[spec.tool] = chip
-            binding.subToolChipContainer.addView(chip)
-        }
-    }
-
     private fun resetTool(spec: EditorToolSpec) {
         if (spec.controlStyle == EditorControlStyle.LIQUIFY) {
             host.onLiquifyResetRequested()
@@ -250,6 +237,7 @@ internal class EditorPanelController(
     private fun configureTierOneControl(spec: EditorToolSpec) {
         liquifyPanel.setVisible(spec.controlStyle == EditorControlStyle.LIQUIFY)
         colorPanels.showFor(spec.controlStyle)
+        effectsPanels.showFor(spec.controlStyle)
         val dial = spec.dial
         dialTool = if (dial == null) null else spec.tool
         if (dial == null) {
@@ -281,18 +269,5 @@ internal class EditorPanelController(
             )
         )
         view.setTypeface(null, if (selected) Typeface.BOLD else Typeface.NORMAL)
-    }
-
-    private fun bindChip(graph: EditGraph, tool: EditorTool, view: TextView) {
-        val spec = EditorToolCatalog.specFor(tool) ?: return
-        view.setText(if (spec.isModified(graph)) spec.modifiedLabelRes else spec.labelRes)
-        val selected = tool == currentTool
-        PanelChipFactory.applySelection(context, view, selected)
-        view.alpha = if (selected) 1.0f else 0.75f
-    }
-
-    private companion object {
-        private const val CHIP_HEIGHT_DP = 30.0f
-        private const val CHIP_PADDING_DP = 13.0f
     }
 }

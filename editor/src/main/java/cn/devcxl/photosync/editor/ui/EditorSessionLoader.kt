@@ -41,22 +41,35 @@ internal class EditorSessionLoader(
      */
     suspend fun load(sourcePath: String, isRaw: Boolean, preferLinear: Boolean): LoadedState =
         withContext(Dispatchers.IO) {
-            val graph = readPersistedGraph()
+            val stored = readPersistedGraph()
             val source = previewSession.loadSource(
                 sourcePath = sourcePath,
                 isRaw = isRaw,
                 preferLinear = preferLinear
             )
-            val reference = graph.geometry.liquify
-            val meshRestored = reference != null && liquifySession.load(reference)
-            val adopted = if (reference != null && !meshRestored) {
-                Timber.w("Liquify mesh missing or corrupt for photoId=%d; clearing the reference", photoId)
-                graph.copy(geometry = graph.geometry.copy(liquify = null))
-            } else {
-                graph
-            }
-            LoadedState(graph = adopted, hasSource = source != null)
+            val graph = dropMissingArtifacts(stored)
+            LoadedState(graph = graph, hasSource = source != null)
         }
+
+    /**
+     * Drops references whose payload no longer exists: a liquify mesh that fails its SHA-256 check
+     * and a `.cube` LUT whose pre-compiled cache was cleared.
+     */
+    private fun dropMissingArtifacts(graph: EditGraph): EditGraph {
+        var adopted = graph
+        val reference = graph.geometry.liquify
+        val meshRestored = reference != null && liquifySession.load(reference)
+        if (reference != null && !meshRestored) {
+            Timber.w("Liquify mesh missing or corrupt for photoId=%d; clearing the reference", photoId)
+            adopted = adopted.copy(geometry = adopted.geometry.copy(liquify = null))
+        }
+        if (!previewSession.preloadLut(adopted)) {
+            Timber.w("3D LUT cache missing for photoId=%d; clearing the reference", photoId)
+            adopted = adopted.copy(color = adopted.color.copy(lut = null))
+            previewSession.preloadLut(adopted)
+        }
+        return adopted
+    }
 
     private suspend fun readPersistedGraph(): EditGraph {
         val existingRecord = EditorHostRegistry.editStore?.getEditForPhoto(photoId)

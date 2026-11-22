@@ -6,6 +6,8 @@ import kotlin.math.roundToInt
 import cn.devcxl.photosync.editor.R
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.EditParameterKey
+import cn.devcxl.photosync.editor.domain.GrainOps
+import cn.devcxl.photosync.editor.domain.VignetteOps
 import cn.devcxl.photosync.editor.ui.gesture.EditorGroup
 import cn.devcxl.photosync.editor.ui.gesture.EditorTool
 
@@ -40,7 +42,9 @@ internal object EditorToneDetailSpecs {
     fun toneSpecs(): List<EditorToolSpec> =
         listOf(exposureSpec()) + basicToneSpecs() + tonalRangeSpecs() + listOf(glowSpec())
 
-    fun detailSpecs(): List<EditorToolSpec> = listOf(
+    fun detailSpecs(): List<EditorToolSpec> = caSpecs() + effectSpecs()
+
+    private fun caSpecs(): List<EditorToolSpec> = listOf(
         signedSlider(
             tool = EditorTool.DISPERSION_RED_CYAN,
             group = EditorGroup.DETAIL,
@@ -73,6 +77,30 @@ internal object EditorToneDetailSpecs {
             write = { graph, value ->
                 graph.copy(effects = graph.effects.copy(ca = graph.effects.ca.copy(defringe = value)))
             }
+        )
+    )
+
+    /** Pass D effect panels: film grain and the post-crop vignette. */
+    private fun effectSpecs(): List<EditorToolSpec> = listOf(
+        EditorToolSpec(
+            tool = EditorTool.GRAIN,
+            group = EditorGroup.DETAIL,
+            labelRes = R.string.editor_tool_grain,
+            modifiedLabelRes = R.string.editor_tool_grain_modified,
+            parameterKey = EditParameterKey.DETAIL_GRAIN,
+            controlStyle = EditorControlStyle.GRAIN,
+            isModified = { it.effects.grain.amount != 0 },
+            reset = { it.copy(effects = it.effects.copy(grain = GrainOps())) }
+        ),
+        EditorToolSpec(
+            tool = EditorTool.VIGNETTE,
+            group = EditorGroup.DETAIL,
+            labelRes = R.string.editor_tool_vignette,
+            modifiedLabelRes = R.string.editor_tool_vignette_modified,
+            parameterKey = EditParameterKey.DETAIL_VIGNETTE,
+            controlStyle = EditorControlStyle.VIGNETTE,
+            isModified = { it.effects.vignette.amount != 0 },
+            reset = { it.copy(effects = it.effects.copy(vignette = VignetteOps())) }
         )
     )
 

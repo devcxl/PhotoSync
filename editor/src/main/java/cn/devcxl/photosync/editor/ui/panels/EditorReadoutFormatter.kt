@@ -65,6 +65,21 @@ internal class EditorReadoutFormatter(private val context: Context) {
                 R.string.editor_value_split_modified,
                 R.string.editor_value_split_none
             )
+            EditorTool.LUT -> statusText(
+                graph.color.lut != null && graph.color.lut.strength > 0,
+                R.string.editor_value_lut_modified,
+                R.string.editor_value_lut_none
+            )
+            EditorTool.GRAIN -> String.format(
+                Locale.US,
+                context.getString(R.string.editor_value_unsigned_fmt),
+                graph.effects.grain.amount.toFloat()
+            )
+            EditorTool.VIGNETTE -> String.format(
+                Locale.US,
+                context.getString(R.string.editor_value_signed_fmt),
+                graph.effects.vignette.amount.toFloat()
+            )
             else -> ""
         }
     }

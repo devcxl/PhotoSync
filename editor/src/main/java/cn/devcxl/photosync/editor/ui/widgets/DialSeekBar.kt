@@ -103,6 +103,7 @@ class DialSeekBar @JvmOverloads constructor(
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (!isEnabled) return false
         val padX = 16f * density
         val trackLeft = padX
         val trackRight = (width - padX).coerceAtLeast(trackLeft + 1f)
