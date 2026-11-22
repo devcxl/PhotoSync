@@ -42,6 +42,8 @@ class EditorUndoController(
     var currentGraph: EditGraph = EditValidator.sanitize(initialGraph)
         private set
 
+    var onStepPushed: (() -> Unit)? = null
+
     private var activeTransactionKey: EditParameterKey? = null
     private var lastDragTimestampMs: Long = 0L
 
@@ -70,10 +72,6 @@ class EditorUndoController(
 
     /**
      * Records a parameter change during slider dragging or discrete clicks.
-     *
-     * If [parameterKey] matches the active transaction and arrives within [coalesceWindowMs]
-     * of the previous tick, the existing top undo snapshot is kept and only [currentGraph]
-     * advances. Otherwise a new undo snapshot is pushed.
      */
     fun onParameterDrag(
         newGraph: EditGraph,
@@ -89,11 +87,22 @@ class EditorUndoController(
         if (!withinWindow) {
             pushUndoSnapshot(currentGraph)
             activeTransactionKey = parameterKey
+            onStepPushed?.invoke()
         }
         lastDragTimestampMs = timestampMs
         redoStack.clear()
         currentGraph = sanitized
         return currentGraph
+    }
+
+    /**
+     * Updates `geometry.liquify` on the current snapshot without pushing a duplicate parameter
+     * undo step, because stroke undo/redo is owned by [LiquifyHistory].
+     */
+    fun replaceLiquifyRefInPlace(liquify: LiquifyRef?) {
+        currentGraph = currentGraph.copy(
+            geometry = currentGraph.geometry.copy(liquify = liquify)
+        )
     }
 
     /**
@@ -105,13 +114,15 @@ class EditorUndoController(
     }
 
     /**
-     * Reverts to the previous snapshot on the undo stack, if any.
+     * Reverts to the previous snapshot on the undo stack, if any, preserving the active
+     * liquify mesh reference which is managed independently by [LiquifyHistory].
      */
     fun undo(): EditGraph {
         onParameterRelease()
         val previous = undoStack.removeLastOrNull() ?: return currentGraph
+        val liveLiquify = currentGraph.geometry.liquify
         redoStack.addLast(currentGraph)
-        currentGraph = previous
+        currentGraph = previous.copy(geometry = previous.geometry.copy(liquify = liveLiquify))
         return currentGraph
     }
 
@@ -121,8 +132,9 @@ class EditorUndoController(
     fun redo(): EditGraph {
         onParameterRelease()
         val next = redoStack.removeLastOrNull() ?: return currentGraph
+        val liveLiquify = currentGraph.geometry.liquify
         pushUndoSnapshot(currentGraph)
-        currentGraph = next
+        currentGraph = next.copy(geometry = next.geometry.copy(liquify = liveLiquify))
         return currentGraph
     }
 

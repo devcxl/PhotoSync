@@ -16,8 +16,6 @@ internal object LinearRawPreviewRenderer {
     private const val LINEAR_LUT_SIZE = 65536
     private const val CHANNELS = 4
     private const val CHANNELS_RGB = 3
-    private const val OPAQUE_ALPHA = 0xFF shl 24
-    private const val EIGHT_BIT_MAX = 255
 
     /**
      * Renders [source] into packed `ARGB_8888` pixels, row-major.
@@ -58,10 +56,8 @@ internal object LinearRawPreviewRenderer {
         return argb
     }
 
-    private fun pack(display: FloatArray): Int = OPAQUE_ALPHA or
-        (quantize(display[0]) shl 16) or
-        (quantize(display[1]) shl 8) or
-        quantize(display[2])
+    private fun pack(display: FloatArray): Int =
+        Srgb8Packer.packRgb(display[0], display[1], display[2])
 
     private fun resolveGain(autoBrightGain: Float): Float =
         if (autoBrightGain.isFinite() && autoBrightGain > 0.0f) autoBrightGain else 1.0f
@@ -82,7 +78,22 @@ internal object LinearRawPreviewRenderer {
 
     private fun toLinearLutIndex(value: Float): Int =
         (value.coerceIn(0.0f, 1.0f) * 65535.0f + 0.5f).toInt().coerceIn(0, LINEAR_LUT_SIZE - 1)
+}
 
-    private fun quantize(display: Float): Int =
+/**
+ * Shared 8-bit ARGB quantization and packing helper used by both [LinearRawPreviewRenderer] and
+ * [cn.devcxl.photosync.editor.render.PreviewCacheWriter].
+ */
+internal object Srgb8Packer {
+    const val OPAQUE_ALPHA = -0x1000000
+    private const val EIGHT_BIT_MAX = 255
+
+    fun quantize(display: Float): Int =
         (display.coerceIn(0.0f, 1.0f) * EIGHT_BIT_MAX + 0.5f).toInt().coerceIn(0, EIGHT_BIT_MAX)
+
+    fun packRgb(r: Float, g: Float, b: Float, alphaBits: Int = OPAQUE_ALPHA): Int =
+        (alphaBits and OPAQUE_ALPHA) or
+            (quantize(r) shl 16) or
+            (quantize(g) shl 8) or
+            quantize(b)
 }

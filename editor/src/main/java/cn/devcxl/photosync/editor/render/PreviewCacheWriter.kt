@@ -12,6 +12,7 @@ import cn.devcxl.photosync.editor.domain.ExposureShaderMath
 import cn.devcxl.photosync.editor.domain.GeometryMath
 import cn.devcxl.photosync.editor.domain.LinearRawPreviewRenderer
 import cn.devcxl.photosync.editor.domain.LiquifyMesh
+import cn.devcxl.photosync.editor.domain.Srgb8Packer
 import cn.devcxl.photosync.editor.domain.ToneShaderMath
 import cn.devcxl.photosync.editor.domain.ToneShaderParams
 import cn.devcxl.photosync.wrapper.LinearRawBuffer
@@ -29,8 +30,6 @@ internal object PreviewCacheWriter {
     private const val PREVIEW_JPEG_QUALITY = 92
     private const val PREVIEW_MAX_EDGE_PX = 1280
     private const val CHANNELS_RGB = 3
-    private const val EIGHT_BIT_MAX = 255
-    private const val ALPHA_MASK = -0x1000000
 
     /**
      * Writes the preview cache for an 8-bit sRGB [source] bitmap.
@@ -123,16 +122,15 @@ internal object PreviewCacheWriter {
             linear[1] = ExposureShaderMath.decodeSrgb(((pixel ushr 8) and 0xFF) / 255.0f)
             linear[2] = ExposureShaderMath.decodeSrgb((pixel and 0xFF) / 255.0f)
             ToneShaderMath.apply(params, linear, display)
-            pixels[index] = (pixel and ALPHA_MASK) or
-                (quantize(display[0]) shl 16) or
-                (quantize(display[1]) shl 8) or
-                quantize(display[2])
+            pixels[index] = Srgb8Packer.packRgb(
+                display[0],
+                display[1],
+                display[2],
+                alphaBits = pixel
+            )
         }
         bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
     }
-
-    private fun quantize(display: Float): Int =
-        (display.coerceIn(0.0f, 1.0f) * EIGHT_BIT_MAX + 0.5f).toInt().coerceIn(0, EIGHT_BIT_MAX)
 
     private fun compressAndWrite(rendered: Bitmap, cacheDir: File, photoId: Long): String? {
         val editDir = File(cacheDir, EditorCachePaths.photoEditDirName(photoId))

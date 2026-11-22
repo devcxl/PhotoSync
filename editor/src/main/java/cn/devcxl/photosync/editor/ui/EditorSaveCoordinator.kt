@@ -20,6 +20,10 @@ internal class EditorSaveCoordinator(
     private val liquifySession: LiquifySession
 ) {
 
+    /**
+     * Persists [graph] and any modified liquify displacement mesh to disk, renders the updated
+     * preview cache, and commits the record to the host `EditStore`.
+     */
     suspend fun persist(graph: EditGraph) {
         val liquifyRef = liquifySession.persist()
         val finalGraph = graph.copy(geometry = graph.geometry.copy(liquify = liquifyRef))

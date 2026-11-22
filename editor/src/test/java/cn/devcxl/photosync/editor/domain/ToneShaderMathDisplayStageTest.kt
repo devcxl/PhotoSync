@@ -66,7 +66,7 @@ class ToneShaderMathDisplayStageTest {
     }
 
     @Test
-    fun shouldKeepNegativeContrastFromFlippingEndpointSlopes() {
+    fun shouldKeepNegativeContrastFromFlippingEndpointSlopes_whenContrastIsNegative() {
         val neutral = toneParams()
         val flattened = toneParams(contrast = -100)
         val lowStep = renderGrey(flattened, 0.2f) - renderGrey(flattened, 0.1f)

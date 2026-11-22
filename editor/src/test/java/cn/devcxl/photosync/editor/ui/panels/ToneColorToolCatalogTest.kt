@@ -48,7 +48,7 @@ class ToneColorToolCatalogTest {
     }
 
     @Test
-    fun shouldGiveEveryToneAndColourSliderItsOwnUndoBucket() {
+    fun shouldGiveEveryToneAndColourSliderItsOwnUndoBucket_whenInspectingCatalog() {
         val keys = toneAndColourSpecs().map { it.parameterKey }
 
         assertEquals(keys.size, keys.toSet().size)
@@ -130,7 +130,7 @@ class ToneColorToolCatalogTest {
     }
 
     @Test
-    fun shouldRoundTripEverySliderThroughReadAfterWrite() {
+    fun shouldRoundTripEverySliderThroughReadAfterWrite_whenInspectingCatalog() {
         for (spec in toneAndColourSpecs()) {
             val written = spec.writeValue(EditGraph(), 37.0f)
 
@@ -143,7 +143,7 @@ class ToneColorToolCatalogTest {
     }
 
     @Test
-    fun shouldExposeDialRangesEverySliderShares() {
+    fun shouldExposeDialRangesEverySliderShares_whenInspectingCatalog() {
         val exposure = EditorToolCatalog.specFor(EditorTool.EXPOSURE)!!.dial!!
         assertEquals(-5.0f, exposure.min, 1e-4f)
         assertEquals(5.0f, exposure.max, 1e-4f)
