@@ -42,10 +42,7 @@ internal class EditorPreviewSession(
 
     /** Pushes the parameter state a preview draw depends on into [renderer]. */
     fun applyGraph(graph: EditGraph, useProxy: Boolean = false) {
-        renderer.baseLook = graph.baseLook
-        renderer.exposureEv = graph.tone.exposure
-        renderer.applyGeometry(graph)
-        renderer.useFastProxy = useProxy
+        renderer.applyState(graph, useFastProxy = useProxy)
     }
 
     /**

@@ -136,7 +136,7 @@ class GeometryMathTest {
     }
 
     @Test
-    fun shouldKeepEveryInscribedCornerInsideTheSourceFrame_acrossMinus45To45Degrees() {
+    fun shouldKeepEveryInscribedCornerInsideTheSourceFrame_whenStraighteningAcrossBounds() {
         val aspects = listOf(0.5f, 2.0f / 3.0f, 1.0f, 4.0f / 3.0f, 3.0f / 2.0f, 16.0f / 9.0f, 3.0f)
         var angle = -45.0f
         while (angle <= 45.0f + 1e-3f) {
@@ -168,7 +168,7 @@ class GeometryMathTest {
     }
 
     @Test
-    fun shouldPreserveTheRequestedAspectRatio_andSymmetricAroundZeroDegrees() {
+    fun shouldPreserveTheRequestedAspectRatioSymmetrically_whenStraightening() {
         val aspects = listOf(0.6f, 1.0f, 1.5f, 2.2f)
         for (aspect in aspects) {
             for (angle in listOf(5.0f, 17.5f, 30.0f, 45.0f)) {
@@ -187,7 +187,7 @@ class GeometryMathTest {
     }
 
     @Test
-    fun shouldClampOutOfRangeAnglesAndInvalidAspect_andNeverProduceNaN() {
+    fun shouldClampOutOfRangeAnglesAndInvalidAspect_whenInputsAreInvalid() {
         val clamped = GeometryMath.solveMaxInscribedRect(120.0f, 1.0f)
         val atLimit = GeometryMath.solveMaxInscribedRect(45.0f, 1.0f)
         assertEquals(atLimit.halfWidth, clamped.halfWidth, TOL)
@@ -250,17 +250,33 @@ class GeometryMathTest {
 
     @Test
     fun shouldScaleRedAndBlueRadiallyAroundTheOpticalCentre_whenLateralCaIsNonZero() {
-        // r^2 = (u - 0.5)^2 + (v - 0.5)^2 = 0.25 at the horizontal frame edge.
+        // On a 1:1 source, maxCornerR2 = 0.5, so at (1.0, 0.5) r^2 = 0.25 / 0.5 = 0.5.
         val edge = Uv(1.0f, 0.5f)
         val k = 0.02f
-        val sample = GeometryMath.applyLateralCaSampleUv(edge, kRed = k, kBlue = -k)
-        val expectedScale = 1.0f + k * 0.25f
+        val sample = GeometryMath.applyLateralCaSampleUv(edge, kRed = k, kBlue = -k, srcAspect = 1.0f)
+        val expectedScale = 1.0f + k * 0.5f
         assertEquals(0.5f + 0.5f * expectedScale, sample.red.u, 1e-5f)
         assertEquals(0.5f, sample.red.v, 1e-5f)
         assertEquals(0.5f + 0.5f * (2.0f - expectedScale), sample.blue.u, 1e-5f)
         assertEquals(0.5f, sample.blue.v, 1e-5f)
         assertEquals(edge.u, sample.green.u, TOL)
         assertEquals(edge.v, sample.green.v, TOL)
+    }
+
+    @Test
+    fun shouldScaleIsotropicallyInPhysicalSpace_whenSourceAspectIsNonSquare() {
+        // On a 2:1 frame, a horizontal offset du = 0.25 has the same physical distance from
+        // centre as a vertical offset dv = 0.5 (since 0.25 * 2.0 == 0.5), so both get equal scale.
+        val k = 0.02f
+        val horizSample = GeometryMath.applyLateralCaSampleUv(
+            Uv(0.75f, 0.5f), kRed = k, kBlue = 0.0f, srcAspect = 2.0f
+        )
+        val vertSample = GeometryMath.applyLateralCaSampleUv(
+            Uv(0.5f, 1.0f), kRed = k, kBlue = 0.0f, srcAspect = 2.0f
+        )
+        val horizScale = (horizSample.red.u - 0.5f) / 0.25f
+        val vertScale = (vertSample.red.v - 0.5f) / 0.5f
+        assertEquals(horizScale, vertScale, 1e-5f)
     }
 
     @Test
@@ -276,12 +292,12 @@ class GeometryMathTest {
     @Test
     fun shouldShiftFartherOutAtLargerRadius_whenScalingAChannelAwayFromTheCentre() {
         val k = 0.03f
-        val inner = GeometryMath.applyLateralCaSampleUv(Uv(0.6f, 0.5f), k, 0.0f).red
-        val outer = GeometryMath.applyLateralCaSampleUv(Uv(1.0f, 0.5f), k, 0.0f).red
+        val inner = GeometryMath.applyLateralCaSampleUv(Uv(0.6f, 0.5f), k, 0.0f, srcAspect = 1.0f).red
+        val outer = GeometryMath.applyLateralCaSampleUv(Uv(1.0f, 0.5f), k, 0.0f, srcAspect = 1.0f).red
         val innerOffset = inner.u - 0.5f
         val outerOffset = outer.u - 0.5f
-        assertEquals(0.1f, innerOffset, 1e-4f)
-        assertEquals(0.5f * (1.0f + k * 0.25f), outerOffset, 1e-5f)
+        assertEquals(0.1f * (1.0f + k * (0.01f / 0.5f)), innerOffset, 1e-5f)
+        assertEquals(0.5f * (1.0f + k * 0.5f), outerOffset, 1e-5f)
         assertTrue("outer radius must shift further than the inner one", outerOffset > innerOffset)
     }
 

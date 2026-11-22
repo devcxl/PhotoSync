@@ -39,6 +39,7 @@ internal object GeometryCpuResampler {
         val sourcePixels = IntArray(sourceWidth * sourceHeight)
         source.getPixels(sourcePixels, 0, sourceWidth, 0, 0, sourceWidth, sourceHeight)
 
+        val sourceAspect = sourceWidth.toFloat() / sourceHeight.toFloat().coerceAtLeast(1.0f)
         val targetPixels = IntArray(width * height)
         for (row in 0 until height) {
             val v = (row + 0.5f) / height
@@ -48,6 +49,7 @@ internal object GeometryCpuResampler {
                     sourcePixels = sourcePixels,
                     sourceWidth = sourceWidth,
                     sourceHeight = sourceHeight,
+                    sourceAspect = sourceAspect,
                     inverseMatrix = inverseMatrix,
                     outputU = u,
                     outputV = v,
@@ -78,13 +80,14 @@ internal object GeometryCpuResampler {
         val p10 = FloatArray(CHANNELS)
         val p01 = FloatArray(CHANNELS)
         val p11 = FloatArray(CHANNELS)
+        val srcAspect = source.width.toFloat() / source.height.toFloat().coerceAtLeast(1.0f)
         var outIndex = 0
         for (row in 0 until height) {
             val v = (row + 0.5f) / height
             for (column in 0 until width) {
                 val u = (column + 0.5f) / width
                 val preCrop = inverseMatrix.map(u, v)
-                val ca = GeometryMath.applyLateralCaSampleUv(preCrop, caRedK, caBlueK)
+                val ca = GeometryMath.applyLateralCaSampleUv(preCrop, caRedK, caBlueK, srcAspect)
                 samples[outIndex++] = sampleLinearChannel(source, ca.red, 0, p00, p10, p01, p11)
                 samples[outIndex++] = sampleLinearChannel(source, ca.green, 1, p00, p10, p01, p11)
                 samples[outIndex++] = sampleLinearChannel(source, ca.blue, 2, p00, p10, p01, p11)
@@ -132,6 +135,7 @@ internal object GeometryCpuResampler {
         sourcePixels: IntArray,
         sourceWidth: Int,
         sourceHeight: Int,
+        sourceAspect: Float,
         inverseMatrix: Mat3,
         outputU: Float,
         outputV: Float,
@@ -139,7 +143,7 @@ internal object GeometryCpuResampler {
         caBlueK: Float
     ): Int {
         val preCrop = inverseMatrix.map(outputU, outputV)
-        val ca = GeometryMath.applyLateralCaSampleUv(preCrop, caRedK, caBlueK)
+        val ca = GeometryMath.applyLateralCaSampleUv(preCrop, caRedK, caBlueK, sourceAspect)
         val red = sampleBitmapChannel(sourcePixels, sourceWidth, sourceHeight, ca.red, RED_SHIFT)
         val green = sampleBitmapChannel(sourcePixels, sourceWidth, sourceHeight, ca.green, GREEN_SHIFT)
         val blue = sampleBitmapChannel(sourcePixels, sourceWidth, sourceHeight, ca.blue, BLUE_SHIFT)

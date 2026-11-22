@@ -6,6 +6,7 @@ import kotlin.math.min
 import kotlin.math.sign
 
 import cn.devcxl.photosync.editor.domain.CropRect
+import cn.devcxl.photosync.editor.domain.PassAGeometryCompiler
 
 /**
  * The nine drag targets of the interactive crop frame.
@@ -157,7 +158,7 @@ object CropHandleMath {
         if (updated.size != COORDINATE_COUNT || cornerIndex !in 0 until CORNER_COUNT) return updated
         updated[cornerIndex * 2] = (updated[cornerIndex * 2] + deltaU).coerceIn(0.0f, 1.0f)
         updated[cornerIndex * 2 + 1] = (updated[cornerIndex * 2 + 1] + deltaV).coerceIn(0.0f, 1.0f)
-        return updated
+        return if (PassAGeometryCompiler.isConvexQuad(updated)) updated else perspective.copyOf()
     }
 
     private class HandleAnchor(

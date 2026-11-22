@@ -28,6 +28,7 @@ import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.EditGraphJsonCodec
 import cn.devcxl.photosync.editor.domain.EditParameterKey
 import cn.devcxl.photosync.editor.domain.EditorUndoController
+import cn.devcxl.photosync.editor.render.CanvasViewportTransform
 import cn.devcxl.photosync.editor.render.EditorGlRenderer
 import cn.devcxl.photosync.editor.render.EditorPreviewSession
 import cn.devcxl.photosync.editor.ui.gesture.CanvasTransform
@@ -195,9 +196,11 @@ class EditorActivity : AppCompatActivity(), EditorPanelController.Host {
     }
 
     private fun onCanvasTransformChanged(transform: CanvasTransform) {
-        renderer.canvasScale = transform.scale
-        renderer.canvasOffsetX = transform.offsetX
-        renderer.canvasOffsetY = transform.offsetY
+        renderer.canvasTransform = CanvasViewportTransform(
+            scale = transform.scale,
+            offsetX = transform.offsetX,
+            offsetY = transform.offsetY
+        )
         binding.glSurfaceView.requestRender()
     }
 

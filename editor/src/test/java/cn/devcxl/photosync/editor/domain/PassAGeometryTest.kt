@@ -17,9 +17,8 @@ class PassAGeometryTest {
 
     @Test
     fun shouldReturnIdentityHomography_whenSolvingFromUnitSquareToItself() {
-        val identity = GeometryMath.solveHomography3x3(UNIT_SQUARE, UNIT_SQUARE)
-        assertNotNull(identity)
-        assertMapsTo(identity!!, Uv(0f, 0f), Uv(0f, 0f))
+        val identity = checkNotNull(GeometryMath.solveHomography3x3(UNIT_SQUARE, UNIT_SQUARE))
+        assertMapsTo(identity, Uv(0f, 0f), Uv(0f, 0f))
         assertMapsTo(identity, Uv(1f, 1f), Uv(1f, 1f))
         assertMapsTo(identity, Uv(0.37f, 0.62f), Uv(0.37f, 0.62f))
     }
@@ -27,27 +26,24 @@ class PassAGeometryTest {
     @Test
     fun shouldMapEverySourceCornerOntoItsDestinationCorner_whenSolvingHomography() {
         val destination = floatArrayOf(0.08f, 0.12f, 0.94f, 0.02f, 0.99f, 0.91f, 0.03f, 0.87f)
-        val homography = GeometryMath.solveHomography3x3(destination, UNIT_SQUARE)
-        assertNotNull(homography)
+        val homography = checkNotNull(GeometryMath.solveHomography3x3(destination, UNIT_SQUARE))
         val corners = listOf(
             Uv(0f, 0f), Uv(1f, 0f), Uv(1f, 1f), Uv(0f, 1f)
         )
         corners.forEachIndexed { index, source ->
             val expected = Uv(destination[index * 2], destination[index * 2 + 1])
-            assertMapsTo(homography!!, source, expected)
+            assertMapsTo(homography, source, expected)
         }
     }
 
     @Test
     fun shouldReturnToTheOriginalCorner_whenMultiplyingHomographyByItsInverse() {
         val destination = floatArrayOf(0.11f, 0.05f, 0.9f, 0.13f, 0.96f, 0.88f, 0.04f, 0.94f)
-        val forward = GeometryMath.solveHomography3x3(destination, UNIT_SQUARE)
-        assertNotNull(forward)
-        val inverse = forward!!.invertOrNull()
-        assertNotNull(inverse)
+        val forward = checkNotNull(GeometryMath.solveHomography3x3(destination, UNIT_SQUARE))
+        val inverse = checkNotNull(forward.invertOrNull())
         UNIT_SQUARE_CORNERS.forEach { corner ->
             val warped = forward.map(corner.u, corner.v)
-            val restored = inverse!!.map(warped.u, warped.v)
+            val restored = inverse.map(warped.u, warped.v)
             assertEquals(corner.u, restored.u, 1e-3f)
             assertEquals(corner.v, restored.v, 1e-3f)
         }
@@ -63,9 +59,8 @@ class PassAGeometryTest {
     @Test
     fun shouldPackMatricesInColumnMajorOrder_whenExposingUniformFloats() {
         val destination = floatArrayOf(0.0f, 0.0f, 1.2f, 0.0f, 1.0f, 1.0f, 0.0f, 1.0f)
-        val homography = GeometryMath.solveHomography3x3(destination, UNIT_SQUARE)
-        assertNotNull(homography)
-        val packed = homography!!.toColumnMajorFloatArray()
+        val homography = checkNotNull(GeometryMath.solveHomography3x3(destination, UNIT_SQUARE))
+        val packed = homography.toColumnMajorFloatArray()
         assertEquals(9, packed.size)
         for (row in 0..2) {
             for (column in 0..2) {
@@ -139,7 +134,7 @@ class PassAGeometryTest {
     }
 
     @Test
-    fun shouldNeverSampleOutsideTheSourceImage_acrossTheWholeGeometrySurface() {
+    fun shouldNeverSampleOutsideTheSourceImage_whenCombiningAllGeometryControls() {
         val sourceAspects = listOf(0.6f, 1.0f, 3.0f / 2.0f, 16.0f / 9.0f)
         val quads = listOf(
             GeometryOps.DEFAULT_PERSPECTIVE_QUAD,
@@ -184,12 +179,24 @@ class PassAGeometryTest {
     }
 
     @Test
-    fun shouldClampInwardDraggedPerspectiveQuad_intoSamplingBounds() {
+    fun shouldClampInwardDraggedPerspectiveQuad_whenCornersExceedBounds() {
         val outOfBounds = GeometryOps(
             perspective = listOf(-0.2f, -0.1f, 1.3f, -0.05f, 1.2f, 1.4f, -0.15f, 1.1f)
         )
         val inverse = GeometryMath.buildPassAInverseMatrix(outOfBounds, srcAspect = 1.0f)
         assertNoCornerLeak(inverse)
+    }
+
+    @Test
+    fun shouldUseSameClampedStraightenAngleForScaleAndRotation_whenAngleExceeds45Degrees() {
+        val overLimit = GeometryOps(straighten = 75.0f)
+        val atLimit = GeometryOps(straighten = 45.0f)
+        val invOver = GeometryMath.buildPassAInverseMatrix(overLimit, srcAspect = 1.5f)
+        val invLimit = GeometryMath.buildPassAInverseMatrix(atLimit, srcAspect = 1.5f)
+        assertNoCornerLeak(invOver)
+        UNIT_SQUARE_CORNERS.forEach { corner ->
+            assertMapsTo(invOver, corner, invLimit.map(corner.u, corner.v))
+        }
     }
 
     @Test

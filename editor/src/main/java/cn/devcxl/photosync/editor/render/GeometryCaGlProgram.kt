@@ -6,12 +6,12 @@ import android.opengl.GLES20
  * GLES 3.0 Pass A: single-fetch geometry resampling plus pre-crop lateral chromatic-aberration
  * correction.
  *
- * For every output pixel the fragment shader evaluates the pre-compiled inverse homography
- * `H^-1` (`output crop -> perspective quad -> straighten -> rotate/flip`), which lands directly in
- * the source texture's pre-crop UV. It then scales the red and blue lookups by `1 + k * r^2`
- * around the pre-crop optical centre `(0.5, 0.5)`, using green as the reference channel. Because
- * `H^-1` is bounded by the maximum inscribed rectangle, every fetch is guaranteed to be a real
- * pixel, so no black or transparent corner can ever appear.
+ * Evaluates the pre-compiled inverse homography `H^-1`, then scales the red and blue lookups by
+ * `1 + k * r^2` in aspect-corrected circular physical coordinates around `(0.5, 0.5)`.
+ *
+ * When writing a 16-bit linear source into a Tier 2 `GL_RGBA8` intermediate target, sets
+ * `uEncodeSrgbWithDither = 1` so dark shadows are stored in sRGB with triangular dithering
+ * rather than 8-bit linear quantization.
  */
 internal class GeometryCaGlProgram {
 
@@ -22,16 +22,14 @@ internal class GeometryCaGlProgram {
     private var uInverseMatrixLoc: Int = -1
     private var uCaRedLoc: Int = -1
     private var uCaBlueLoc: Int = -1
+    private var uSrcAspectLoc: Int = -1
+    private var uEncodeSrgbDitherLoc: Int = -1
 
     private val quad = QuadMesh()
 
     val isReady: Boolean
         get() = programId != 0
 
-    /**
-     * Compiles the program. Only GLES 3.0 contexts can host Pass A because the offscreen
-     * `GL_RGBA16F`/`GL_RGBA8` target needs framebuffer objects.
-     */
     fun init(): Boolean {
         programId = GlShaderCompiler.buildProgram(VERTEX_SHADER, FRAGMENT_SHADER)
         if (programId == 0) return false
@@ -41,22 +39,18 @@ internal class GeometryCaGlProgram {
         uInverseMatrixLoc = GLES20.glGetUniformLocation(programId, "uInverseMatrix")
         uCaRedLoc = GLES20.glGetUniformLocation(programId, "uCaRedK")
         uCaBlueLoc = GLES20.glGetUniformLocation(programId, "uCaBlueK")
+        uSrcAspectLoc = GLES20.glGetUniformLocation(programId, "uSrcAspect")
+        uEncodeSrgbDitherLoc = GLES20.glGetUniformLocation(programId, "uEncodeSrgbWithDither")
         return true
     }
 
-    /**
-     * Renders one full-target quad into the currently bound framebuffer.
-     *
-     * @param textureId Upright source texture.
-     * @param columnMajorInverseMatrix `H^-1` packed for `glUniformMatrix3fv`.
-     * @param caRedK Radial coefficient for the red channel.
-     * @param caBlueK Radial coefficient for the blue channel.
-     */
     fun draw(
         textureId: Int,
         columnMajorInverseMatrix: FloatArray,
         caRedK: Float,
-        caBlueK: Float
+        caBlueK: Float,
+        srcAspect: Float,
+        encodeSrgbWithDither: Boolean
     ) {
         if (programId == 0 || textureId == 0) return
         GLES20.glUseProgram(programId)
@@ -66,6 +60,8 @@ internal class GeometryCaGlProgram {
         GLES20.glUniformMatrix3fv(uInverseMatrixLoc, 1, false, columnMajorInverseMatrix, 0)
         GLES20.glUniform1f(uCaRedLoc, caRedK)
         GLES20.glUniform1f(uCaBlueLoc, caBlueK)
+        GLES20.glUniform1f(uSrcAspectLoc, srcAspect)
+        GLES20.glUniform1i(uEncodeSrgbDitherLoc, if (encodeSrgbWithDither) 1 else 0)
         quad.draw(aPositionLoc, aTexCoordLoc)
     }
 
@@ -89,23 +85,51 @@ internal class GeometryCaGlProgram {
             uniform mat3 uInverseMatrix;
             uniform float uCaRedK;
             uniform float uCaBlueK;
+            uniform float uSrcAspect;
+            uniform int uEncodeSrgbWithDither;
             out vec4 fragColor;
+
+            vec3 encodeSrgb(vec3 c) {
+                vec3 v = clamp(c, 0.0, 1.0);
+                vec3 lo = v * 12.92;
+                vec3 hi = 1.055 * pow(v, vec3(1.0 / 2.4)) - 0.055;
+                return mix(lo, hi, step(vec3(0.0031308), v));
+            }
+
+            float triNoise(vec2 xy) {
+                float n1 = fract(sin(dot(xy, vec2(12.9898, 78.233))) * 43758.5453);
+                float n2 = fract(sin(dot(xy + vec2(1.0, 1.0), vec2(39.346, 11.135))) * 43758.5453);
+                return (n1 + n2) - 1.0;
+            }
 
             void main() {
                 vec3 mapped = uInverseMatrix * vec3(vTexCoord, 1.0);
                 vec2 preCropUv = mapped.xy / mapped.z;
                 vec2 delta = preCropUv - vec2(0.5);
-                float radiusSquared = dot(delta, delta);
+                float aspect = max(uSrcAspect, 0.0001);
+                vec2 physDelta = vec2(delta.x * aspect, delta.y);
+                float maxCornerR2 = 0.25 * (aspect * aspect + 1.0);
+                float radiusSquared = dot(physDelta, physDelta) / maxCornerR2;
+
+                vec4 sampled;
                 if (abs(uCaRedK) < 0.000001 && abs(uCaBlueK) < 0.000001) {
-                    fragColor = texture(uTex0, preCropUv);
-                    return;
+                    sampled = texture(uTex0, preCropUv);
+                } else {
+                    vec2 redUv = vec2(0.5) + delta * (1.0 + uCaRedK * radiusSquared);
+                    vec2 blueUv = vec2(0.5) + delta * (1.0 + uCaBlueK * radiusSquared);
+                    vec4 greenReference = texture(uTex0, preCropUv);
+                    float red = texture(uTex0, redUv).r;
+                    float blue = texture(uTex0, blueUv).b;
+                    sampled = vec4(red, greenReference.g, blue, greenReference.a);
                 }
-                vec2 redUv = vec2(0.5) + delta * (1.0 + uCaRedK * radiusSquared);
-                vec2 blueUv = vec2(0.5) + delta * (1.0 + uCaBlueK * radiusSquared);
-                vec4 greenReference = texture(uTex0, preCropUv);
-                float red = texture(uTex0, redUv).r;
-                float blue = texture(uTex0, blueUv).b;
-                fragColor = vec4(red, greenReference.g, blue, greenReference.a);
+
+                if (uEncodeSrgbWithDither == 1) {
+                    vec3 srgb = encodeSrgb(max(sampled.rgb, vec3(0.0)));
+                    float dither = triNoise(gl_FragCoord.xy) / 255.0;
+                    fragColor = vec4(clamp(srgb + vec3(dither), 0.0, 1.0), sampled.a);
+                } else {
+                    fragColor = sampled;
+                }
             }
         """.trimIndent()
     }

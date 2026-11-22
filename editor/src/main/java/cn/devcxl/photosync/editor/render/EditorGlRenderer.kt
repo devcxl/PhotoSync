@@ -13,18 +13,46 @@ import cn.devcxl.photosync.editor.domain.GeometryMath
 import cn.devcxl.photosync.wrapper.LinearRawBuffer
 
 /**
+ * Immutable snapshot of all per-frame render uniforms so the GL thread never observes a torn
+ * combination of homography, output aspect ratio, CA coefficients and tone parameters.
+ */
+internal data class RenderFrameState(
+    val exposureEv: Float = 0.0f,
+    val baseLook: BaseLook = BaseLook.CAMERA_DEFAULT,
+    val useFastProxy: Boolean = false,
+    val geometryActive: Boolean = false,
+    val geometryInverseMatrix: FloatArray = IDENTITY_MATRIX,
+    val lateralCaRedK: Float = 0.0f,
+    val lateralCaBlueK: Float = 0.0f,
+    val outputAspectRatio: Float = 1.0f
+) {
+    companion object {
+        val IDENTITY_MATRIX = floatArrayOf(
+            1.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f,
+            0.0f, 0.0f, 1.0f
+        )
+    }
+}
+
+/**
+ * Immutable snapshot of canvas pan/zoom transforms.
+ */
+internal data class CanvasViewportTransform(
+    val scale: Float = 1.0f,
+    val offsetX: Float = 0.0f,
+    val offsetY: Float = 0.0f
+)
+
+/**
  * GLES 3.0 renderer for the editor preview canvas.
  *
  * Runs the physical two-pass preview pipeline:
  * 1. **Pass A** ([GeometryCaGlProgram]) renders the upright source (`GL_RGBA16F` for RAW,
  *    `GL_RGBA8` for JPEG) through `H^-1` into an offscreen target sized to the cropped aspect
- *    ratio, applying pre-crop lateral CA resampling.
+ *    ratio, applying aspect-corrected circular pre-crop lateral CA resampling.
  * 2. **Pass B** ([ExposureGlProgram]) applies RAW `BaseLook` compensation, linear-light exposure,
  *    soft-shoulder highlight roll-off, and canvas pan/zoom.
- *
- * When geometry and CA are neutral, Pass A is skipped so the 0-parameter view is identical to
- * the source texture. The staged [EditorSource] is retained across EGL surface recreation so
- * returning from the background never leaves a black canvas.
  */
 internal class EditorGlRenderer : GLSurfaceView.Renderer {
 
@@ -63,40 +91,13 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
     var preferEs3: Boolean = true
 
     @Volatile
-    var exposureEv: Float = 0.0f
-
-    @Volatile
-    var baseLook: BaseLook = BaseLook.CAMERA_DEFAULT
-
-    @Volatile
     var compareOriginal: Boolean = false
 
     @Volatile
-    var useFastProxy: Boolean = false
+    var frameState: RenderFrameState = RenderFrameState()
 
     @Volatile
-    var geometryActive: Boolean = false
-
-    @Volatile
-    var geometryInverseMatrix: FloatArray = IDENTITY_MATRIX
-
-    @Volatile
-    var lateralCaRedK: Float = 0.0f
-
-    @Volatile
-    var lateralCaBlueK: Float = 0.0f
-
-    @Volatile
-    var outputAspectRatio: Float = 1.0f
-
-    @Volatile
-    var canvasScale: Float = 1.0f
-
-    @Volatile
-    var canvasOffsetX: Float = 0.0f
-
-    @Volatile
-    var canvasOffsetY: Float = 0.0f
+    var canvasTransform: CanvasViewportTransform = CanvasViewportTransform()
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         GLES20.glClearColor(0.0f, 0.0f, 0.0f, 1.0f)
@@ -126,15 +127,35 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
         uploadPendingTextures()
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
 
-        val activeTexture = if (useFastProxy && proxyTextureId != 0) proxyTextureId else fullTextureId
+        val state = frameState
+        val viewport = canvasTransform
+        val activeTexture = if (state.useFastProxy && proxyTextureId != 0) {
+            proxyTextureId
+        } else {
+            fullTextureId
+        }
         if (activeTexture == 0) return
 
         if (compareOriginal) {
-            drawExposure(activeTexture, comparingOriginal = true, aspect = sourceAspect())
+            drawExposure(
+                textureId = activeTexture,
+                state = state,
+                viewport = viewport,
+                comparingOriginal = true,
+                aspect = sourceAspect(),
+                inputIsLinear = linearInput
+            )
             return
         }
-        if (drawGeometryPass(activeTexture)) return
-        drawExposure(activeTexture, comparingOriginal = false, aspect = sourceAspect())
+        if (drawGeometryPass(activeTexture, state, viewport)) return
+        drawExposure(
+            textureId = activeTexture,
+            state = state,
+            viewport = viewport,
+            comparingOriginal = false,
+            aspect = sourceAspect(),
+            inputIsLinear = linearInput
+        )
     }
 
     /**
@@ -148,8 +169,7 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
     }
 
     /**
-     * Clears staged source references when the hosting activity is destroyed so recycled
-     * bitmaps are never touched on a late GL draw.
+     * Clears staged source references when the hosting activity is destroyed.
      */
     fun releaseSource() {
         stagedSource = null
@@ -163,18 +183,33 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
     fun sourceAspect(): Float = imageWidth.toFloat() / imageHeight.toFloat()
 
     /**
-     * Pushes the geometry and lateral-CA parameters of [graph] onto the render thread.
+     * Atomically compiles and publishes all render parameters for [graph].
      */
-    fun applyGeometry(graph: EditGraph) {
+    fun applyState(graph: EditGraph, useFastProxy: Boolean) {
         val aspect = sourceAspect()
         val geometry = graph.geometry
         val aberration = graph.effects.ca
-        geometryActive = !geometry.isIdentity() || !aberration.isIdentity()
-        outputAspectRatio = GeometryMath.outputAspect(geometry, aspect)
-        geometryInverseMatrix = GeometryMath.buildPassAInverseMatrix(geometry, aspect)
-            .toColumnMajorFloatArray()
-        lateralCaRedK = GeometryMath.lateralCaKFromSlider(aberration.redCyan)
-        lateralCaBlueK = GeometryMath.lateralCaKFromSlider(aberration.blueYellow)
+        val geometryActive = !geometry.isIdentity() || !aberration.isIdentity()
+        val outputAspect = if (geometryActive) {
+            GeometryMath.outputAspect(geometry, aspect)
+        } else {
+            aspect
+        }
+        val inverseMatrix = if (geometryActive) {
+            GeometryMath.buildPassAInverseMatrix(geometry, aspect).toColumnMajorFloatArray()
+        } else {
+            RenderFrameState.IDENTITY_MATRIX
+        }
+        frameState = RenderFrameState(
+            exposureEv = graph.tone.exposure,
+            baseLook = graph.baseLook,
+            useFastProxy = useFastProxy,
+            geometryActive = geometryActive,
+            geometryInverseMatrix = inverseMatrix,
+            lateralCaRedK = GeometryMath.lateralCaKFromSlider(aberration.redCyan),
+            lateralCaBlueK = GeometryMath.lateralCaKFromSlider(aberration.blueYellow),
+            outputAspectRatio = outputAspect
+        )
     }
 
     private fun applySourceMetadata(source: EditorSource?) {
@@ -185,10 +220,15 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
         autoBrightGain = (source as? EditorSource.LinearRawSource)?.autoBrightGain ?: 1.0f
     }
 
-    private fun drawGeometryPass(sourceTexture: Int): Boolean {
-        if (!geometryActive || !geometryProgram.isReady) return false
-        val aspect = outputAspectRatio.takeIf { it.isFinite() && it > 0.0f } ?: sourceAspect()
-        val (scaleX, scaleY) = computeLetterboxScale(aspect)
+    private fun drawGeometryPass(
+        sourceTexture: Int,
+        state: RenderFrameState,
+        viewport: CanvasViewportTransform
+    ): Boolean {
+        if (!state.geometryActive || !geometryProgram.isReady) return false
+        val srcAspect = sourceAspect()
+        val aspect = state.outputAspectRatio.takeIf { it.isFinite() && it > 0.0f } ?: srcAspect
+        val (scaleX, scaleY) = computeLetterboxScale(aspect, viewport.scale)
         val (targetWidth, targetHeight) = PassAFrameBuffer.targetSizeFor(
             viewportWidth = viewportWidth,
             viewportHeight = viewportHeight,
@@ -201,33 +241,50 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
             logGeometryFallbackOnce()
             return false
         }
+        val encodeSrgbInPassA = linearInput && !geometryTarget.isHalfFloatTarget
         geometryTarget.bind()
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
         geometryProgram.draw(
             textureId = sourceTexture,
-            columnMajorInverseMatrix = geometryInverseMatrix,
-            caRedK = lateralCaRedK,
-            caBlueK = lateralCaBlueK
+            columnMajorInverseMatrix = state.geometryInverseMatrix,
+            caRedK = state.lateralCaRedK,
+            caBlueK = state.lateralCaBlueK,
+            srcAspect = srcAspect,
+            encodeSrgbWithDither = encodeSrgbInPassA
         )
         geometryTarget.unbind()
         GLES20.glViewport(0, 0, viewportWidth, viewportHeight)
-        drawExposure(geometryTarget.textureId, comparingOriginal = false, aspect = aspect)
+        drawExposure(
+            textureId = geometryTarget.textureId,
+            state = state,
+            viewport = viewport,
+            comparingOriginal = false,
+            aspect = aspect,
+            inputIsLinear = linearInput && geometryTarget.isHalfFloatTarget
+        )
         return true
     }
 
-    private fun drawExposure(textureId: Int, comparingOriginal: Boolean, aspect: Float) {
-        val (scaleX, scaleY) = computeLetterboxScale(aspect)
+    private fun drawExposure(
+        textureId: Int,
+        state: RenderFrameState,
+        viewport: CanvasViewportTransform,
+        comparingOriginal: Boolean,
+        aspect: Float,
+        inputIsLinear: Boolean
+    ) {
+        val (scaleX, scaleY) = computeLetterboxScale(aspect, viewport.scale)
         exposureProgram.draw(
             ExposureDrawParams(
                 textureId = textureId,
-                exposureEv = exposureEv,
+                exposureEv = state.exposureEv,
                 compareOriginal = comparingOriginal,
                 scaleX = scaleX,
                 scaleY = scaleY,
-                offsetX = canvasOffsetX,
-                offsetY = canvasOffsetY,
-                isLinearInput = linearInput,
-                baseLook = baseLook,
+                offsetX = viewport.offsetX,
+                offsetY = viewport.offsetY,
+                isLinearInput = inputIsLinear,
+                baseLook = state.baseLook,
                 autoBrightGain = autoBrightGain
             )
         )
@@ -271,9 +328,9 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
         return EditorTextureUploader.uploadLinearAsBytes(buffer, existingTextureId = 0)
     }
 
-    private fun computeLetterboxScale(imageAspect: Float): Pair<Float, Float> {
+    private fun computeLetterboxScale(imageAspect: Float, rawZoom: Float): Pair<Float, Float> {
         val viewAspect = viewportWidth.toFloat() / viewportHeight.toFloat()
-        val zoom = canvasScale.takeIf { it.isFinite() && it > 0.0f }?.coerceIn(1.0f, MAX_CANVAS_ZOOM)
+        val zoom = rawZoom.takeIf { it.isFinite() && it > 0.0f }?.coerceIn(1.0f, MAX_CANVAS_ZOOM)
             ?: 1.0f
         return if (imageAspect > viewAspect) {
             zoom to (viewAspect / imageAspect) * zoom
@@ -285,10 +342,5 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
     private companion object {
         private const val MAX_TARGET_EDGE_PX = 2048
         private const val MAX_CANVAS_ZOOM = 8.0f
-        private val IDENTITY_MATRIX = floatArrayOf(
-            1.0f, 0.0f, 0.0f,
-            0.0f, 1.0f, 0.0f,
-            0.0f, 0.0f, 1.0f
-        )
     }
 }

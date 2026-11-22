@@ -239,21 +239,26 @@ object GeometryMath {
      * Pass A shader performs.
      *
      * Red and blue are scaled by `1 + k * r^2` around the pre-crop optical centre `(0.5, 0.5)`,
-     * where `r^2 = (u - 0.5)^2 + (v - 0.5)^2`. Green stays put and acts as the reference channel,
-     * and the optical centre itself is a fixed point for every coefficient.
+     * where `r^2` is computed in physical aspect-corrected coordinates normalized so `r^2 = 1.0`
+     * at the frame corners (circular optical radius rather than an ellipse on non-square images).
+     * Green stays put as the reference channel.
      *
      * @param preCropUv Sample coordinate in the pre-crop source frame.
      * @param kRed Radial coefficient for the red channel (see [lateralCaKFromSlider]).
      * @param kBlue Radial coefficient for the blue channel (see [lateralCaKFromSlider]).
+     * @param srcAspect Width/height ratio of the pre-crop source frame.
      */
     fun applyLateralCaSampleUv(
         preCropUv: Uv,
         kRed: Float,
-        kBlue: Float
+        kBlue: Float,
+        srcAspect: Float = 1.0f
     ): LateralCaSample {
-        val deltaU = preCropUv.u - 0.5f
+        val aspect = if (srcAspect.isFinite() && srcAspect > EPSILON) srcAspect else 1.0f
+        val deltaU = (preCropUv.u - 0.5f) * aspect
         val deltaV = preCropUv.v - 0.5f
-        val radiusSquared = deltaU * deltaU + deltaV * deltaV
+        val maxCornerR2 = 0.25f * (aspect * aspect + 1.0f)
+        val radiusSquared = (deltaU * deltaU + deltaV * deltaV) / maxCornerR2
         return LateralCaSample(
             red = scaleAboutOpticalCentre(preCropUv, radiusSquared, kRed),
             green = preCropUv,

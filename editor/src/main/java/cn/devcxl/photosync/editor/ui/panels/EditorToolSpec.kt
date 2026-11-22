@@ -73,7 +73,8 @@ internal object EditorToolCatalog {
     )
 
     private val specs: Map<EditorTool, EditorToolSpec> =
-        (geometrySpecs() + toneSpecs() + detailSpecs()).associateBy { it.tool }
+        (cropAndStraightenSpecs() + flipAndPerspectiveSpecs() + toneSpecs() + detailSpecs())
+            .associateBy { it.tool }
 
     /**
      * Returns the sub-tools of [group] in chip order.
@@ -91,7 +92,7 @@ internal object EditorToolCatalog {
     fun defaultToolFor(group: EditorGroup): EditorTool =
         toolsFor(group).firstOrNull()?.tool ?: EditorTool.NONE
 
-    private fun geometrySpecs(): List<EditorToolSpec> = listOf(
+    private fun cropAndStraightenSpecs(): List<EditorToolSpec> = listOf(
         EditorToolSpec(
             tool = EditorTool.CROP,
             group = EditorGroup.GEOMETRY,
@@ -120,7 +121,10 @@ internal object EditorToolCatalog {
             writeValue = { graph, value -> graph.copy(geometry = graph.geometry.copy(straighten = value)) },
             isModified = { abs(it.geometry.straighten) >= 1e-4f },
             reset = { it.copy(geometry = it.geometry.copy(straighten = 0.0f)) }
-        ),
+        )
+    )
+
+    private fun flipAndPerspectiveSpecs(): List<EditorToolSpec> = listOf(
         EditorToolSpec(
             tool = EditorTool.ROTATE90,
             group = EditorGroup.GEOMETRY,

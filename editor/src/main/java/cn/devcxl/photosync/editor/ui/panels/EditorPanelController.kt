@@ -284,16 +284,15 @@ internal class EditorPanelController(
         val spec = EditorToolCatalog.specFor(tool) ?: return
         view.setText(if (spec.isModified(graph)) spec.modifiedLabelRes else spec.labelRes)
         val selected = tool == currentTool
-        view.setBackgroundColor(
-            ContextCompat.getColor(
-                context,
-                if (selected) R.color.editor_accent_blue else R.color.editor_surface_elevated
-            )
-        )
+        applySelectionBackground(view, selected)
         view.alpha = if (selected) 1.0f else 0.75f
     }
 
     private fun bindAspectChip(view: TextView, selected: Boolean) {
+        applySelectionBackground(view, selected)
+    }
+
+    private fun applySelectionBackground(view: View, selected: Boolean) {
         view.setBackgroundColor(
             ContextCompat.getColor(
                 context,

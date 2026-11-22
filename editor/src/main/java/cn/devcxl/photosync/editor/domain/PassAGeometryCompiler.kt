@@ -93,11 +93,11 @@ internal object PassAGeometryCompiler {
     }
 
     private fun straightenInverse(angleDeg: Float, frameAspect: Float): Mat3 {
-        val scale = GeometryMath.solveMaxInscribedRect(angleDeg, frameAspect).scale
         val degrees = angleDeg
             .takeIf { it.isFinite() }
             ?.coerceIn(-GeometryMath.MAX_STRAIGHTEN_DEGREES, GeometryMath.MAX_STRAIGHTEN_DEGREES)
             ?: 0.0f
+        val scale = GeometryMath.solveMaxInscribedRect(degrees, frameAspect).scale
         val radians = degrees * GeometryMath.DEGREES_TO_RADIANS
         val sin = sin(radians)
         val cos = cos(radians)
@@ -153,7 +153,8 @@ internal object PassAGeometryCompiler {
         return sqrt(dx * dx + dy * dy)
     }
 
-    private fun isConvexQuad(quad: FloatArray): Boolean {
+    internal fun isConvexQuad(quad: FloatArray): Boolean {
+        if (quad.size != QUAD_COORDINATES) return false
         var positiveTurns = 0
         var negativeTurns = 0
         for (corner in 0 until QUAD_CORNERS) {

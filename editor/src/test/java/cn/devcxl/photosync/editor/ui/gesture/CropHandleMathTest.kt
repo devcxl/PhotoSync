@@ -141,9 +141,18 @@ class CropHandleMathTest {
     @Test
     fun shouldClampThePerspectiveCornerInsideTheSourceFrame_whenDraggingPastTheEdge() {
         val quad = floatArrayOf(0f, 0f, 1f, 0f, 1f, 1f, 0f, 1f)
-        val dragged = CropHandleMath.dragPerspectiveCorner(quad, cornerIndex = 2, deltaU = 5f, deltaV = -5f)
+        val dragged = CropHandleMath.dragPerspectiveCorner(quad, cornerIndex = 2, deltaU = 5f, deltaV = -0.2f)
         assertEquals(1.0f, dragged[4], TOL)
-        assertEquals(0.0f, dragged[5], TOL)
+        assertEquals(0.8f, dragged[5], TOL)
+    }
+
+    @Test
+    fun shouldKeepPreviousValidQuad_whenPerspectiveDragWouldBecomeConcaveOrDegenerate() {
+        val quad = floatArrayOf(0.1f, 0.1f, 0.9f, 0.1f, 0.9f, 0.9f, 0.1f, 0.9f)
+        val dragged = CropHandleMath.dragPerspectiveCorner(quad, cornerIndex = 2, deltaU = -0.9f, deltaV = -0.9f)
+        for (i in quad.indices) {
+            assertEquals(quad[i], dragged[i], TOL)
+        }
     }
 
     private companion object {
