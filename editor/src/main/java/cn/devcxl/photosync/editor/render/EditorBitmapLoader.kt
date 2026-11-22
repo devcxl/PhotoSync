@@ -11,6 +11,7 @@ import android.graphics.Matrix
 import androidx.exifinterface.media.ExifInterface
 import timber.log.Timber
 
+import cn.devcxl.photosync.editor.domain.GeometryMath
 import cn.devcxl.photosync.wrapper.RawWrapper
 
 /**
@@ -88,23 +89,20 @@ internal object EditorBitmapLoader {
         return applyExifOrientation(decoded, orientation)
     }
 
+    /**
+     * Applies exactly one upright transform for [orientation].
+     *
+     * The rotation/mirror combination comes from [GeometryMath.discreteOpsForExifOrientation], the
+     * same table the interactive rotate/flip sliders use, so the upload path and the editor can
+     * never disagree about which way "upright" points.
+     */
     internal fun applyExifOrientation(bitmap: Bitmap, orientation: Int): Bitmap {
-        val matrix = Matrix()
-        when (orientation) {
-            ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
-            ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
-            ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
-            ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.postScale(-1f, 1f)
-            ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.postScale(1f, -1f)
-            ExifInterface.ORIENTATION_TRANSPOSE -> {
-                matrix.postRotate(90f)
-                matrix.postScale(-1f, 1f)
-            }
-            ExifInterface.ORIENTATION_TRANSVERSE -> {
-                matrix.postRotate(270f)
-                matrix.postScale(-1f, 1f)
-            }
-            else -> return bitmap
+        val ops = GeometryMath.discreteOpsForExifOrientation(orientation)
+        if (ops.quarterTurns == 0 && !ops.flipH && !ops.flipV) return bitmap
+        val matrix = Matrix().apply {
+            if (ops.quarterTurns != 0) postRotate(ops.quarterTurns * DEGREES_PER_QUARTER_TURN)
+            if (ops.flipH) postScale(-1.0f, 1.0f)
+            if (ops.flipV) postScale(1.0f, -1.0f)
         }
         val transformed = Bitmap.createBitmap(
             bitmap,
@@ -120,4 +118,6 @@ internal object EditorBitmapLoader {
         }
         return transformed
     }
+
+    private const val DEGREES_PER_QUARTER_TURN = 90.0f
 }
