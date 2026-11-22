@@ -109,13 +109,16 @@ class GestureRouterTest {
     }
 
     @Test
-    fun shouldCommitOnlyMovedStrokes_whenTheFingerLifts() {
-        val density = 1.0f
-        val moved = LiquifyStrokeArbiter(GestureRouter.preemptionSlopPx(density))
-        moved.beginStroke()
-        moved.onMove(12.0f)
-        assertTrue(moved.endStroke())
+    fun shouldCommitSingleFingerDabBelowEightDpAndSkipStationaryTap_whenFingerLiftsWithoutSecondPointer() {
+        val density = 2.0f
+        val arbiter = LiquifyStrokeArbiter(GestureRouter.preemptionSlopPx(density))
 
+        // Deliberate 3dp micro-retouch without a second finger must commit
+        arbiter.beginStroke()
+        arbiter.onMove(3.0f * density)
+        assertTrue(arbiter.endStroke())
+
+        // Stationary 0px tap produces no undo step (allows double-tap reset)
         val tap = LiquifyStrokeArbiter(GestureRouter.preemptionSlopPx(density))
         tap.beginStroke()
         assertFalse("a tap without movement produces no undo step", tap.endStroke())

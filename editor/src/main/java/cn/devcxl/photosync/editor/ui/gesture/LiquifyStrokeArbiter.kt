@@ -30,7 +30,11 @@ internal class LiquifyStrokeArbiter(private val slopPx: Float) {
     var isStrokeActive: Boolean = false
         private set
 
-    /** True once the touch has travelled far enough to count as a deliberate stroke. */
+    /** True when the touch moved at all since `ACTION_DOWN`. */
+    val hasMoved: Boolean
+        get() = travelPx > 0.0f
+
+    /** True once the touch has travelled far enough to count as a deliberate stroke under 2-finger preemption. */
     val hasMovedPastSlop: Boolean
         get() = travelPx >= slopPx
 
@@ -63,15 +67,15 @@ internal class LiquifyStrokeArbiter(private val slopPx: Float) {
     }
 
     /**
-     * Ends the stroke when the finger lifts.
+     * Ends the stroke when the finger lifts without a second pointer arriving.
      *
-     * @return True when the stroke moved and must be committed as an undo step; false for a tap or
-     *   an already-preempted stroke.
+     * @return True when the touch moved (`> 0px`) and must be committed as an undo step; false
+     *   for a stationary tap or an already-preempted stroke.
      */
     fun endStroke(): Boolean {
         if (!isStrokeActive) return false
         isStrokeActive = false
-        return hasMovedPastSlop
+        return hasMoved
     }
 
     /** Forgets the stroke, for example when a gesture is cancelled. */

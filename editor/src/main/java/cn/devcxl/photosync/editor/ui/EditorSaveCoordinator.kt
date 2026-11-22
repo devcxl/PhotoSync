@@ -23,9 +23,16 @@ internal class EditorSaveCoordinator(
     /**
      * Persists [graph] and any modified liquify displacement mesh to disk, renders the updated
      * preview cache, and commits the record to the host `EditStore`.
+     *
+     * @return `true` if persisted safely, `false` if saving the liquify grid or store failed.
      */
-    suspend fun persist(graph: EditGraph) {
+    suspend fun persist(graph: EditGraph): Boolean {
+        val hadMesh = liquifySession.hasMesh
         val liquifyRef = liquifySession.persist()
+        if (hadMesh && liquifyRef == null) {
+            Timber.e("Failed to persist liquify displacement mesh for photoId=%d", photoId)
+            return false
+        }
         val finalGraph = graph.copy(geometry = graph.geometry.copy(liquify = liquifyRef))
         val previewPath = if (finalGraph.isIdentity()) {
             null
@@ -35,12 +42,13 @@ internal class EditorSaveCoordinator(
         val store = EditorHostRegistry.editStore
         if (store == null) {
             Timber.e("EditorHostRegistry.editStore is null; edit cannot be persisted")
-            return
+            return false
         }
         store.saveEditForPhoto(
             photoId = photoId,
             graph = finalGraph,
             previewCachePath = previewPath
         )
+        return true
     }
 }

@@ -111,20 +111,58 @@ class LinearRawPreviewRendererToneParityTest {
         params: ToneShaderParams
     ): FloatArray {
         val gain = if (autoBrightGain.isFinite() && autoBrightGain > 0.0f) autoBrightGain else 1.0f
-        val looked = FloatArray(3) { channel ->
-            ExposureShaderMath.encodeSrgb((sample[channel] * gain).coerceAtLeast(0.0f))
-        }
+        val linear = FloatArray(3)
         if (graph.baseLook == BaseLook.CAMERA_DEFAULT) {
+            val looked = FloatArray(3) { channel ->
+                ExposureShaderMath.encodeSrgb((sample[channel] * gain).coerceIn(0.0f, 1.0f))
+            }
             val toned = FloatArray(3) {
-                CameraDefaultLookMath.applyToneCurve(looked[it].coerceIn(0.0f, 1.0f))
+                CameraDefaultLookMath.applyToneCurve(looked[it])
             }
             val vibrance = CameraDefaultLookMath.applyVibrance(toned[0], toned[1], toned[2])
-            for (channel in 0..2) looked[channel] = vibrance[channel].coerceIn(0.0f, 1.0f)
+            for (channel in 0..2) {
+                val clamped = vibrance[channel].coerceIn(0.0f, 1.0f)
+                val headroom = (sample[channel] * gain - 1.0f).coerceAtLeast(0.0f)
+                linear[channel] = ExposureShaderMath.decodeSrgb(clamped) + headroom
+            }
+        } else {
+            for (channel in 0..2) {
+                linear[channel] = (sample[channel] * gain).coerceAtLeast(0.0f)
+            }
         }
-        val linear = FloatArray(3) { ExposureShaderMath.decodeSrgb(looked[it]) }
         val out = FloatArray(3)
         ToneShaderMath.apply(params, linear, out)
         return out
+    }
+
+    @Test
+    fun shouldRescueOverexposedLinearRawHeadroomUnderCameraDefault_whenHighlightsArePulledDown() {
+        // Blown highlight at 1.0 * autoBrightGain(2.0) = 2.0 (> 1.0) vs diffuse white at 0.5 * 2.0 = 1.0
+        val blown = LinearRawBuffer.fromSamples(
+            width = 2,
+            height = 1,
+            autoBrightGain = 2.0f,
+            effectiveIso = 100.0f,
+            rgbaSamples = floatArrayOf(
+                0.5f, 0.5f, 0.5f, 1.0f,
+                1.0f, 1.0f, 1.0f, 1.0f
+            )
+        )
+        val neutral = LinearRawPreviewRenderer.renderArgb(
+            blown,
+            EditGraph(baseLook = BaseLook.CAMERA_DEFAULT)
+        )
+        val rescued = LinearRawPreviewRenderer.renderArgb(
+            blown,
+            EditGraph(baseLook = BaseLook.CAMERA_DEFAULT, tone = ToneOps(highlights = -100))
+        )
+        // Both are clipped at 255 in neutral camera_default, but pulling highlights recovers separation
+        assertEquals(255, redOf(neutral[0]))
+        assertEquals(255, redOf(neutral[1]))
+        assertTrue(
+            "Recovered highlight (${redOf(rescued[1])}) must exceed recovered diffuse white (${redOf(rescued[0])})",
+            redOf(rescued[1]) > redOf(rescued[0])
+        )
     }
 
     private fun assertPixelMatches(context: String, index: Int, reference: FloatArray, pixel: Int) {

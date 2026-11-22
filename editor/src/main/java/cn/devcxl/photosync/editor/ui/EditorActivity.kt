@@ -294,7 +294,16 @@ class EditorActivity : AppCompatActivity(), EditorPanelController.Host {
         binding.btnDone.isEnabled = false
         val finalGraph = undoController.currentGraph
         lifecycleScope.launch {
-            saveCoordinator.persist(finalGraph)
+            val saved = saveCoordinator.persist(finalGraph)
+            if (!saved) {
+                binding.btnDone.isEnabled = true
+                Toast.makeText(
+                    this@EditorActivity,
+                    R.string.editor_save_failed,
+                    Toast.LENGTH_SHORT
+                ).show()
+                return@launch
+            }
             val resultIntent = Intent().apply {
                 putExtra(EXTRA_PHOTO_ID, photoId)
                 putExtra(EXTRA_SOURCE_PATH, sourcePath)

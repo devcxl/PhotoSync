@@ -79,7 +79,9 @@ internal object ExposureShaderSources {
 
         vec3 applyBaseLook(vec3 linearRgb) {
             if (uBaseLook == 1) {
-                return decodeSrgb(cameraDefaultLook(encodeSrgb(linearRgb)));
+                vec3 base = decodeSrgb(cameraDefaultLook(encodeSrgb(min(linearRgb, vec3(1.0)))));
+                vec3 headroom = max(linearRgb - vec3(1.0), vec3(0.0));
+                return base + headroom;
             }
             return linearRgb;
         }

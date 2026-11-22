@@ -200,10 +200,11 @@ class LiquifyBrushOverlayView @JvmOverloads constructor(
     private fun onPointerRelease(event: MotionEvent): Boolean {
         val wasStroke = strokeActive
         val wasPinching = pinchActive
-        finishStroke(committed = wasStroke && arbiter.endStroke(), notify = wasStroke)
+        val committed = wasStroke && arbiter.endStroke()
+        finishStroke(committed = committed, notify = wasStroke)
         strokeActive = false
         pinchActive = false
-        if (!wasStroke && !wasPinching && arbiter.travelPx < arbiterSlopPx()) {
+        if (!committed && !wasPinching && arbiter.travelPx < arbiterSlopPx()) {
             detectDoubleTapReset(event)
         }
         performClick()

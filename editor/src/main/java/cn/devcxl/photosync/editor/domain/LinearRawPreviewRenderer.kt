@@ -6,10 +6,8 @@ import cn.devcxl.photosync.wrapper.LinearRawBuffer
  * CPU renderer that converts a 16-bit linear [LinearRawBuffer] into `ARGB_8888` pixels for the
  * gallery preview cache.
  *
- * The chain mirrors the GL preview pipeline exactly: auto-bright gain → `camera_default` look →
- * [ToneShaderMath] (white balance, linear tone, display tone) → sRGB encode, so the "Done"
- * thumbnail matches what the user saw in the editor. It never allocates per-pixel objects, so
- * saving a 2048px preview stays fast.
+ * Preserves linear highlight headroom (`> 1.0`) even when [BaseLook.CAMERA_DEFAULT] is active so
+ * negative Highlights/Whites/Exposure sliders recover RAW detail identically to [ExposureShaderSources].
  */
 internal object LinearRawPreviewRenderer {
 
@@ -19,13 +17,11 @@ internal object LinearRawPreviewRenderer {
 
     /**
      * Renders [source] into packed `ARGB_8888` pixels, row-major.
-     *
-     * @param source Decoded linear RAW pixels.
-     * @param graph Edit graph providing the base look, tone sliders and white balance.
      */
     fun renderArgb(source: LinearRawBuffer, graph: EditGraph): IntArray {
         val params = ToneShaderParams.from(graph)
-        val lookLut = buildLookLut(graph.baseLook, resolveGain(source.autoBrightGain))
+        val gain = resolveGain(source.autoBrightGain)
+        val lookLut = buildBaseLookLut(graph.baseLook, gain)
         val pixelCount = source.width * source.height
         val argb = IntArray(pixelCount)
         val sample = FloatArray(CHANNELS)
@@ -33,48 +29,62 @@ internal object LinearRawPreviewRenderer {
         val linear = FloatArray(CHANNELS_RGB)
         for (index in 0 until pixelCount) {
             source.readPixel(index, sample)
-            display[0] = lookLut[toLinearLutIndex(sample[0])]
-            display[1] = lookLut[toLinearLutIndex(sample[1])]
-            display[2] = lookLut[toLinearLutIndex(sample[2])]
-            if (graph.baseLook == BaseLook.CAMERA_DEFAULT) {
-                CameraDefaultLookMath.applyVibrance(display[0], display[1], display[2], display)
-                // The shader clamps inside `cameraDefaultLook`; do the same before decoding.
-                display[0] = display[0].coerceIn(0.0f, 1.0f)
-                display[1] = display[1].coerceIn(0.0f, 1.0f)
-                display[2] = display[2].coerceIn(0.0f, 1.0f)
-            }
-            argb[index] = if (params.isIdentity) {
-                pack(display)
+            computeBaseLookLinear(sample, gain, graph.baseLook, lookLut, linear, display)
+            if (params.isIdentity) {
+                argb[index] = Srgb8Packer.packRgb(
+                    ExposureShaderMath.encodeSrgb(linear[0].coerceIn(0.0f, 1.0f)),
+                    ExposureShaderMath.encodeSrgb(linear[1].coerceIn(0.0f, 1.0f)),
+                    ExposureShaderMath.encodeSrgb(linear[2].coerceIn(0.0f, 1.0f))
+                )
             } else {
-                linear[0] = ExposureShaderMath.decodeSrgb(display[0])
-                linear[1] = ExposureShaderMath.decodeSrgb(display[1])
-                linear[2] = ExposureShaderMath.decodeSrgb(display[2])
                 ToneShaderMath.apply(params, linear, display)
-                pack(display)
+                argb[index] = Srgb8Packer.packRgb(display[0], display[1], display[2])
             }
         }
         return argb
     }
 
-    private fun pack(display: FloatArray): Int =
-        Srgb8Packer.packRgb(display[0], display[1], display[2])
+    private fun computeBaseLookLinear(
+        sample: FloatArray,
+        gain: Float,
+        baseLook: BaseLook,
+        lookLut: FloatArray,
+        outLinear: FloatArray,
+        scratchDisplay: FloatArray
+    ) {
+        if (baseLook == BaseLook.LINEAR_NEUTRAL) {
+            for (c in 0 until CHANNELS_RGB) {
+                outLinear[c] = (sample[c] * gain).coerceAtLeast(0.0f)
+            }
+            return
+        }
+        for (c in 0 until CHANNELS_RGB) {
+            scratchDisplay[c] = lookLut[toLinearLutIndex(sample[c])]
+        }
+        CameraDefaultLookMath.applyVibrance(
+            scratchDisplay[0],
+            scratchDisplay[1],
+            scratchDisplay[2],
+            scratchDisplay
+        )
+        for (c in 0 until CHANNELS_RGB) {
+            val clampedDisplay = scratchDisplay[c].coerceIn(0.0f, 1.0f)
+            val scaledLinear = (sample[c] * gain).coerceAtLeast(0.0f)
+            val headroom = (scaledLinear - 1.0f).coerceAtLeast(0.0f)
+            outLinear[c] = ExposureShaderMath.decodeSrgb(clampedDisplay) + headroom
+        }
+    }
 
     private fun resolveGain(autoBrightGain: Float): Float =
         if (autoBrightGain.isFinite() && autoBrightGain > 0.0f) autoBrightGain else 1.0f
 
-    private fun buildLookLut(baseLook: BaseLook, gain: Float): FloatArray =
-        FloatArray(LINEAR_LUT_SIZE) { index ->
-            val linear = index / 65535.0f * gain
-            if (baseLook == BaseLook.CAMERA_DEFAULT) {
-                // The browse-page curve is display-referred, so highlights clip there.
-                CameraDefaultLookMath.applyToneCurve(
-                    ExposureShaderMath.encodeSrgb(linear.coerceIn(0.0f, 1.0f))
-                )
-            } else {
-                // Keep linear headroom above 1.0 so the tone stage can roll it off.
-                ExposureShaderMath.encodeSrgb(linear)
-            }
+    private fun buildBaseLookLut(baseLook: BaseLook, gain: Float): FloatArray {
+        if (baseLook == BaseLook.LINEAR_NEUTRAL) return FloatArray(0)
+        return FloatArray(LINEAR_LUT_SIZE) { index ->
+            val linear = (index / 65535.0f * gain).coerceIn(0.0f, 1.0f)
+            CameraDefaultLookMath.applyToneCurve(ExposureShaderMath.encodeSrgb(linear))
         }
+    }
 
     private fun toLinearLutIndex(value: Float): Int =
         (value.coerceIn(0.0f, 1.0f) * 65535.0f + 0.5f).toInt().coerceIn(0, LINEAR_LUT_SIZE - 1)
