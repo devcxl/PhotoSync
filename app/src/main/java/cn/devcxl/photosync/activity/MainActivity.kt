@@ -1256,7 +1256,7 @@ class MainActivity : AppCompatActivity() {
             val result = BakeExporter(this@MainActivity, sink, filesDir).bake(
                 BakeRequest(
                     sourcePath = entity.path,
-                    displayName = makeBakedName(entity.name),
+                    displayName = makeOutputName(entity.name, "_edited"),
                     isRaw = isRawPath(entity.path),
                     graph = graph
                 )
@@ -1288,67 +1288,64 @@ class MainActivity : AppCompatActivity() {
         }
         val displayEntityName = entity.name ?: getString(R.string.photo_default_name)
         showInlineFeedback(getString(R.string.toast_exporting, displayEntityName))
-
         lifecycleScope.launch(Dispatchers.IO) {
-            val path = entity.path
-            if (path.isEmpty()) {
-                withContext(Dispatchers.Main) {
-                    showInlineFeedback(getString(R.string.toast_export_failed_invalid_path))
-                }
-                return@launch
-            }
-            val ext = ExtensionUtils.fileExtension(path)
+            exportOriginalInBackground(entity)
+        }
+    }
 
-            val displayName = makeExportName(entity.name)
-            val saved: Uri? = try {
-                if (ExtensionUtils.isJpegExtension(ext)) {
-                    // JPEG：直接复制原文件到相册，避免解码与重压缩
-                    saveFileToGalleryByCopying(File(path), displayName)
-                } else if (ExtensionUtils.isRawExtension(ext)) {
-                    // RAW：优先使用缓存Bitmap，否则直接原生解码为 ARGB_8888 Bitmap
-                    val cachedBmp = fullBitmapCache.get(path)
-                    val bmp = cachedBmp ?: withContext(rawExportDispatcher) {
-                        try {
-                            RawWrapper.decodeToBitmap(path)
-                        } catch (e: Exception) {
-                            Timber.w(e, "RAW decode failed for path=%s, falling back to null", path)
-                            null
-                        }
-                    }
-                    try {
-                        if (bmp != null) {
-                            saveBitmapToGallery(bmp, displayName, rawSourcePath = path)
-                        } else {
-                            null
-                        }
-                    } finally {
-                        if (cachedBmp == null) {
-                            bmp?.recycle()
-                        }
-                    }
-                } else {
-                    null
-                }
+    private suspend fun exportOriginalInBackground(entity: PhotoEntity) {
+        val path = entity.path
+        if (path.isEmpty()) {
+            withContext(Dispatchers.Main) {
+                showInlineFeedback(getString(R.string.toast_export_failed_invalid_path))
+            }
+            return
+        }
+        val ext = ExtensionUtils.fileExtension(path)
+        val displayName = makeOutputName(entity.name, "_export")
+        val saved = exportOriginalUri(path, ext, displayName)
+        if (saved != null) {
+            try {
+                dao.updateUriString(entity.id, saved.toString())
             } catch (e: Exception) {
-                Timber.e(e, "exportIndex: save failed")
+                Timber.w(e, "Failed to persist exported uriString for photo id=%d", entity.id)
+            }
+        }
+        withContext(Dispatchers.Main) {
+            val msg = if (saved != null) {
+                getString(R.string.toast_saved_to_gallery, displayName)
+            } else {
+                getString(R.string.toast_save_failed)
+            }
+            showInlineFeedback(msg)
+        }
+    }
+
+    private suspend fun exportOriginalUri(path: String, ext: String, displayName: String): Uri? = try {
+        when {
+            ExtensionUtils.isJpegExtension(ext) -> saveFileToGalleryByCopying(File(path), displayName)
+            ExtensionUtils.isRawExtension(ext) -> exportOriginalRawUri(path, displayName)
+            else -> null
+        }
+    } catch (e: Exception) {
+        Timber.e(e, "exportOriginalUri: save failed")
+        null
+    }
+
+    private suspend fun exportOriginalRawUri(path: String, displayName: String): Uri? {
+        val cachedBmp = fullBitmapCache.get(path)
+        val bmp = cachedBmp ?: withContext(rawExportDispatcher) {
+            try {
+                RawWrapper.decodeToBitmap(path)
+            } catch (e: Exception) {
+                Timber.w(e, "RAW decode failed for path=%s, falling back to null", path)
                 null
             }
-
-            if (saved != null) {
-                try {
-                    dao.updateUriString(entity.id, saved.toString())
-                } catch (e: Exception) {
-                    Timber.w(e, "Failed to persist exported uriString for photo id=%d", entity.id)
-                }
-            }
-
-            withContext(Dispatchers.Main) {
-                if (saved != null) {
-                    showInlineFeedback(getString(R.string.toast_saved_to_gallery, displayName))
-                } else {
-                    showInlineFeedback(getString(R.string.toast_save_failed))
-                }
-            }
+        }
+        return try {
+            bmp?.let { saveBitmapToGallery(it, displayName, rawSourcePath = path) }
+        } finally {
+            if (cachedBmp == null) bmp?.recycle()
         }
     }
 
@@ -1369,21 +1366,13 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun makeBakedName(name: String?): String {
+    private fun makeOutputName(name: String?, suffix: String): String {
         return if (!name.isNullOrBlank()) {
-            name.substringBeforeLast('.') + "_edited.jpg"
+            name.substringBeforeLast('.') + "$suffix.jpg"
         } else {
             val timestamp = exportDateFormat.get()?.format(Date()) ?: System.currentTimeMillis()
-            "IMG_${timestamp}_edited.jpg"
-        }
-    }
-
-    private fun makeExportName(name: String?): String {
-        return if (!name.isNullOrBlank()) {
-            name.substringBeforeLast('.') + "_export.jpg"
-        } else {
-            val timestamp = exportDateFormat.get()?.format(Date()) ?: System.currentTimeMillis()
-            "IMG_${timestamp}.jpg"
+            val tail = if (suffix == "_edited") "_edited" else ""
+            "IMG_$timestamp$tail.jpg"
         }
     }
 

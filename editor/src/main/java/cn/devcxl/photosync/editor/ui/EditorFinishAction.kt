@@ -1,8 +1,8 @@
 package cn.devcxl.photosync.editor.ui
 
 import android.app.Activity
-
 import androidx.appcompat.app.AppCompatActivity
+
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 

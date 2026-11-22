@@ -2,6 +2,7 @@ package cn.devcxl.photosync.editor.vision
 
 import java.io.File
 import java.io.FileInputStream
+import java.io.IOException
 import java.nio.ByteOrder
 import java.nio.channels.FileChannel
 
@@ -87,13 +88,12 @@ class MediaPipePortraitEngine(
     fun upgradeToMulticlass(modelFile: File): Boolean {
         if (multiclassSegmenter != null) return true
         if (!modelFile.isFile) return false
-        val buffer = runCatching {
+        val buffer = try {
             FileInputStream(modelFile).channel.use { channel ->
                 channel.map(FileChannel.MapMode.READ_ONLY, 0, channel.size())
             }
-        }.getOrNull()
-        if (buffer == null) {
-            Timber.w("Downloaded portrait model could not be mapped into memory")
+        } catch (e: IOException) {
+            Timber.e(e, "Downloaded portrait model could not be mapped into memory")
             return false
         }
         val upgraded = delegatePolicy.createTask { delegate ->
@@ -104,7 +104,9 @@ class MediaPipePortraitEngine(
             return false
         }
         multiclassSegmenter = upgraded
-        segmenter?.close()
+        runCatching { segmenter?.close() }.onFailure {
+            Timber.w(it, "Failed to close built-in segmenter after multiclass upgrade")
+        }
         segmenter = null
         return true
     }
@@ -141,12 +143,20 @@ class MediaPipePortraitEngine(
 
     /** Releases every task; the engine re-creates them on the next [analyze]. */
     fun release() {
-        runCatching { faceLandmarker?.close() }
-        runCatching { segmenter?.close() }
-        runCatching { multiclassSegmenter?.close() }
+        closeTask("faceLandmarker") { faceLandmarker?.close() }
+        closeTask("segmenter") { segmenter?.close() }
+        closeTask("multiclassSegmenter") { multiclassSegmenter?.close() }
         faceLandmarker = null
         segmenter = null
         multiclassSegmenter = null
+    }
+
+    private inline fun closeTask(name: String, block: () -> Unit) {
+        try {
+            block()
+        } catch (e: RuntimeException) {
+            Timber.w(e, "Failed to close MediaPipe %s task", name)
+        }
     }
 
     private fun detectFaces(image: MPImage): List<FaceLandmarks> {

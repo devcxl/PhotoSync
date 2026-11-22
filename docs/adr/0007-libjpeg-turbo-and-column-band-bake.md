@@ -59,9 +59,11 @@ Tier 2 的 native 缓冲直接持有 LibRaw 的 `libraw_processed_image_t*`，**
 
 最后一点是零拼缝的关键：原实现用 `gl_FragCoord`，列带渲染时它是带内局部坐标，同一像素在全幅与分块导出下会拿到不同噪声；改用全局像素坐标后两条路径逐位一致，`<= 1/255` 的分块验收才有意义。颗粒还要再做一次「像素对齐」：`globalUv * (W, H)` 向上取整得到整数像素后再还原为中心 UV `(pixel + 0.5) / (W, H)`，否则分块与全幅之间约 `1e-7` 的 UV 浮点差会在噪声晶格边界上（频率 ~1000）挑选到不同格子，产生零星但可达 7/255 的差异。晕影是平滑函数，直接用 `globalUv` 即可。
 
-### 7. 导出要求 `GL_RGBA16F` 中间目标
+### 7. 中间目标优先 `GL_RGBA16F`，不支持半精度 FBO 时自动回落至带抖动 `GL_RGBA8`
 
-Tier 2 的 8-bit 中间目标会把 `1/255` 的量化误差叠 4 次，无法满足「整幅 vs 列带 ≤ 1/255」与本工单的 `1/255` 恒等预算。因此 `BakePassChain.init()` 显式要求 `GlCapabilities.supportsHalfFloatTargets`，不满足时直接返回「该 GPU 无法渲染全分辨率导出」，而不是悄悄降级出不一致的成片。预览仍保留 Tier 2/3 的 8-bit 降级路径。
+Tier 1 设备使用 `GL_RGBA16F` 中间目标可消除量化误差，满足 `<= 1/255` 的恒等与拼缝预算；在缺少 `GL_EXT_color_buffer_half_float` 的 Tier 2 设备上，`BakePassChain` 通过 `OffscreenColorTarget` 与 `SpatialDetailGlChain` 自动回落到 `GL_RGBA8` 并为 Pass A/B/C/D 每趟启用 `1/255` 三角抖动，确保中端机仍可完成全分辨率导出而不崩溃。
+
+- 注：`MlsSimilarity` 对奇异控制点集群做了 `[0.5, 2.0]` 尺度钳位；另在列带 `BakePassChain` 中 `uSkinMaskTex` 经 `guideUv()` 采样并随工作分辨率按比例缩放美肤模糊步长。
 
 ### 8. 协程取消按列带检查，编码器作为 `Closeable` 兜底
 
@@ -80,7 +82,7 @@ JPEG q95 本身就会带来远大于 `1/255` 的逐像素误差，因此恒等�
 ## 后果
 
 - `raw_wrapper.so` 的 stripped 体积增加约 333 KiB（arm64），换来 2–4 倍编码加速与 `O(1)` 编码内存；
-- `:libraw` 新增 `timber` 依赖（与全仓库日志规范一致），`NativeRgb16Image` 用 Timber 记录切片越界；
+- `:libraw` 新增 `timber` 依赖（Kotlin 层与全仓库日志规范一致，`NativeRgb16Image` 用 Timber 记录切片越界；C++ JNI 侧沿用 `__android_log_print` `ALOGE/ALOGI` 宏）；
 - bake 的 GL 上下文与预览的 `GLSurfaceView` 上下文互不干扰，但两者都在 `Dispatchers.Default` 上串行执行 GL 调用，CPU 侧仍可能出现短暂争用；
 - Tier 2 极端裁切会退化为 2560px 全局降采样；这是已知取舍，日志中有 `Band ... needs an oversized slice` 可追踪；
 - 超大 JPEG（长边 > `GL_MAX_TEXTURE_SIZE`）走采样解码（Tier 2 的 native 路径只服务 RAW），因此超大 JPEG 的原生分辨率导出不在本工单承诺内。

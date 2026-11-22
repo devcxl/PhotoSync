@@ -12,7 +12,6 @@ import cn.devcxl.photosync.editor.domain.PassDEffectsParams
 import cn.devcxl.photosync.editor.domain.SourceSliceRect
 import cn.devcxl.photosync.editor.domain.SpatialDetailParams
 import cn.devcxl.photosync.editor.domain.SpatialDetailPlanner
-import cn.devcxl.photosync.editor.domain.TileUvTransform
 import cn.devcxl.photosync.editor.domain.ToneShaderParams
 import cn.devcxl.photosync.editor.domain.WarpDisplacementField
 import cn.devcxl.photosync.editor.lut.Lut3dTexture
@@ -47,7 +46,8 @@ internal data class BakeFrame(
     val caBlueK: Float,
     val cropWidth: Int,
     val cropHeight: Int,
-    val fullResolutionShortEdge: Int
+    val fullResolutionShortEdge: Int,
+    val maxWarpDisplacementUv: Float = 0.0f
 )
 
 /**
@@ -80,7 +80,6 @@ internal class BakePassChain {
 
     /** Compiles the programs and probes capabilities. Must run with the EGL context current. */
     fun init(): Boolean {
-        GlCapabilities.invalidate()
         GlCapabilities.refresh()
         val passA = geometryProgram.init()
         exposureProgram.init(preferEs3 = true)
@@ -90,7 +89,7 @@ internal class BakePassChain {
         warpTexture.uploadIfNeeded()
         skinMaskTexture.stage(null)
         skinMaskTexture.uploadIfNeeded()
-        isReady = passA && passC && passD && GlCapabilities.supportsHalfFloatTargets
+        isReady = passA && passC && passD
         return isReady
     }
 
@@ -122,12 +121,14 @@ internal class BakePassChain {
         if (!drawPassA(frame, geometryTarget)) return false
         target.bind()
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+        val linearPassBInput = frame.isLinear && geometryTarget.isHalfFloatTarget
         exposureProgram.draw(
             passBParams(
                 frame = frame,
                 textureId = geometryTarget.textureId,
                 texelWidth = target.width,
                 texelHeight = target.height,
+                isLinearInput = linearPassBInput,
                 ditherAmp = if (target.isHalfFloatTarget) 0.0f else PassDEffectsMath.DITHER_AMPLITUDE
             )
         )
@@ -144,8 +145,10 @@ internal class BakePassChain {
         if (!passBTarget.isReady) return 0
         passBTarget.bind()
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+        val ditherPassB = if (passBTarget.isHalfFloatTarget) 0.0f else PassDEffectsMath.DITHER_AMPLITUDE
+        val linearPassBInput = frame.isLinear && geometryTarget.isHalfFloatTarget
         exposureProgram.draw(
-            passBParams(frame, geometryTarget.textureId, width, height, ditherAmp = 0.0f)
+            passBParams(frame, geometryTarget.textureId, width, height, linearPassBInput, ditherPassB)
         )
         passBTarget.unbind()
 
@@ -177,6 +180,7 @@ internal class BakePassChain {
     /** Releases every GL object; safe to call when the context is already gone. */
     fun close() {
         geometryProgram.release()
+        exposureProgram.release()
         spatialChain.release()
         effectsProgram.release()
         warpTexture.release()
@@ -201,7 +205,7 @@ internal class BakePassChain {
                 caRedK = frame.caRedK,
                 caBlueK = frame.caBlueK,
                 srcAspect = frame.srcAspect,
-                encodeSrgbWithDither = false,
+                encodeSrgbWithDither = frame.isLinear && !target.isHalfFloatTarget,
                 warpTextureId = if (warpTexture.isWarpActive) warpTexture.textureId else 0,
                 warpDecodeScale = warpTexture.decodeScale,
                 warpDecodeOffset = warpTexture.decodeOffset,
@@ -239,6 +243,7 @@ internal class BakePassChain {
         textureId: Int,
         texelWidth: Int,
         texelHeight: Int,
+        isLinearInput: Boolean,
         ditherAmp: Float
     ): ExposureDrawParams = ExposureDrawParams(
         textureId = textureId,
@@ -247,7 +252,7 @@ internal class BakePassChain {
         scaleY = 1.0f,
         offsetX = 0.0f,
         offsetY = 0.0f,
-        isLinearInput = frame.isLinear,
+        isLinearInput = isLinearInput,
         baseLook = frame.baseLook,
         autoBrightGain = frame.autoBrightGain,
         toneParams = frame.toneParams,

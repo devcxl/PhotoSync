@@ -32,76 +32,65 @@ internal class EditorReadoutFormatter(private val context: Context) {
     fun valueText(tool: EditorTool, graph: EditGraph, previewAspect: Float): String {
         val spec = EditorToolCatalog.specFor(tool)
         if (spec?.dial != null) return formatDialValue(spec, spec.readValue(graph))
-        return when (tool) {
-            EditorTool.CROP, EditorTool.PERSPECTIVE -> String.format(
-                Locale.US,
-                context.getString(R.string.editor_value_aspect_fmt),
-                CropHandleMath.physicalAspect(graph.geometry.crop, previewAspect)
-            )
-            EditorTool.ROTATE90 -> String.format(
-                Locale.US,
-                context.getString(R.string.editor_value_plain_degrees_fmt),
-                (graph.geometry.rotate90 * QUARTER_TURN_DEGREES).toFloat()
-            )
-            EditorTool.FLIP_HORIZONTAL -> onOff(graph.geometry.flipH)
-            EditorTool.FLIP_VERTICAL -> onOff(graph.geometry.flipV)
-            EditorTool.LIQUIFY -> statusText(
-                graph.geometry.liquify != null,
-                R.string.editor_value_liquify_modified,
-                R.string.editor_value_liquify_none
-            )
-            EditorTool.CURVE -> statusText(
-                !graph.color.curve.isIdentity(),
-                R.string.editor_value_curve_modified,
-                R.string.editor_value_curve_linear
-            )
-            EditorTool.HSL -> statusText(
-                !graph.color.hsl.isIdentity(),
-                R.string.editor_value_hsl_modified,
-                R.string.editor_value_hsl_none
-            )
-            EditorTool.SPLIT_TONING -> statusText(
-                !graph.color.split.isIdentity(),
-                R.string.editor_value_split_modified,
-                R.string.editor_value_split_none
-            )
-            EditorTool.LUT -> statusText(
-                graph.color.lut != null && graph.color.lut.strength > 0,
-                R.string.editor_value_lut_modified,
-                R.string.editor_value_lut_none
-            )
-            EditorTool.GRAIN -> String.format(
-                Locale.US,
-                context.getString(R.string.editor_value_unsigned_fmt),
-                graph.effects.grain.amount.toFloat()
-            )
-            EditorTool.VIGNETTE -> String.format(
-                Locale.US,
-                context.getString(R.string.editor_value_signed_fmt),
-                graph.effects.vignette.amount.toFloat()
-            )
-            EditorTool.SHARPEN -> panelStatusText(
-                spec?.isModified?.invoke(graph) == true,
-                R.string.editor_value_sharpen_modified
-            )
-            EditorTool.NOISE_REDUCTION -> panelStatusText(
-                spec?.isModified?.invoke(graph) == true,
-                R.string.editor_value_nr_modified
-            )
-            EditorTool.SKIN_SMOOTH -> panelStatusText(
-                spec?.isModified?.invoke(graph) == true,
-                R.string.editor_value_skin_modified
-            )
-            EditorTool.FACE_RESHAPE -> panelStatusText(
-                spec?.isModified?.invoke(graph) == true,
-                R.string.editor_value_reshape_modified
-            )
-            EditorTool.BODY_RESHAPE -> panelStatusText(
-                spec?.isModified?.invoke(graph) == true,
-                R.string.editor_value_body_modified
-            )
-            else -> ""
+        PANEL_MODIFIED_RES[tool]?.let { res ->
+            return panelStatusText(spec?.isModified?.invoke(graph) == true, res)
         }
+        return formatSpecialToolValue(tool, graph, previewAspect)
+    }
+
+    private fun formatSpecialToolValue(
+        tool: EditorTool,
+        graph: EditGraph,
+        previewAspect: Float
+    ): String = when (tool) {
+        EditorTool.CROP, EditorTool.PERSPECTIVE -> String.format(
+            Locale.US,
+            context.getString(R.string.editor_value_aspect_fmt),
+            CropHandleMath.physicalAspect(graph.geometry.crop, previewAspect)
+        )
+        EditorTool.ROTATE90 -> String.format(
+            Locale.US,
+            context.getString(R.string.editor_value_plain_degrees_fmt),
+            (graph.geometry.rotate90 * QUARTER_TURN_DEGREES).toFloat()
+        )
+        EditorTool.FLIP_HORIZONTAL -> onOff(graph.geometry.flipH)
+        EditorTool.FLIP_VERTICAL -> onOff(graph.geometry.flipV)
+        EditorTool.LIQUIFY -> statusText(
+            graph.geometry.liquify != null,
+            R.string.editor_value_liquify_modified,
+            R.string.editor_value_liquify_none
+        )
+        EditorTool.CURVE -> statusText(
+            !graph.color.curve.isIdentity(),
+            R.string.editor_value_curve_modified,
+            R.string.editor_value_curve_linear
+        )
+        EditorTool.HSL -> statusText(
+            !graph.color.hsl.isIdentity(),
+            R.string.editor_value_hsl_modified,
+            R.string.editor_value_hsl_none
+        )
+        EditorTool.SPLIT_TONING -> statusText(
+            !graph.color.split.isIdentity(),
+            R.string.editor_value_split_modified,
+            R.string.editor_value_split_none
+        )
+        EditorTool.LUT -> statusText(
+            graph.color.lut != null && graph.color.lut.strength > 0,
+            R.string.editor_value_lut_modified,
+            R.string.editor_value_lut_none
+        )
+        EditorTool.GRAIN -> String.format(
+            Locale.US,
+            context.getString(R.string.editor_value_unsigned_fmt),
+            graph.effects.grain.amount.toFloat()
+        )
+        EditorTool.VIGNETTE -> String.format(
+            Locale.US,
+            context.getString(R.string.editor_value_signed_fmt),
+            graph.effects.vignette.amount.toFloat()
+        )
+        else -> ""
     }
 
     private fun panelStatusText(modified: Boolean, modifiedRes: Int): String =
@@ -125,6 +114,14 @@ internal class EditorReadoutFormatter(private val context: Context) {
     companion object {
         private const val QUARTER_TURN_DEGREES = 90
         private const val ASPECT_TOLERANCE = 1e-3f
+
+        private val PANEL_MODIFIED_RES = mapOf(
+            EditorTool.SHARPEN to R.string.editor_value_sharpen_modified,
+            EditorTool.NOISE_REDUCTION to R.string.editor_value_nr_modified,
+            EditorTool.SKIN_SMOOTH to R.string.editor_value_skin_modified,
+            EditorTool.FACE_RESHAPE to R.string.editor_value_reshape_modified,
+            EditorTool.BODY_RESHAPE to R.string.editor_value_body_modified
+        )
 
         /** Key of the free-aspect crop preset. */
         const val KEY_FREE = "free"

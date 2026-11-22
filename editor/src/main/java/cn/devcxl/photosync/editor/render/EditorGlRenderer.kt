@@ -32,6 +32,7 @@ import cn.devcxl.photosync.editor.domain.ToneShaderParams
 internal class EditorGlRenderer : GLSurfaceView.Renderer {
 
     private val pipeline = PreviewPassPipeline()
+    private val stateLock = Any()
 
     private var viewportWidth: Int = 1
     private var viewportHeight: Int = 1
@@ -89,7 +90,9 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
 
     override fun onDrawFrame(gl: GL10?) {
         if (pipeline.uploadPending(preferEs3)) {
-            frameState = frameState.copy(warpActive = false)
+            synchronized(stateLock) {
+                frameState = frameState.copy(warpActive = false)
+            }
         }
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
 
@@ -137,8 +140,10 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
 
     /** Stages the liquify displacement grid for the next frame. */
     fun setLiquifyMesh(mesh: LiquifyMesh?) {
-        liquifyMesh = mesh
-        publishWarp()
+        synchronized(stateLock) {
+            liquifyMesh = mesh
+            publishWarpLocked()
+        }
     }
 
     /**
@@ -148,19 +153,19 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
      * `Δuv_face + Δuv_body + Δuv_liquify`, so Pass A still performs exactly one texture fetch.
      */
     fun setPortraitWarp(faceWarp: FloatArray?, bodyWarp: FloatArray?) {
-        portraitFaceWarp = faceWarp
-        portraitBodyWarp = bodyWarp
-        publishWarp()
+        synchronized(stateLock) {
+            portraitFaceWarp = faceWarp
+            portraitBodyWarp = bodyWarp
+            publishWarpLocked()
+        }
     }
 
     /** Stages the portrait `skinMask` that gates Pass C Stage 0 and the sharpening suppression. */
     fun setSkinMask(mask: FloatArray?) {
         pipeline.stageSkinMask(mask)
-        pipeline.invalidatePrepass()
-        prepassRevision++
     }
 
-    private fun publishWarp() {
+    private fun publishWarpLocked() {
         val composed = PortraitWarpComposer.compose(portraitFaceWarp, portraitBodyWarp, liquifyMesh)
         frameState = frameState.copy(warpActive = pipeline.stageWarpField(composed))
         pipeline.invalidatePrepass()
@@ -178,36 +183,38 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
         val aspect = sourceAspect()
         val geometry = graph.geometry
         val aberration = graph.effects.ca
-        val warpActive = pipeline.isWarpActive
-        val geometryActive = graph.requiresPassAGeometry(hasWarp = warpActive)
-        val outputAspect = if (geometryActive) GeometryMath.outputAspect(geometry, aspect) else aspect
-        val inverseMatrix = if (geometryActive) {
-            GeometryMath.buildPassAInverseMatrix(geometry, aspect).toColumnMajorFloatArray()
-        } else {
-            RenderFrameState.IDENTITY_MATRIX
-        }
-        val spatialParams = SpatialDetailParams.from(graph)
-        pipeline.stageCurve(graph.color.curve)
-        frameState = RenderFrameState(
-            toneParams = ToneShaderParams.from(graph),
-            colorParams = ColorGradingParams.from(graph),
-            spatialParams = spatialParams,
-            effectsParams = PassDEffectsParams.from(graph, outputAspect),
-            baseLook = graph.baseLook,
-            useFastProxy = useFastProxy,
-            geometryActive = geometryActive,
-            geometryInverseMatrix = inverseMatrix,
-            lateralCaRedK = GeometryMath.lateralCaKFromSlider(aberration.redCyan),
-            lateralCaBlueK = GeometryMath.lateralCaKFromSlider(aberration.blueYellow),
-            outputAspectRatio = outputAspect,
-            warpActive = warpActive
-        )
-        isPassCActive = !useFastProxy && !spatialParams.isZeroDrawCallShortCircuit
-        val prepassSig = prepassSignature(graph, warpActive, portraitFaceWarp, portraitBodyWarp)
-        if (prepassSig != lastPrepassInputSignature) {
-            lastPrepassInputSignature = prepassSig
-            pipeline.invalidatePrepass()
-            prepassRevision++
+        synchronized(stateLock) {
+            val warpActive = pipeline.isWarpActive
+            val geometryActive = graph.requiresPassAGeometry(hasWarp = warpActive)
+            val outputAspect = if (geometryActive) GeometryMath.outputAspect(geometry, aspect) else aspect
+            val inverseMatrix = if (geometryActive) {
+                GeometryMath.buildPassAInverseMatrix(geometry, aspect).toColumnMajorFloatArray()
+            } else {
+                RenderFrameState.IDENTITY_MATRIX
+            }
+            val spatialParams = SpatialDetailParams.from(graph)
+            pipeline.stageCurve(graph.color.curve)
+            frameState = RenderFrameState(
+                toneParams = ToneShaderParams.from(graph),
+                colorParams = ColorGradingParams.from(graph),
+                spatialParams = spatialParams,
+                effectsParams = PassDEffectsParams.from(graph, outputAspect),
+                baseLook = graph.baseLook,
+                useFastProxy = useFastProxy,
+                geometryActive = geometryActive,
+                geometryInverseMatrix = inverseMatrix,
+                lateralCaRedK = GeometryMath.lateralCaKFromSlider(aberration.redCyan),
+                lateralCaBlueK = GeometryMath.lateralCaKFromSlider(aberration.blueYellow),
+                outputAspectRatio = outputAspect,
+                warpActive = warpActive
+            )
+            isPassCActive = !useFastProxy && !spatialParams.isZeroDrawCallShortCircuit
+            val prepassSig = prepassSignature(graph, warpActive, portraitFaceWarp, portraitBodyWarp)
+            if (prepassSig != lastPrepassInputSignature) {
+                lastPrepassInputSignature = prepassSig
+                pipeline.invalidatePrepass()
+                prepassRevision++
+            }
         }
     }
 

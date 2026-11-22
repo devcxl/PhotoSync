@@ -7,15 +7,9 @@ import kotlin.math.sin
 /**
  * Closed-form moving-least-squares (MLS) **similarity** deformation of Schaefer et al. 2006.
  *
- * The warp is parameterised by a correspondence set: every control point has a position in the
- * deformed (output) frame and a position in the original (sampling) frame. For a query point the
- * solver fits the least-squares rotation + uniform scale that maps the source controls onto the
- * target controls and returns where the query has to sample.
- *
- * Unlike the "normalise `A (v - q*)`" shortcut, this implementation evaluates the optimal similarity
- * directly (rotation from `atan2` of the moment matrix, scale from the same moments). That makes the
- * solver **exactly identity** when every correspondence is the identity, which is what keeps the
- * 32 image-border pins and the 16 per-face halo pins at zero displacement.
+ * Evaluates the optimal rotation + uniform scale (clamped to `[0.5, 2.0]` to guard degenerate
+ * near-collinear control clusters) directly from weighted moment matrices, keeping every identity
+ * correspondence at exact zero displacement.
  */
 internal object MlsSimilarity {
 
@@ -24,14 +18,7 @@ internal object MlsSimilarity {
     private const val MIN_SCALE = 0.5f
     private const val MAX_SCALE = 2.0f
 
-    /**
-     * Solves the inverse warp at [u], [v] and writes the sampling coordinate into [out][0..1].
-     *
-     * @param source Interleaved `(x, y)` deformed control positions.
-     * @param target Interleaved `(x, y)` original control positions.
-     * @param count Number of control pairs in [source] / [target].
-     * @param alpha Weight exponent; the paper's similarity deformation uses `1.0`.
-     */
+    /** Solves the inverse warp at [u], [v] and writes the sampling coordinate into [out][0..1]. */
     fun solve(
         source: FloatArray,
         target: FloatArray,
@@ -44,6 +31,18 @@ internal object MlsSimilarity {
         out[0] = u
         out[1] = v
         if (count <= 0) return
+        val centroids = weightedCentroids(source, target, count, u, v, alpha) ?: return
+        solveFromCentroids(source, target, count, u, v, alpha, centroids, out)
+    }
+
+    private fun weightedCentroids(
+        source: FloatArray,
+        target: FloatArray,
+        count: Int,
+        u: Float,
+        v: Float,
+        alpha: Float
+    ): FloatArray? {
         var weightSum = 0.0f
         var sourceX = 0.0f
         var sourceY = 0.0f
@@ -58,12 +57,24 @@ internal object MlsSimilarity {
             targetX += weight * target[offset]
             targetY += weight * target[offset + 1]
         }
-        if (!weightSum.isFinite() || weightSum <= EPSILON) return
-        val sourceCentreX = sourceX / weightSum
-        val sourceCentreY = sourceY / weightSum
-        val targetCentreX = targetX / weightSum
-        val targetCentreY = targetY / weightSum
+        if (!weightSum.isFinite() || weightSum <= EPSILON) return null
+        return floatArrayOf(sourceX / weightSum, sourceY / weightSum, targetX / weightSum, targetY / weightSum)
+    }
 
+    private fun solveFromCentroids(
+        source: FloatArray,
+        target: FloatArray,
+        count: Int,
+        u: Float,
+        v: Float,
+        alpha: Float,
+        centroids: FloatArray,
+        out: FloatArray
+    ) {
+        val sourceCentreX = centroids[0]
+        val sourceCentreY = centroids[1]
+        val targetCentreX = centroids[2]
+        val targetCentreY = centroids[3]
         var momentA = 0.0f
         var momentB = 0.0f
         var momentC = 0.0f
@@ -76,7 +87,6 @@ internal object MlsSimilarity {
             val sourceDy = source[offset + 1] - sourceCentreY
             val targetDx = target[offset] - targetCentreX
             val targetDy = target[offset + 1] - targetCentreY
-            // target ⊗ source, so the moments map a source-space offset onto target space.
             momentA += weight * targetDx * sourceDx
             momentB += weight * targetDx * sourceDy
             momentC += weight * targetDy * sourceDx

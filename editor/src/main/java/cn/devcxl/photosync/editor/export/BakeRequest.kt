@@ -42,7 +42,7 @@ sealed interface BakeResult {
     /**
      * The bake could not finish; the gallery entry (if any) was removed by the sink.
      *
-     * @property reason Short, user-presentable failure reason.
+     * @property reason Short diagnostic failure message for logging (UI displays localized messages).
      * @property cause Underlying error for logging, when available.
      */
     data class Failure(val reason: String, val cause: Throwable? = null) : BakeResult

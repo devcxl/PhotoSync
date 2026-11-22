@@ -1,9 +1,11 @@
 package cn.devcxl.photosync.editor.ui
 
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 
 import android.content.Context
 import android.graphics.Bitmap
+
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -14,7 +16,6 @@ import kotlinx.coroutines.withContext
 import timber.log.Timber
 
 import cn.devcxl.photosync.editor.domain.BodyGuides
-import cn.devcxl.photosync.editor.domain.BodyWarpSolver
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.LinearRawPreviewRenderer
 import cn.devcxl.photosync.editor.domain.PortraitAnalysis
@@ -60,8 +61,7 @@ internal class EditorPortraitCoordinator(
     @Volatile
     private var source: EditorSource? = null
 
-    @Volatile
-    private var parkedRelease: Boolean = false
+    private val parkedRelease = AtomicBoolean(false)
 
     private var downloadJob: Job? = null
     private var analysisJob: Job? = null
@@ -129,7 +129,7 @@ internal class EditorPortraitCoordinator(
                 analysisMutex.unlock()
             }
         } else {
-            parkedRelease = true
+            parkedRelease.set(true)
         }
     }
 
@@ -180,8 +180,7 @@ internal class EditorPortraitCoordinator(
             applyCurrentWarps(result)
             onWarpsPublished()
         } finally {
-            if (parkedRelease) {
-                parkedRelease = false
+            if (parkedRelease.getAndSet(false)) {
                 engine.release()
             }
         }

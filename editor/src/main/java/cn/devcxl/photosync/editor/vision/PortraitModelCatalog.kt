@@ -54,7 +54,4 @@ object PortraitBundledModels {
 
     /** Class index of face skin in [PortraitModelSpec.MULTICLASS_SELFIE]. */
     const val FACE_SKIN_CLASS = 3
-
-    /** Class index of clothes in [PortraitModelSpec.MULTICLASS_SELFIE]. */
-    const val CLOTHES_CLASS = 4
 }

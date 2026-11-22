@@ -131,7 +131,8 @@ class BakeExporter(
                 graphCurve = graph.color.curve,
                 lut = loadLut(graph)
             )
-            val frame = BakeFrameFactory.create(graph, source, outSize.first, outSize.second)
+            val maxWarpUv = maxAbsWarpUv(portrait.warpField)
+            val frame = BakeFrameFactory.create(graph, source, outSize.first, outSize.second, maxWarpUv)
             prepass.prepare(frame, outSize.first, outSize.second)
             return publish(request, graph, chain, source, frame, outSize, coroutine)
         } finally {
@@ -187,6 +188,17 @@ class BakeExporter(
             return BakeResult.Failure("gallery write failed")
         }
         return BakeResult.Success(uri, outWidth, outHeight, request.displayName)
+    }
+
+    private fun maxAbsWarpUv(field: cn.devcxl.photosync.editor.domain.WarpDisplacementField?): Float {
+        if (field == null || field.isZero()) return 0.0f
+        var maxDisp = 0.0f
+        val count = field.gridSize * field.gridSize * 2
+        for (i in 0 until count) {
+            val v = kotlin.math.abs(field.displacementRaw(i))
+            if (v > maxDisp) maxDisp = v
+        }
+        return maxDisp
     }
 
     private fun loadLiquifyMesh(graph: EditGraph): LiquifyMesh? {

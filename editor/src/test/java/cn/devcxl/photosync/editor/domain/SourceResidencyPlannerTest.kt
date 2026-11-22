@@ -121,6 +121,33 @@ class SourceResidencyPlannerTest {
         )
     }
 
+    @Test
+    fun shouldExpandTierTwoSliceBoundsByWarpMargin_whenWarpFieldIsActive() {
+        val band = ColumnBandTiling.columnBands(4000, 3000, ColumnBandTiling.rowStrips(3000)[1])[0]
+        val plain = SourceSlicePlanner.plan(
+            postCropToPreCrop = Mat3.identity(),
+            band = band,
+            cropWidth = 4000,
+            cropHeight = 3000,
+            sourceWidth = 4000,
+            sourceHeight = 3000,
+            extraMarginUv = 0.0f
+        )
+        val withWarp = SourceSlicePlanner.plan(
+            postCropToPreCrop = Mat3.identity(),
+            band = band,
+            cropWidth = 4000,
+            cropHeight = 3000,
+            sourceWidth = 4000,
+            sourceHeight = 3000,
+            extraMarginUv = 0.05f
+        )
+        assertEquals(0, withWarp.bounds.left)
+        assertTrue(withWarp.bounds.right >= plain.bounds.right + 190)
+        assertTrue(withWarp.bounds.top <= plain.bounds.top - 140)
+        assertTrue(withWarp.bounds.bottom >= plain.bounds.bottom + 140)
+    }
+
     private companion object {
         private const val RAM_3_GB = 3L * 1024L * 1024L * 1024L
         private const val RAM_4_GB = 4L * 1024L * 1024L * 1024L

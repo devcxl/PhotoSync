@@ -51,7 +51,7 @@ class PortraitWarpComposerTest {
     }
 
     @Test
-    fun shouldExposeTheComposedFieldThroughTheHalfFloatUploadContract() {
+    fun shouldExposeTheComposedFieldThroughTheHalfFloatUploadContract_whenReadingBits() {
         val face = constantGrid(0.004f, -0.002f)
 
         val field = PortraitWarpComposer.compose(face, null, null)

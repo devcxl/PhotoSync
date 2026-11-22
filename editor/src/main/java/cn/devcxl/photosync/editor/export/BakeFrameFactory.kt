@@ -28,7 +28,8 @@ internal object BakeFrameFactory {
         graph: EditGraph,
         source: BakeSourceTextures,
         outputWidth: Int,
-        outputHeight: Int
+        outputHeight: Int,
+        maxWarpDisplacementUv: Float = 0.0f
     ): BakeFrame {
         val aspect = source.width.toFloat() / source.height.toFloat()
         val outputAspect = outputWidth.toFloat() / outputHeight.toFloat()
@@ -53,7 +54,8 @@ internal object BakeFrameFactory {
             caBlueK = GeometryMath.lateralCaKFromSlider(aberration.blueYellow),
             cropWidth = outputWidth,
             cropHeight = outputHeight,
-            fullResolutionShortEdge = minOf(source.width, source.height)
+            fullResolutionShortEdge = minOf(source.width, source.height),
+            maxWarpDisplacementUv = maxWarpDisplacementUv
         )
     }
 

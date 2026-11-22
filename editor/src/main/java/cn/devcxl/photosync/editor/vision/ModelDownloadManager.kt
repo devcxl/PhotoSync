@@ -174,7 +174,9 @@ class ModelDownloadManager(
             return null
         } finally {
             runCatching { response?.body?.close() }
-            http.close()
+                .onFailure { Timber.w(it, "Failed to close model response body") }
+            runCatching { http.close() }
+                .onFailure { Timber.w(it, "Failed to close model HTTP source") }
         }
         return verifyAndPromote()
     }

@@ -45,6 +45,7 @@ internal object DetailShaderSources {
         uniform vec2 uClarityTexture;
         uniform vec4 uSharpen;
         uniform vec3 uSkinParams;
+        uniform float uSkinBlurScale;
         uniform float uDitherAmp;
 
         const vec3 LUMA_WEIGHTS = vec3(0.2126, 0.7152, 0.0722);
@@ -105,7 +106,7 @@ internal object DetailShaderSources {
         }
 
         float skinMaskWeight() {
-            return (uHasSkinMask == 1) ? clamp(texture(uSkinMaskTex, vTexCoord).r, 0.0, 1.0) : 0.0;
+            return (uHasSkinMask == 1) ? clamp(texture(uSkinMaskTex, guideUv()).r, 0.0, 1.0) : 0.0;
         }
 
         // Stage 0: portrait frequency separation, weighted by the dual-mode skin mask.
@@ -116,7 +117,8 @@ internal object DetailShaderSources {
             float textureKeep = clamp(uSkinParams.y, 0.0, 1.0);
             float toneAmount = clamp(uSkinParams.z, 0.0, 1.0);
             float y = luminance(srgb);
-            vec2 stepUv = uTexelSize * SKIN_BLUR_STEP;
+            float blurScale = max(uSkinBlurScale, 1.0);
+            vec2 stepUv = uTexelSize * SKIN_BLUR_STEP * blurScale;
             float base = 0.0;
             float weightSum = 0.0;
             for (int dy = -2; dy <= 2; dy++) {
@@ -132,7 +134,7 @@ internal object DetailShaderSources {
             float target = base + (y - base) * retention;
             vec3 result = clamp(srgb + vec3((target - y) * mask), 0.0, 1.0);
             if (toneAmount <= 0.0) return result;
-            vec2 wideStep = uTexelSize * SKIN_CHROMA_STEP;
+            vec2 wideStep = uTexelSize * SKIN_CHROMA_STEP * blurScale;
             vec2 chroma = vec2((result.b - target) / CB_SCALE, (result.r - target) / CR_SCALE);
             vec2 accum = vec2(0.0);
             float chromaWeight = 0.0;
@@ -258,9 +260,7 @@ internal object DetailShaderSources {
             float gate = (knee <= 0.0) ? 1.0 : smoothStep(knee, knee + THRESHOLD_SOFTNESS, abs(detail));
             float edge = smoothStep(0.0, MASK_GRADIENT_REFERENCE, localGradient());
             float maskWeight = 1.0 + (edge - 1.0) * clamp(uSharpen.w, 0.0, 1.0);
-            float skin = (uHasSkinMask == 1)
-                ? 1.0 - clamp(texture(uSkinMaskTex, vTexCoord).r, 0.0, 1.0)
-                : 1.0;
+            float skin = 1.0 - skinMaskWeight();
             return clamp(srgb + vec3(amount * detail * gate * maskWeight * skin), 0.0, 1.0);
         }
 

@@ -101,7 +101,7 @@ class BodyWarpSolverTest {
     }
 
     @Test
-    fun shouldPersistUserGuideOverrides_overTheDerivedDefaults() {
+    fun shouldPersistUserGuideOverrides_whenUserSuppliesCustomGuides() {
         val face = FaceMeshFixtures.face(centreU = 0.5f, centreV = 0.3f, width = 0.16f, height = 0.1f)
 
         val guides = BodyWarpSolver.resolveGuides(

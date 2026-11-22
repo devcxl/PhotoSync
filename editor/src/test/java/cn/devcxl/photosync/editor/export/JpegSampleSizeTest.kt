@@ -27,7 +27,7 @@ class JpegSampleSizeTest {
     }
 
     @Test
-    fun shouldScaleSmallSourcesToTinyBudgets() {
+    fun shouldScaleSmallSourcesToTinyBudgets_whenTargetBudgetIsSmallerThanSource() {
         assertEquals(4, jpegSampleSizeFor(100, 50, 32))
     }
 }

@@ -138,6 +138,14 @@ internal class ExposureGlProgram {
         quad.draw(aPositionLoc, aTexCoordLoc)
     }
 
+    /** Releases the compiled shader program when tearing down an EGL context. */
+    fun release() {
+        if (programId != 0) {
+            GLES20.glDeleteProgram(programId)
+            programId = 0
+        }
+    }
+
     private fun resolveBaseAndToneLocations() {
         aPositionLoc = GLES20.glGetAttribLocation(programId, "aPosition")
         aTexCoordLoc = GLES20.glGetAttribLocation(programId, "aTexCoord")

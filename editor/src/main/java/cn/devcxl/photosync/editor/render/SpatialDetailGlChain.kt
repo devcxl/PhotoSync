@@ -15,9 +15,8 @@ import cn.devcxl.photosync.editor.domain.TileUvTransform
  * Physical `SpatialDetailChain`: runs the planned Pass C sub-passes through a two-target ping-pong so
  * every stage reads a complete frame and never its own write.
  *
- * Scales `sharpenRadiusPx` by `workingShortEdge / fullResolutionShortEdge` to match the full-res
- * Bake and CPU preview cache, applies `1/255` triangular dithering whenever writing to a Tier 2
- * `GL_RGBA8` target, and offsets Pre-pass lookups via [TileUvTransform] during tiled exports.
+ * Scales `sharpenRadiusPx` by `workingShortEdge / fullResolutionShortEdge` and scales Stage 0 skin
+ * blur step proportionally to working resolution so preview and full-res Bake stay physically aligned.
  */
 internal class SpatialDetailGlChain {
 
@@ -64,10 +63,12 @@ internal class SpatialDetailGlChain {
     ): Int {
         lastDrawCalls = 0
         if (!program.isReady || inputTextureId == 0 || plan.stages.isEmpty()) return inputTextureId
-        val resolutionScale = (min(width, height).toFloat() / fullResolutionShortEdge.coerceAtLeast(1).toFloat())
-            .coerceIn(MIN_RESOLUTION_SCALE, 1.0f)
+        val fullShort = fullResolutionShortEdge.coerceAtLeast(1).toFloat()
+        val workingShort = min(width, height).coerceAtLeast(1).toFloat()
+        val resolutionScale = (workingShort / fullShort).coerceIn(MIN_RESOLUTION_SCALE, 1.0f)
         val scaledRadiusPx = (params.sharpenRadiusPx * resolutionScale)
             .coerceIn(SpatialDetailParams.MIN_SHARPEN_RADIUS_PX, SpatialDetailParams.MAX_SHARPEN_RADIUS_PX)
+        val skinBlurScale = (workingShort * SKIN_BLUR_REFERENCE_SCALE).coerceAtLeast(1.0f)
         var current = inputTextureId
         for ((index, stage) in plan.stages.withIndex()) {
             val target = pingPong[index % pingPong.size]
@@ -79,32 +80,9 @@ internal class SpatialDetailGlChain {
             val ditherAmp = if (target.isHalfFloatTarget) 0.0f else PassDEffectsMath.DITHER_AMPLITUDE
             target.bind()
             program.draw(
-                SpatialDetailDrawParams(
-                    stage = stage,
-                    inputTextureId = current,
-                    prepassTextureId = if (needsPrepass(stage)) prepassTextureId else 0,
-                    skinMaskTextureId = if (needsSkinMask(stage)) skinMaskTextureId else 0,
-                    skinSmooth = params.skinSmooth,
-                    skinTexture = params.skinTexture,
-                    skinEvenTone = params.skinEvenTone,
-                    dehazeStrength = params.dehaze,
-                    atmosphericLight = atmosphericLight,
-                    clarity = params.clarity,
-                    texture = params.texture,
-                    nrLuma = params.nrLuma,
-                    nrChroma = params.nrChroma,
-                    nrDetail = params.nrDetail,
-                    sharpenAmount = params.sharpenAmount,
-                    sharpenRadiusPx = scaledRadiusPx,
-                    sharpenThreshold = params.sharpenThreshold,
-                    sharpenMasking = params.sharpenMasking,
-                    texelWidth = width,
-                    texelHeight = height,
-                    ditherAmp = ditherAmp,
-                    guideUvScaleX = guideTransform.scaleX,
-                    guideUvScaleY = guideTransform.scaleY,
-                    guideUvOffsetX = guideTransform.offsetX,
-                    guideUvOffsetY = guideTransform.offsetY
+                buildStageDrawParams(
+                    stage, current, prepassTextureId, skinMaskTextureId, params,
+                    atmosphericLight, scaledRadiusPx, skinBlurScale, width, height, ditherAmp, guideTransform
                 )
             )
             target.unbind()
@@ -115,14 +93,56 @@ internal class SpatialDetailGlChain {
         return current
     }
 
+    private fun buildStageDrawParams(
+        stage: SpatialDetailStage,
+        inputTextureId: Int,
+        prepassTextureId: Int,
+        skinMaskTextureId: Int,
+        params: SpatialDetailParams,
+        atmosphericLight: FloatArray,
+        scaledRadiusPx: Float,
+        skinBlurScale: Float,
+        width: Int,
+        height: Int,
+        ditherAmp: Float,
+        guideTransform: TileUvTransform
+    ): SpatialDetailDrawParams = SpatialDetailDrawParams(
+        stage = stage,
+        inputTextureId = inputTextureId,
+        prepassTextureId = if (needsPrepass(stage)) prepassTextureId else 0,
+        skinMaskTextureId = if (needsSkinMask(stage)) skinMaskTextureId else 0,
+        skinSmooth = params.skinSmooth,
+        skinTexture = params.skinTexture,
+        skinEvenTone = params.skinEvenTone,
+        skinBlurScale = skinBlurScale,
+        dehazeStrength = params.dehaze,
+        atmosphericLight = atmosphericLight,
+        clarity = params.clarity,
+        texture = params.texture,
+        nrLuma = params.nrLuma,
+        nrChroma = params.nrChroma,
+        nrDetail = params.nrDetail,
+        sharpenAmount = params.sharpenAmount,
+        sharpenRadiusPx = scaledRadiusPx,
+        sharpenThreshold = params.sharpenThreshold,
+        sharpenMasking = params.sharpenMasking,
+        texelWidth = width,
+        texelHeight = height,
+        ditherAmp = ditherAmp,
+        guideUvScaleX = guideTransform.scaleX,
+        guideUvScaleY = guideTransform.scaleY,
+        guideUvOffsetX = guideTransform.offsetX,
+        guideUvOffsetY = guideTransform.offsetY
+    )
+
     private fun needsPrepass(stage: SpatialDetailStage): Boolean =
         stage == SpatialDetailStage.DEHAZE || stage == SpatialDetailStage.CLARITY_TEXTURE
 
-    /** Stage 0 weights its smoothing by the mask, Stage 4 suppresses sharpening with it. */
     private fun needsSkinMask(stage: SpatialDetailStage): Boolean =
         stage == SpatialDetailStage.SKIN_SMOOTHING || stage == SpatialDetailStage.SHARPEN
 
     private companion object {
         private const val MIN_RESOLUTION_SCALE = 0.05f
+        private const val SKIN_BLUR_REFERENCE_SCALE = 1.0f / 512.0f
     }
 }

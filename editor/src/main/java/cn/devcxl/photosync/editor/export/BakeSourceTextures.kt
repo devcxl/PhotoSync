@@ -13,7 +13,6 @@ import timber.log.Timber
 import cn.devcxl.photosync.editor.domain.SourceResidencyPlan
 import cn.devcxl.photosync.editor.domain.SourceResidencyTier
 import cn.devcxl.photosync.editor.domain.SourceSliceRequest
-import cn.devcxl.photosync.editor.domain.SourceSliceRect
 import cn.devcxl.photosync.editor.render.EditorBitmapLoader
 import cn.devcxl.photosync.editor.render.EditorTextureUploader
 import cn.devcxl.photosync.wrapper.LinearRawBuffer

@@ -89,7 +89,8 @@ internal class BakeBandEncoder(
             cropHeight = cropHeight,
             sourceWidth = source.width,
             sourceHeight = source.height,
-            maxEdgePx = source.maxSliceEdgePx
+            maxEdgePx = source.maxSliceEdgePx,
+            extraMarginUv = frameTemplate.maxWarpDisplacementUv
         )
         if (request.exceedsUploadLimit) {
             val reduced = source.uploadReducedFullFrame(source.maxSliceEdgePx)

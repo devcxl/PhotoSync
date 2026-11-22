@@ -80,6 +80,7 @@ object SourceSlicePlanner {
      * @param sourceHeight Upright source height in pixels.
      * @param marginPx Bilinear safety margin in source pixels.
      * @param maxEdgePx Longest slice edge the uploader accepts.
+     * @param extraMarginUv Extra normalized UV margin added when Pass A carries a warp field.
      */
     fun plan(
         postCropToPreCrop: Mat3,
@@ -89,7 +90,8 @@ object SourceSlicePlanner {
         sourceWidth: Int,
         sourceHeight: Int,
         marginPx: Int = MARGIN_PX,
-        maxEdgePx: Int = SourceResidencyPlanner.MAX_SLICE_EDGE_PX
+        maxEdgePx: Int = SourceResidencyPlanner.MAX_SLICE_EDGE_PX,
+        extraMarginUv: Float = 0.0f
     ): SourceSliceRequest {
         require(cropWidth > 0 && cropHeight > 0) { "Crop frame must be positive" }
         require(sourceWidth > 0 && sourceHeight > 0) { "Source frame must be positive" }
@@ -112,11 +114,12 @@ object SourceSlicePlanner {
         if (minU > maxU || minV > maxV) {
             return SourceSliceRequest(SourceSliceRect.FULL, fullBounds(sourceWidth, sourceHeight), false)
         }
+        val warpMargin = extraMarginUv.takeIf { it.isFinite() && it > 0.0f } ?: 0.0f
         val bounds = clampBounds(
-            left = floor(minU * sourceWidth).toInt() - marginPx,
-            top = floor(minV * sourceHeight).toInt() - marginPx,
-            right = ceil(maxU * sourceWidth).toInt() + marginPx,
-            bottom = ceil(maxV * sourceHeight).toInt() + marginPx,
+            left = floor((minU - warpMargin) * sourceWidth).toInt() - marginPx,
+            top = floor((minV - warpMargin) * sourceHeight).toInt() - marginPx,
+            right = ceil((maxU + warpMargin) * sourceWidth).toInt() + marginPx,
+            bottom = ceil((maxV + warpMargin) * sourceHeight).toInt() + marginPx,
             sourceWidth = sourceWidth,
             sourceHeight = sourceHeight
         )

@@ -3,7 +3,6 @@ package cn.devcxl.photosync.editor.vision
 import android.content.Context
 import android.content.SharedPreferences
 
-import com.google.mediapipe.framework.MediaPipeException
 import com.google.mediapipe.tasks.core.Delegate
 import timber.log.Timber
 
@@ -46,17 +45,12 @@ class MediaPipeDelegatePolicy(
         if (preferredDelegate() == Delegate.GPU) {
             try {
                 return factory(Delegate.GPU)
-            } catch (e: MediaPipeException) {
-                recordGpuFailure(e)
             } catch (e: RuntimeException) {
                 recordGpuFailure(e)
             }
         }
         return try {
             factory(Delegate.CPU)
-        } catch (e: MediaPipeException) {
-            Timber.e(e, "MediaPipe task could not be created on the CPU delegate")
-            null
         } catch (e: RuntimeException) {
             Timber.e(e, "MediaPipe task could not be created on the CPU delegate")
             null
