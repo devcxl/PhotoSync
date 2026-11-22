@@ -1,4 +1,4 @@
-package cn.devcxl.photosync.export
+package cn.devcxl.photosync.editor.export
 
 import java.util.Calendar
 import java.util.TimeZone
@@ -9,6 +9,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
 
+import cn.devcxl.photosync.editor.contract.ExifTagWriter
 import cn.devcxl.photosync.wrapper.RawExifMetadata
 
 class ExifCopierTest {

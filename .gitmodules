@@ -4,3 +4,6 @@
 [submodule "libraw/src/main/cpp/third_party/Little-CMS"]
 	path = libraw/src/main/cpp/third_party/Little-CMS
 	url = https://github.com/mm2/Little-CMS.git
+[submodule "libraw/src/main/cpp/third_party/libjpeg-turbo"]
+	path = libraw/src/main/cpp/third_party/libjpeg-turbo
+	url = https://github.com/libjpeg-turbo/libjpeg-turbo.git

@@ -11,6 +11,8 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+import cn.devcxl.photosync.editor.contract.ExifTagWriter
+
 class GallerySinkTest {
 
     private class FakeScopedMediaStoreBackend : ScopedMediaStoreBackend<String> {

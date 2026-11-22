@@ -1,4 +1,4 @@
-package cn.devcxl.photosync.export
+package cn.devcxl.photosync.editor.export
 
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -9,6 +9,7 @@ import kotlin.math.roundToInt
 import androidx.exifinterface.media.ExifInterface
 import timber.log.Timber
 
+import cn.devcxl.photosync.editor.contract.ExifTagWriter
 import cn.devcxl.photosync.wrapper.RawExifMetadata
 
 /**
@@ -20,8 +21,6 @@ interface ExifTagReader {
     fun getLatLong(): DoubleArray?
     fun getAltitude(defaultValue: Double): Double
 }
-
-typealias ExifTagWriter = cn.devcxl.photosync.editor.contract.ExifTagWriter
 
 /**
  * Adapter bridging AndroidX [ExifInterface] to [ExifTagReader] and [ExifTagWriter].

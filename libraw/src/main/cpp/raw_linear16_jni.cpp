@@ -8,6 +8,7 @@
 #include "libraw.h"
 #include "jni_raii_guards.h"
 #include "raw_autobright.h"
+#include "raw_decode_config.h"
 #include "raw_linear16.h"
 #include "raw_log.h"
 
@@ -28,30 +29,7 @@ constexpr jlong kBytesPerTexel = 8;
 // allocation from being OOM-killed on low-memory devices.
 constexpr jlong kMaxBufferBytes = 512LL * 1024 * 1024;
 
-/** Applies the spec §4 16-bit linear sRGB decode configuration. */
-void configureLinearOutput(libraw_output_params_t& params) {
-    params.output_bps = 16;
-    params.output_color = 1;   // sRGB primaries
-    params.output_tiff = 0;    // PPM/BITMAP output (in-memory)
-    params.gamm[0] = 1.0;      // Linear transfer function (no sRGB encode)
-    params.gamm[1] = 1.0;
-
-    params.use_camera_wb = 1;
-    params.use_auto_wb = 0;
-    // Auto-brightening is reproduced on the GPU so the raw linear headroom survives.
-    params.no_auto_bright = 1;
-    params.bright = 1.0f;
-
-    params.user_qual = 2;
-    params.med_passes = 0;
-    params.fbdd_noiserd = 0;
-    params.threshold = 0.0;
-    params.highlight = 2;
-
-    params.aber[0] = 1.0;
-    params.aber[1] = 1.0;
-    params.aber[2] = 1.0;
-}
+using photosync::raw::configureLinearDecode;
 
 /** True when LibRaw can halve the demosaic without losing the requested preview resolution. */
 bool shouldUseHalfSize(const LibRaw& proc, jint maxLongEdge) {
@@ -94,7 +72,7 @@ libraw_processed_image_t* processLinearImage(
     outAutoBrightGain = 1.0f;
     outEffectiveIso = 0.0f;
     libraw_output_params_t& params = proc.imgdata.params;
-    configureLinearOutput(params);
+    configureLinearDecode(params);
 
     int ret = proc.open_file(path);
     if (ret != LIBRAW_SUCCESS) {

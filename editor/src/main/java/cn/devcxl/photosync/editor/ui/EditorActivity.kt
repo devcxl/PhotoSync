@@ -1,6 +1,5 @@
 package cn.devcxl.photosync.editor.ui
 
-import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -57,6 +56,7 @@ class EditorActivity : AppCompatActivity(),
     private lateinit var topBar: EditorTopBarBinder
     private lateinit var canvas: EditorCanvasBinder
     private lateinit var lutImporter: EditorLutImportCoordinator
+    private lateinit var exportCoordinator: EditorExportCoordinator
     private val renderer = EditorGlRenderer()
     private val undoController = EditorUndoController()
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -87,8 +87,15 @@ class EditorActivity : AppCompatActivity(),
         overlaySync.syncBrush()
         lutImporter = EditorLutImportCoordinator(this, lutStore, undoController, previewSession) {
             renderCurrentGraph(useProxy = false)
-            updateHistoryButtons()
+            topBar.updateHistoryButtons()
         }
+        exportCoordinator = EditorExportCoordinator(
+            context = this,
+            scope = lifecycleScope,
+            filesDir = filesDir,
+            onExportingChanged = topBar::setExportEnabled,
+            onFinished = { topBar.updateHistoryButtons() }
+        )
         panel.selectGroup(EditorGroup.TONE)
         loadInitialPhotoAndEditState()
     }
@@ -131,7 +138,7 @@ class EditorActivity : AppCompatActivity(),
         binding.liquifyBrushOverlayView.visibility = if (liquifyActive) View.VISIBLE else View.GONE
         overlaySync.sync(undoController.currentGraph)
         renderCurrentGraph(useProxy = false)
-        updateHistoryButtons()
+        topBar.updateHistoryButtons()
     }
 
     override fun onGraphEdited(graph: EditGraph, parameterKey: EditParameterKey) {
@@ -143,7 +150,7 @@ class EditorActivity : AppCompatActivity(),
     override fun onGraphCommitted(graph: EditGraph, parameterKey: EditParameterKey) {
         mainHandler.removeCallbacks(settleFullQualityRunnable)
         renderCurrentGraph(useProxy = false)
-        updateHistoryButtons()
+        topBar.updateHistoryButtons()
     }
 
     override fun previewAspect(): Float = EditorPreviewGeometry.previewAspect(
@@ -159,7 +166,7 @@ class EditorActivity : AppCompatActivity(),
 
     override fun onLiquifyResetRequested() {
         historyCoordinator.requestLiquifyReset()
-        updateHistoryButtons()
+        topBar.updateHistoryButtons()
     }
 
     override fun onLutImportRequested() {
@@ -173,7 +180,7 @@ class EditorActivity : AppCompatActivity(),
 
     override fun onPreviewDragFinished() {
         renderCurrentGraph(useProxy = false)
-        updateHistoryButtons()
+        topBar.updateHistoryButtons()
     }
 
     override fun onLiquifyMeshChanged() {
@@ -183,7 +190,7 @@ class EditorActivity : AppCompatActivity(),
     override fun onLiquifyStrokeFinished() {
         historyCoordinator.onLiquifyStrokeCommitted()
         renderCurrentGraph(useProxy = false)
-        updateHistoryButtons()
+        topBar.updateHistoryButtons()
     }
 
     override fun onCompareChanged(comparing: Boolean) {
@@ -202,14 +209,30 @@ class EditorActivity : AppCompatActivity(),
     }
 
     override fun onDoneRequested() {
-        saveEditAndFinish()
+        binding.btnDone.isEnabled = false
+        EditorFinishAction.saveAndFinish(
+            activity = this,
+            scope = lifecycleScope,
+            photoId = photoId,
+            sourcePath = sourcePath,
+            graph = undoController.currentGraph,
+            save = saveCoordinator::persist,
+            onSaveFailed = {
+                binding.btnDone.isEnabled = true
+                Toast.makeText(this, R.string.editor_save_failed, Toast.LENGTH_SHORT).show()
+            }
+        )
+    }
+
+    override fun onExportRequested() {
+        exportCoordinator.export(sourcePath, photoId, isRaw, undoController.currentGraph)
     }
 
     private fun applyHistoryGraph(graph: EditGraph) {
         mainHandler.removeCallbacks(settleFullQualityRunnable)
         renderCurrentGraph(useProxy = false)
-        updateBaseLookPill(graph.baseLook)
-        updateHistoryButtons()
+        topBar.updateBaseLookPill(graph.baseLook, isRaw && previewSession.supportsBaseLook)
+        topBar.updateHistoryButtons()
     }
 
     private fun renderCurrentGraph(useProxy: Boolean) {
@@ -218,7 +241,7 @@ class EditorActivity : AppCompatActivity(),
         val lutWarm = previewSession.applyGraph(preview, useProxy = useProxy)
         overlaySync.sync(graph)
         panel.refresh()
-        updateBaseLookPill(graph.baseLook)
+        topBar.updateBaseLookPill(graph.baseLook, isRaw && previewSession.supportsBaseLook)
         binding.glSurfaceView.requestRender()
         if (!lutWarm) preloadLutAsync(graph)
     }
@@ -243,14 +266,6 @@ class EditorActivity : AppCompatActivity(),
         binding.glSurfaceView.requestRender()
     }
 
-    private fun updateBaseLookPill(baseLook: BaseLook) {
-        topBar.updateBaseLookPill(baseLook, isRaw && previewSession.supportsBaseLook)
-    }
-
-    private fun updateHistoryButtons() {
-        topBar.updateHistoryButtons()
-    }
-
     private fun loadInitialPhotoAndEditState() {
         lifecycleScope.launch {
             val loaded = sessionLoader.load(sourcePath, isRaw, preferLinearSource)
@@ -262,26 +277,7 @@ class EditorActivity : AppCompatActivity(),
             historyCoordinator.resetSession(loaded.graph)
             publishLiquifyMesh()
             renderCurrentGraph(useProxy = false)
-            updateHistoryButtons()
-        }
-    }
-
-    private fun saveEditAndFinish() {
-        binding.btnDone.isEnabled = false
-        val finalGraph = undoController.currentGraph
-        lifecycleScope.launch {
-            val saved = saveCoordinator.persist(finalGraph)
-            if (!saved) {
-                binding.btnDone.isEnabled = true
-                Toast.makeText(this@EditorActivity, R.string.editor_save_failed, Toast.LENGTH_SHORT).show()
-                return@launch
-            }
-            val resultIntent = Intent().apply {
-                putExtra(EXTRA_PHOTO_ID, photoId)
-                putExtra(EXTRA_SOURCE_PATH, sourcePath)
-            }
-            setResult(Activity.RESULT_OK, resultIntent)
-            finish()
+            topBar.updateHistoryButtons()
         }
     }
 

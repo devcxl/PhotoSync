@@ -17,6 +17,7 @@ import timber.log.Timber
 
 import cn.devcxl.photosync.editor.contract.ExifTagWriter
 import cn.devcxl.photosync.editor.contract.GallerySink
+import cn.devcxl.photosync.editor.export.AndroidExifTagAdapter
 
 /**
  * Seam for API 29+ scoped MediaStore operations (`IS_PENDING = 1` → `"w"` stream → `"rw"`

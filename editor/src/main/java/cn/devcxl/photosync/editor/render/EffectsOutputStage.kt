@@ -19,7 +19,10 @@ internal data class EffectsStageRequest(
     val offsetX: Float,
     val offsetY: Float,
     val effects: PassDEffectsParams,
-    val passBDraw: ExposureDrawParams
+    val passBDraw: ExposureDrawParams,
+    /** Pixel size of the rendered frame, used as the global dither coordinate scale. */
+    val pixelScaleX: Int = 0,
+    val pixelScaleY: Int = 0
 )
 
 /**
@@ -105,7 +108,12 @@ internal class EffectsOutputStage(private val exposureProgram: ExposureGlProgram
         )
         stagingTarget.unbind()
         GLES20.glViewport(0, 0, request.viewportWidth, request.viewportHeight)
-        drawFromTexture(stagingTarget.textureId, request)
+        drawFromTextureInternal(
+            stagingTarget.textureId,
+            request,
+            pixelScaleX = request.pixelScaleX.takeIf { it > 0 } ?: stagingTarget.width,
+            pixelScaleY = request.pixelScaleY.takeIf { it > 0 } ?: stagingTarget.height
+        )
         return true
     }
 
@@ -114,6 +122,20 @@ internal class EffectsOutputStage(private val exposureProgram: ExposureGlProgram
      */
     fun drawFromTexture(inputTextureId: Int, request: EffectsStageRequest) {
         GLES20.glViewport(0, 0, request.viewportWidth, request.viewportHeight)
+        drawFromTextureInternal(
+            inputTextureId,
+            request,
+            pixelScaleX = request.pixelScaleX.takeIf { it > 0 } ?: request.viewportWidth,
+            pixelScaleY = request.pixelScaleY.takeIf { it > 0 } ?: request.viewportHeight
+        )
+    }
+
+    private fun drawFromTextureInternal(
+        inputTextureId: Int,
+        request: EffectsStageRequest,
+        pixelScaleX: Int,
+        pixelScaleY: Int
+    ) {
         program.draw(
             EffectsDrawParams(
                 textureId = inputTextureId,
@@ -124,7 +146,9 @@ internal class EffectsOutputStage(private val exposureProgram: ExposureGlProgram
                 offsetX = request.offsetX,
                 offsetY = request.offsetY,
                 effects = request.effects.withLutSize(lutTexture.sampleSize),
-                ditherAmp = PassDEffectsMath.DITHER_AMPLITUDE
+                ditherAmp = PassDEffectsMath.DITHER_AMPLITUDE,
+                pixelScaleX = pixelScaleX.toFloat(),
+                pixelScaleY = pixelScaleY.toFloat()
             )
         )
     }

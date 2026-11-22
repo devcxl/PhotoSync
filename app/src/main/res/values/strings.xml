@@ -9,6 +9,11 @@
     <string name="toast_export_failed_invalid_path">导出失败：路径无效</string>
     <string name="toast_saved_to_gallery">已导出到相册: %1$s</string>
     <string name="toast_save_failed">导出失败</string>
+    <string name="toast_baking_export">正在烘焙导出 %1$s</string>
+    <string name="toast_baked_saved">已导出成片: %1$s</string>
+    <string name="toast_bake_failed">烘焙导出失败，请检查存储空间</string>
+    <string name="export_menu_edited">导出编辑后成片</string>
+    <string name="export_menu_original">导出未编辑原图</string>
     <string name="toast_storage_permission_denied">未授予存储权限，无法导出</string>
     <string name="usb_inserted">已检测到相机，点击左上角「未连接 · 点击连接」开始同步</string>
     <string name="usb_removed">相机已断开</string>
