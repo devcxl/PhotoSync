@@ -32,3 +32,4 @@ local.properties
 /.idea/copilot.data.migration.*.xml
 # Kotlin incremental compilation state
 .kotlin/
+.worktrees/
