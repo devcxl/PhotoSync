@@ -19,6 +19,16 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
+    <!-- Geometry overlay: crop handles, straighten grid and perspective pins -->
+    <cn.devcxl.photosync.editor.ui.widgets.CropOverlayView
+        android:id="@+id/cropOverlayView"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        app:layout_constraintBottom_toTopOf="@id/bottomPanel"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
     <!-- Compare-original status pill -->
     <TextView
         android:id="@+id/compareStatusPill"
@@ -176,23 +186,23 @@
                 android:id="@+id/subToolChipContainer"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal">
+                android:orientation="horizontal" />
+        </HorizontalScrollView>
 
-                <TextView
-                    android:id="@+id/chipExposure"
-                    android:layout_width="wrap_content"
-                    android:layout_height="30dp"
-                    android:background="@color/editor_surface_elevated"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:gravity="center"
-                    android:paddingStart="14dp"
-                    android:paddingEnd="14dp"
-                    android:text="@string/editor_tool_exposure"
-                    android:textColor="@color/editor_text_primary"
-                    android:textSize="12sp"
-                    android:textStyle="bold" />
-            </LinearLayout>
+        <!-- Tier 2b: crop aspect-ratio lock chips -->
+        <HorizontalScrollView
+            android:id="@+id/aspectChipScroll"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:scrollbars="none"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:id="@+id/aspectChipContainer"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal" />
         </HorizontalScrollView>
 
         <!-- Tier 3: 6 fixed category tabs -->

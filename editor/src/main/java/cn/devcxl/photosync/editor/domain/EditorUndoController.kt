@@ -2,9 +2,18 @@ package cn.devcxl.photosync.editor.domain
 
 /**
  * Typed parameter keys for [EditorUndoController] coalescing windows.
+ *
+ * Keys are grouped by the tool that produced the change so a continuous drag on one slider
+ * collapses into a single undo step while switching tools always starts a new one.
  */
 enum class EditParameterKey {
-    TONE_EXPOSURE
+    TONE_EXPOSURE,
+    GEOMETRY_CROP,
+    GEOMETRY_STRAIGHTEN,
+    GEOMETRY_PERSPECTIVE,
+    GEOMETRY_ROTATE_FLIP,
+    DETAIL_CA_RED_CYAN,
+    DETAIL_CA_BLUE_YELLOW
 }
 
 /**
