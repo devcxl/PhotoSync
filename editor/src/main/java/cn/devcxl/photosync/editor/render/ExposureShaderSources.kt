@@ -84,7 +84,9 @@ internal object ExposureShaderSources {
         }
     """.trimIndent()
 
-    /** Pass B upper half. Mirrors `ToneShaderMath` stage for stage. */
+    /**
+     * Pass B upper half. Mirrors `ToneShaderMath` stage for stage; the constants must not drift.
+     */
     private val TONE_GLSL = """
         const vec3 LUMA_WEIGHTS = vec3(0.2126, 0.7152, 0.0722);
 
@@ -110,6 +112,8 @@ internal object ExposureShaderSources {
             return exp(-0.5 * ratio * ratio);
         }
 
+        // Linear stage: white balance -> exposure -> middle-gray brightness -> highlight trims.
+        // Every trim runs before the [0, 1] clip so negative values still see Y > 1 headroom.
         vec3 toneLinear(vec3 c) {
             if (uHasWb == 1) {
                 c = uWb * c;
@@ -128,6 +132,7 @@ internal object ExposureShaderSources {
             return c;
         }
 
+        // Display stage: shoulder, sRGB encode, blacks toe, piecewise contrast, glow stages 1-2.
         float displayLuminance(float linearLuminance) {
             float y = encodeSrgbScalar(softShoulder(linearLuminance));
             y = y + 0.18 * uBlacks * y * (1.0 - y) * (1.0 - y);
@@ -144,6 +149,8 @@ internal object ExposureShaderSources {
             return clamp(glow, 0.0, 1.0);
         }
 
+        // Hue-preserving recombine: scale by the new luminance, then compress over-range channels
+        // towards the luminance so a lifted saturated shadow desaturates instead of hue-shifting.
         vec3 toneDisplay(vec3 linearRgb) {
             float y = max(luminance(linearRgb), 0.0);
             float display = displayLuminance(y);
@@ -247,6 +254,34 @@ internal object ExposureShaderSources {
                 srgb = applyColorGrading(srgb);
             }
             gl_FragColor = vec4(srgb, src.a);
+        }
+    """.trimIndent()
+
+    /** Tier 3 minimal fallback shader (6 uniforms): BaseLook + Exposure only when ES 2.0 uniform limits fail. */
+    val FRAGMENT_SHADER_MINIMAL_ES2 = """
+        precision mediump float;
+        varying vec2 vTexCoord;
+        uniform sampler2D uTex0;
+        uniform int uCompareOriginal;
+        uniform int uIsLinearInput;
+        uniform int uBaseLook;
+        uniform float uAutoBrightGain;
+        uniform float uExposureEv;
+
+        $SRGB_GLSL
+        $CAMERA_DEFAULT_GLSL
+
+        void main() {
+            vec4 src = texture2D(uTex0, vTexCoord);
+            vec3 linear = (uIsLinearInput == 1)
+                ? applyBaseLook(max(src.rgb, vec3(0.0)) * uAutoBrightGain)
+                : decodeSrgb(src.rgb);
+            if (uCompareOriginal == 1) {
+                gl_FragColor = vec4(encodeSrgb(linear), src.a);
+                return;
+            }
+            vec3 exposed = linear * exp2(uExposureEv);
+            gl_FragColor = vec4(encodeSrgb(clamp(exposed, 0.0, 1.0)), src.a);
         }
     """.trimIndent()
 }

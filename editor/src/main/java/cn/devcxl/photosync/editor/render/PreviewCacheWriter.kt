@@ -61,10 +61,7 @@ internal object PreviewCacheWriter {
         val sourceAspect = source.width.toFloat() / source.height.toFloat()
         val outputAspect = GeometryMath.outputAspect(graph.geometry, sourceAspect)
         val (outW, outH) = previewSize(outputAspect)
-        val geometryActive = !graph.geometry.isIdentity() ||
-            graph.effects.ca.redCyan != 0 ||
-            graph.effects.ca.blueYellow != 0 ||
-            liquifyMesh != null
+        val geometryActive = graph.requiresPassAGeometry(hasWarp = liquifyMesh != null)
         val linearFrame = if (geometryActive) {
             val ca = graph.effects.ca
             GeometryCpuResampler.resampleLinear(
@@ -135,13 +132,14 @@ internal object PreviewCacheWriter {
         }
         val linear = FloatArray(CHANNELS_RGB)
         val display = FloatArray(CHANNELS_RGB)
+        val scratch = PassBColorMath.Scratch()
         for (index in pixels.indices) {
             val pixel = pixels[index]
             linear[0] = ExposureShaderMath.decodeSrgb(((pixel ushr 16) and 0xFF) / 255.0f)
             linear[1] = ExposureShaderMath.decodeSrgb(((pixel ushr 8) and 0xFF) / 255.0f)
             linear[2] = ExposureShaderMath.decodeSrgb((pixel and 0xFF) / 255.0f)
             val grad = lumaMap?.let { Srgb8Packer.neighborGradient(it, width, height, index) } ?: 0.0f
-            PassBColorMath.apply(toneParams, colorParams, curveLut, linear, display, grad)
+            PassBColorMath.apply(toneParams, colorParams, curveLut, linear, display, grad, scratch)
             pixels[index] = Srgb8Packer.packRgb(
                 display[0],
                 display[1],

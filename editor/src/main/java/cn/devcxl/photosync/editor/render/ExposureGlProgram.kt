@@ -92,7 +92,20 @@ internal class ExposureGlProgram {
             )
         }
         if (programId == 0) {
-            Timber.e("Failed to compile both GLES 3.0 and fallback tone shaders")
+            val renderer = GLES20.glGetString(GLES20.GL_RENDERER).orEmpty()
+            val version = GLES20.glGetString(GLES20.GL_VERSION).orEmpty()
+            Timber.e(
+                "Full Pass B shaders failed on renderer=%s version=%s; falling back to Tier 3 minimal shader",
+                renderer,
+                version
+            )
+            programId = GlShaderCompiler.buildProgram(
+                ExposureShaderSources.VERTEX_SHADER_ES2,
+                ExposureShaderSources.FRAGMENT_SHADER_MINIMAL_ES2
+            )
+        }
+        if (programId == 0) {
+            Timber.e("Failed to compile even Tier 3 minimal fallback shader")
             return
         }
         resolveBaseAndToneLocations()
@@ -201,10 +214,10 @@ internal class ExposureGlProgram {
         GLES20.glUniform1f(uFadeLoc, color.fade)
         GLES20.glUniform1f(uDefringeLoc, color.defringe)
         GLES20.glUniform1i(uHslActiveLoc, if (color.hasHsl) 1 else 0)
-        GLES20.glUniform3fv(uHslBandsLoc, ColorGradingParams.HSL_BAND_COUNT, color.hslBands, 0)
+        GLES20.glUniform3fv(uHslBandsLoc, ColorGradingParams.HSL_BAND_COUNT, color.hslBandsCopy(), 0)
         GLES20.glUniform1i(uSplitActiveLoc, if (color.hasSplit) 1 else 0)
-        GLES20.glUniform2f(uSplitHiAbLoc, color.splitHiAb[0], color.splitHiAb[1])
-        GLES20.glUniform2f(uSplitShAbLoc, color.splitShAb[0], color.splitShAb[1])
+        GLES20.glUniform2f(uSplitHiAbLoc, color.splitHiA, color.splitHiB)
+        GLES20.glUniform2f(uSplitShAbLoc, color.splitShA, color.splitShB)
         GLES20.glUniform1f(uSplitBalanceLoc, color.splitBalance)
     }
 }

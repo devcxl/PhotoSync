@@ -8,7 +8,6 @@ package cn.devcxl.photosync.editor.domain
 object EditValidator {
 
     private const val MIN_CROP_SPAN = 0.05f
-    private const val MIN_CURVE_DX = 1.0f / 256.0f
     private const val SHA256_HEX_LENGTH = 64
 
     fun sanitize(graph: EditGraph): EditGraph {
@@ -111,21 +110,8 @@ object EditValidator {
         magenta = h.magenta.sanitized()
     )
 
-    private fun sanitizeCurvePoints(points: List<CurvePoint>): List<CurvePoint> {
-        val valid = points
-            .filter { it.x.isFinite() && it.y.isFinite() }
-            .map { CurvePoint(it.x.coerceIn(0.0f, 1.0f), it.y.coerceIn(0.0f, 1.0f)) }
-            .sortedBy { it.x }
-        if (valid.size < 2) return CurveOps.DEFAULT_LINEAR_CURVE
-        val deduplicated = mutableListOf(valid.first())
-        for (i in 1 until valid.size) {
-            if (valid[i].x - deduplicated.last().x >= MIN_CURVE_DX) {
-                deduplicated += valid[i]
-            }
-            if (deduplicated.size >= 16) break
-        }
-        return if (deduplicated.size >= 2) deduplicated else CurveOps.DEFAULT_LINEAR_CURVE
-    }
+    private fun sanitizeCurvePoints(points: List<CurvePoint>): List<CurvePoint> =
+        MonotoneCubicCurve.sanitizePoints(points)
 
     private fun sanitizeDetail(d: DetailOps): DetailOps = DetailOps(
         sharpen = SharpenOps(

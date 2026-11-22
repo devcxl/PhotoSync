@@ -80,14 +80,31 @@ class MonotoneCubicCurveTest {
     }
 
     @Test
-    fun shouldEnforceMinimumSpacingAndMaxSixteenPoints_whenSanitizingKnots() {
+    fun shouldEnforceMinimumSpacingAndMaxSixteenPointsPreservingTailEndpoint_whenSanitizingKnots() {
         val crowded = (0 until 24).map { i -> CurvePoint(i * 0.002f, i / 24.0f) }
-        val sanitized = MonotoneCubicCurve.sanitizePoints(crowded)
+        val sanitizedCrowded = MonotoneCubicCurve.sanitizePoints(crowded)
 
-        assertTrue(sanitized.size in 2..16)
-        for (i in 1 until sanitized.size) {
-            assertTrue(sanitized[i].x - sanitized[i - 1].x >= MonotoneCubicCurve.MIN_SPACING - 1e-7f)
+        assertTrue(sanitizedCrowded.size in 2..16)
+        for (i in 1 until sanitizedCrowded.size) {
+            assertTrue(
+                sanitizedCrowded[i].x - sanitizedCrowded[i - 1].x >= MonotoneCubicCurve.MIN_SPACING - 1e-7f
+            )
         }
+
+        val overMax = (0 until 20).map { i -> CurvePoint(i / 19.0f, i / 19.0f) }
+        val sanitizedOverMax = MonotoneCubicCurve.sanitizePoints(overMax)
+        assertEquals(MonotoneCubicCurve.MAX_POINTS, sanitizedOverMax.size)
+        assertEquals(1.0f, sanitizedOverMax.last().x, 1e-6f)
+    }
+
+    @Test
+    fun shouldAlignGlTextureCenterCoordinatesWithCpuLutSampling_whenMappingZeroAndOne() {
+        assertEquals(0.5f / CurveLutBuilder.LUT_SIZE.toFloat(), CurveLutBuilder.glTextureCoord(0.0f), 1e-7f)
+        assertEquals(
+            (CurveLutBuilder.LUT_SIZE - 0.5f) / CurveLutBuilder.LUT_SIZE.toFloat(),
+            CurveLutBuilder.glTextureCoord(1.0f),
+            1e-7f
+        )
     }
 
     private fun randomKnotSet(rng: Random, monotonic: Boolean): List<CurvePoint> {

@@ -79,7 +79,7 @@ internal object EditorToolCatalog {
             cropAndStraightenSpecs() +
                 flipAndPerspectiveSpecs() +
                 EditorToneDetailSpecs.toneSpecs() +
-                EditorToneDetailSpecs.colourSpecs() +
+                EditorColorSpecs.colourSpecs() +
                 EditorToneDetailSpecs.detailSpecs()
             )
             .associateBy { it.tool }

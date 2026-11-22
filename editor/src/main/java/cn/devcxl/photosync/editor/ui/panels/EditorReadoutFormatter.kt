@@ -45,37 +45,32 @@ internal class EditorReadoutFormatter(private val context: Context) {
             )
             EditorTool.FLIP_HORIZONTAL -> onOff(graph.geometry.flipH)
             EditorTool.FLIP_VERTICAL -> onOff(graph.geometry.flipV)
-            EditorTool.LIQUIFY -> context.getString(
-                if (graph.geometry.liquify != null) {
-                    R.string.editor_value_liquify_modified
-                } else {
-                    R.string.editor_value_liquify_none
-                }
+            EditorTool.LIQUIFY -> statusText(
+                graph.geometry.liquify != null,
+                R.string.editor_value_liquify_modified,
+                R.string.editor_value_liquify_none
             )
-            EditorTool.CURVE -> context.getString(
-                if (graph.color.curve.isIdentity()) {
-                    R.string.editor_value_curve_linear
-                } else {
-                    R.string.editor_value_curve_modified
-                }
+            EditorTool.CURVE -> statusText(
+                !graph.color.curve.isIdentity(),
+                R.string.editor_value_curve_modified,
+                R.string.editor_value_curve_linear
             )
-            EditorTool.HSL -> context.getString(
-                if (graph.color.hsl.isIdentity()) {
-                    R.string.editor_value_hsl_none
-                } else {
-                    R.string.editor_value_hsl_modified
-                }
+            EditorTool.HSL -> statusText(
+                !graph.color.hsl.isIdentity(),
+                R.string.editor_value_hsl_modified,
+                R.string.editor_value_hsl_none
             )
-            EditorTool.SPLIT_TONING -> context.getString(
-                if (graph.color.split.isIdentity()) {
-                    R.string.editor_value_split_none
-                } else {
-                    R.string.editor_value_split_modified
-                }
+            EditorTool.SPLIT_TONING -> statusText(
+                !graph.color.split.isIdentity(),
+                R.string.editor_value_split_modified,
+                R.string.editor_value_split_none
             )
             else -> ""
         }
     }
+
+    private fun statusText(modified: Boolean, modifiedRes: Int, neutralRes: Int): String =
+        context.getString(if (modified) modifiedRes else neutralRes)
 
     /**
      * Formats a dial value with the tool's own unit and precision.

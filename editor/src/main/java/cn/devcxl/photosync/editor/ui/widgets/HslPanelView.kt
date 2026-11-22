@@ -1,8 +1,5 @@
 package cn.devcxl.photosync.editor.ui.widgets
 
-import java.util.Locale
-import kotlin.math.roundToInt
-
 import android.content.Context
 import android.graphics.drawable.GradientDrawable
 import android.util.AttributeSet
@@ -26,8 +23,12 @@ class HslPanelView @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : LinearLayout(context, attrs, defStyleAttr) {
 
+    /** Callbacks raised when any HSL band shift changes or a slider drag completes. */
     interface Listener {
-        fun onHslChanged(hsl: HslOps, fromUser: Boolean)
+        /** Raised when [hsl] changes from user slider input. */
+        fun onHslChanged(hsl: HslOps)
+
+        /** Raised when the user releases the active HSL slider. */
         fun onStopTrackingTouch()
     }
 
@@ -42,16 +43,18 @@ class HslPanelView @JvmOverloads constructor(
         MAGENTA(R.string.editor_hsl_band_magenta, R.color.editor_hsl_magenta)
     }
 
+    /** Listener notified on HSL slider changes and release. */
     var listener: Listener? = null
 
     private val density = resources.displayMetrics.density
     private val bandViews = mutableMapOf<Band, TextView>()
-    private val hueDial: DialSeekBar
-    private val satDial: DialSeekBar
-    private val lumaDial: DialSeekBar
-    private val hueValue: TextView
-    private val satValue: TextView
-    private val lumaValue: TextView
+    private val bandDrawables = mutableMapOf<Band, GradientDrawable>()
+    private val selectedBgColor = ContextCompat.getColor(context, R.color.editor_surface_elevated)
+    private val idleBgColor = ContextCompat.getColor(context, R.color.editor_bg)
+
+    private val hueRow = createBandRow(R.string.editor_hsl_hue) { shift, v -> shift.copy(hue = v) }
+    private val satRow = createBandRow(R.string.editor_hsl_saturation) { shift, v -> shift.copy(saturation = v) }
+    private val lumaRow = createBandRow(R.string.editor_hsl_luminance) { shift, v -> shift.copy(luminance = v) }
 
     private var currentHsl: HslOps = HslOps()
     private var activeBand: Band = Band.RED
@@ -59,32 +62,35 @@ class HslPanelView @JvmOverloads constructor(
     init {
         orientation = VERTICAL
         addView(buildBandRow())
-        val (hRow, hDial, hVal) = buildSliderRow(R.string.editor_hsl_hue) { shift, v ->
-            shift.copy(hue = v)
-        }
-        val (sRow, sDial, sVal) = buildSliderRow(R.string.editor_hsl_saturation) { shift, v ->
-            shift.copy(saturation = v)
-        }
-        val (lRow, lDial, lVal) = buildSliderRow(R.string.editor_hsl_luminance) { shift, v ->
-            shift.copy(luminance = v)
-        }
-        hueDial = hDial
-        satDial = sDial
-        lumaDial = lDial
-        hueValue = hVal
-        satValue = sVal
-        lumaValue = lVal
-        addView(hRow)
-        addView(sRow)
-        addView(lRow)
+        addView(hueRow.rowView)
+        addView(satRow.rowView)
+        addView(lumaRow.rowView)
         refreshUi()
     }
 
-    /** Updates the panel with [hsl] from the active edit graph. */
+    /** Updates the panel controls to display [hsl]. */
     fun setHslOps(hsl: HslOps) {
         currentHsl = hsl
         refreshUi()
     }
+
+    private fun createBandRow(
+        labelRes: Int,
+        updater: (HslBandShift, Int) -> HslBandShift
+    ): LabeledDialRow = LabeledDialRow.create(
+        context = context,
+        labelRes = labelRes,
+        min = SLIDER_MIN,
+        max = SLIDER_MAX,
+        zeroSnap = SLIDER_ZERO_SNAP,
+        formatRes = R.string.editor_value_signed_fmt,
+        onChanged = { value ->
+            val updated = updater(shiftFor(currentHsl, activeBand), value)
+            currentHsl = withShift(currentHsl, activeBand, updated)
+            listener?.onHslChanged(currentHsl)
+        },
+        onStopTracking = { listener?.onStopTrackingTouch() }
+    )
 
     private fun buildBandRow(): HorizontalScrollView {
         val row = LinearLayout(context).apply {
@@ -92,22 +98,25 @@ class HslPanelView @JvmOverloads constructor(
             gravity = Gravity.CENTER_VERTICAL
         }
         Band.entries.forEach { band ->
+            val drawable = GradientDrawable().apply { cornerRadius = CHIP_CORNER_DP * density }
             val chip = TextView(context).apply {
                 setText(band.labelRes)
                 textSize = 11.0f
                 gravity = Gravity.CENTER
-                val padH = (10.0f * density).toInt()
+                val padH = (CHIP_PAD_H_DP * density).toInt()
                 setPadding(padH, 0, padH, 0)
-                layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, (26.0f * density).toInt()).apply {
-                    marginEnd = (6.0f * density).toInt()
+                layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, (CHIP_HEIGHT_DP * density).toInt()).apply {
+                    marginEnd = (CHIP_MARGIN_END_DP * density).toInt()
                 }
                 setTextColor(ContextCompat.getColor(context, R.color.editor_text_primary))
+                background = drawable
                 setOnClickListener {
                     activeBand = band
                     refreshUi()
                 }
             }
             bandViews[band] = chip
+            bandDrawables[band] = drawable
             row.addView(chip)
         }
         return HorizontalScrollView(context).apply {
@@ -117,81 +126,20 @@ class HslPanelView @JvmOverloads constructor(
         }
     }
 
-    private fun buildSliderRow(
-        labelRes: Int,
-        updater: (HslBandShift, Int) -> HslBandShift
-    ): Triple<LinearLayout, DialSeekBar, TextView> {
-        val label = TextView(context).apply {
-            setText(labelRes)
-            textSize = 11.0f
-            setTextColor(ContextCompat.getColor(context, R.color.editor_text_secondary))
-            layoutParams = LayoutParams((40.0f * density).toInt(), LayoutParams.WRAP_CONTENT)
-        }
-        val valueText = TextView(context).apply {
-            textSize = 11.0f
-            gravity = Gravity.END
-            setTextColor(ContextCompat.getColor(context, R.color.editor_accent_blue))
-            layoutParams = LayoutParams((36.0f * density).toInt(), LayoutParams.WRAP_CONTENT)
-        }
-        val dial = DialSeekBar(context).apply {
-            minValue = -100.0f
-            maxValue = 100.0f
-            stepSize = 1.0f
-            zeroSnapThreshold = 2.0f
-            layoutParams = LayoutParams(0, (36.0f * density).toInt(), 1.0f)
-            listener = object : DialSeekBar.OnDialChangeListener {
-                override fun onValueChanged(value: Float, fromUser: Boolean) {
-                    if (!fromUser) return
-                    val updated = updater(shiftFor(currentHsl, activeBand), value.roundToInt())
-                    currentHsl = withShift(currentHsl, activeBand, updated)
-                    valueText.text = formatSigned(value.roundToInt())
-                    this@HslPanelView.listener?.onHslChanged(currentHsl, fromUser = true)
-                }
-
-                override fun onStopTrackingTouch() {
-                    this@HslPanelView.listener?.onStopTrackingTouch()
-                }
-            }
-        }
-        val row = LinearLayout(context).apply {
-            orientation = HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
-                topMargin = (2.0f * density).toInt()
-            }
-            addView(label)
-            addView(dial)
-            addView(valueText)
-        }
-        return Triple(row, dial, valueText)
-    }
-
     private fun refreshUi() {
         bandViews.forEach { (band, chip) ->
             val selected = band == activeBand
             val swatch = ContextCompat.getColor(context, band.colorRes)
-            val bgColor = ContextCompat.getColor(
-                context,
-                if (selected) R.color.editor_surface_elevated else R.color.editor_bg
-            )
-            chip.background = GradientDrawable().apply {
-                cornerRadius = 13.0f * density
-                setColor(bgColor)
-                setStroke(((if (selected) 2.0f else 1.0f) * density).toInt(), swatch)
-            }
+            val drawable = bandDrawables.getValue(band)
+            drawable.setColor(if (selected) selectedBgColor else idleBgColor)
+            drawable.setStroke(((if (selected) 2.0f else 1.0f) * density).toInt(), swatch)
             chip.alpha = if (selected || !shiftFor(currentHsl, band).isIdentity()) 1.0f else 0.72f
         }
         val shift = shiftFor(currentHsl, activeBand)
-        hueDial.setValue(shift.hue.toFloat())
-        satDial.setValue(shift.saturation.toFloat())
-        lumaDial.setValue(shift.luminance.toFloat())
-        hueValue.text = formatSigned(shift.hue)
-        satValue.text = formatSigned(shift.saturation)
-        lumaValue.text = formatSigned(shift.luminance)
+        hueRow.setValue(shift.hue)
+        satRow.setValue(shift.saturation)
+        lumaRow.setValue(shift.luminance)
     }
-
-    private fun formatSigned(value: Int): String =
-        String.format(Locale.US, context.getString(R.string.editor_value_signed_fmt), value.toFloat())
 
     private fun shiftFor(hsl: HslOps, band: Band): HslBandShift = when (band) {
         Band.RED -> hsl.red
@@ -213,5 +161,15 @@ class HslPanelView @JvmOverloads constructor(
         Band.BLUE -> hsl.copy(blue = shift)
         Band.PURPLE -> hsl.copy(purple = shift)
         Band.MAGENTA -> hsl.copy(magenta = shift)
+    }
+
+    private companion object {
+        private const val SLIDER_MIN = -100.0f
+        private const val SLIDER_MAX = 100.0f
+        private const val SLIDER_ZERO_SNAP = 2.0f
+        private const val CHIP_HEIGHT_DP = 32.0f
+        private const val CHIP_PAD_H_DP = 11.0f
+        private const val CHIP_MARGIN_END_DP = 6.0f
+        private const val CHIP_CORNER_DP = 16.0f
     }
 }

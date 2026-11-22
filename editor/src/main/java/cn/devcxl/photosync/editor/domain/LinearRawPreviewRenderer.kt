@@ -18,9 +18,7 @@ internal object LinearRawPreviewRenderer {
     private const val CHANNELS = 4
     private const val CHANNELS_RGB = 3
 
-    /**
-     * Renders [source] into packed `ARGB_8888` pixels, row-major.
-     */
+    /** Renders [source] into packed `ARGB_8888` pixels, row-major. */
     fun renderArgb(source: LinearRawBuffer, graph: EditGraph): IntArray {
         val toneParams = ToneShaderParams.from(graph)
         val colorParams = ColorGradingParams.from(graph)
@@ -30,12 +28,15 @@ internal object LinearRawPreviewRenderer {
         val width = source.width
         val height = source.height
         val pixelCount = width * height
-        val lumaMap = if (colorParams.defringe > 0.0f) {
-            buildBaseLumaMap(source, gain, graph.baseLook, lookLut, pixelCount)
-        } else {
-            null
-        }
         val argb = IntArray(pixelCount)
+        val scratch = PassBColorMath.Scratch()
+
+        if (colorParams.defringe > 0.0f) {
+            return renderWithDefringe(
+                source, gain, graph.baseLook, lookLut,
+                toneParams, colorParams, curveLut, width, height, argb, scratch
+            )
+        }
         val sample = FloatArray(CHANNELS)
         val display = FloatArray(CHANNELS_RGB)
         val linear = FloatArray(CHANNELS_RGB)
@@ -43,42 +44,65 @@ internal object LinearRawPreviewRenderer {
             source.readPixel(index, sample)
             computeBaseLookLinear(sample, gain, graph.baseLook, lookLut, linear, display)
             if (toneParams.isIdentity && colorParams.isIdentity) {
-                argb[index] = Srgb8Packer.packRgb(
-                    ExposureShaderMath.encodeSrgb(linear[0].coerceIn(0.0f, 1.0f)),
-                    ExposureShaderMath.encodeSrgb(linear[1].coerceIn(0.0f, 1.0f)),
-                    ExposureShaderMath.encodeSrgb(linear[2].coerceIn(0.0f, 1.0f))
-                )
+                argb[index] = packLinearAsSrgb(linear)
             } else {
-                val grad = lumaMap?.let { Srgb8Packer.neighborGradient(it, width, height, index) } ?: 0.0f
-                PassBColorMath.apply(toneParams, colorParams, curveLut, linear, display, grad)
+                PassBColorMath.apply(toneParams, colorParams, curveLut, linear, display, 0.0f, scratch)
                 argb[index] = Srgb8Packer.packRgb(display[0], display[1], display[2])
             }
         }
         return argb
     }
 
-    private fun buildBaseLumaMap(
+    private fun renderWithDefringe(
         source: LinearRawBuffer,
         gain: Float,
         baseLook: BaseLook,
         lookLut: FloatArray,
-        pixelCount: Int
-    ): FloatArray {
-        val luma = FloatArray(pixelCount)
+        toneParams: ToneShaderParams,
+        colorParams: ColorGradingParams,
+        curveLut: FloatArray?,
+        width: Int,
+        height: Int,
+        argb: IntArray,
+        scratch: PassBColorMath.Scratch
+    ): IntArray {
+        val pixelCount = width * height
+        // Cache base-looked linear RGB once so defringe never decodes the LinearRawBuffer twice.
+        val cachedLinear = FloatArray(pixelCount * CHANNELS_RGB)
+        val lumaMap = FloatArray(pixelCount)
         val sample = FloatArray(CHANNELS)
         val linear = FloatArray(CHANNELS_RGB)
-        val scratch = FloatArray(CHANNELS_RGB)
+        val display = FloatArray(CHANNELS_RGB)
         for (i in 0 until pixelCount) {
             source.readPixel(i, sample)
-            computeBaseLookLinear(sample, gain, baseLook, lookLut, linear, scratch)
-            luma[i] = ToneShaderMath.luminance(
+            computeBaseLookLinear(sample, gain, baseLook, lookLut, linear, display)
+            val base = i * CHANNELS_RGB
+            cachedLinear[base] = linear[0]
+            cachedLinear[base + 1] = linear[1]
+            cachedLinear[base + 2] = linear[2]
+            lumaMap[i] = ToneShaderMath.luminance(
                 ExposureShaderMath.encodeSrgb(linear[0].coerceIn(0.0f, 1.0f)),
                 ExposureShaderMath.encodeSrgb(linear[1].coerceIn(0.0f, 1.0f)),
                 ExposureShaderMath.encodeSrgb(linear[2].coerceIn(0.0f, 1.0f))
             )
         }
-        return luma
+        for (i in 0 until pixelCount) {
+            val base = i * CHANNELS_RGB
+            linear[0] = cachedLinear[base]
+            linear[1] = cachedLinear[base + 1]
+            linear[2] = cachedLinear[base + 2]
+            val grad = Srgb8Packer.neighborGradient(lumaMap, width, height, i)
+            PassBColorMath.apply(toneParams, colorParams, curveLut, linear, display, grad, scratch)
+            argb[i] = Srgb8Packer.packRgb(display[0], display[1], display[2])
+        }
+        return argb
     }
+
+    private fun packLinearAsSrgb(linear: FloatArray): Int = Srgb8Packer.packRgb(
+        ExposureShaderMath.encodeSrgb(linear[0].coerceIn(0.0f, 1.0f)),
+        ExposureShaderMath.encodeSrgb(linear[1].coerceIn(0.0f, 1.0f)),
+        ExposureShaderMath.encodeSrgb(linear[2].coerceIn(0.0f, 1.0f))
+    )
 
     private fun computeBaseLookLinear(
         sample: FloatArray,
@@ -89,14 +113,10 @@ internal object LinearRawPreviewRenderer {
         scratchDisplay: FloatArray
     ) {
         if (baseLook == BaseLook.LINEAR_NEUTRAL) {
-            for (c in 0 until CHANNELS_RGB) {
-                outLinear[c] = (sample[c] * gain).coerceAtLeast(0.0f)
-            }
+            for (c in 0 until CHANNELS_RGB) outLinear[c] = (sample[c] * gain).coerceAtLeast(0.0f)
             return
         }
-        for (c in 0 until CHANNELS_RGB) {
-            scratchDisplay[c] = lookLut[toLinearLutIndex(sample[c])]
-        }
+        for (c in 0 until CHANNELS_RGB) scratchDisplay[c] = lookLut[toLinearLutIndex(sample[c])]
         CameraDefaultLookMath.applyVibrance(
             scratchDisplay[0],
             scratchDisplay[1],
@@ -127,7 +147,7 @@ internal object LinearRawPreviewRenderer {
 }
 
 /**
- * Shared 8-bit ARGB quantization, packing and neighbor luminance gradient helper used by both
+ * Shared 8-bit ARGB quantization, packing and 4-neighbor luminance gradient helper used by both
  * [LinearRawPreviewRenderer] and [cn.devcxl.photosync.editor.render.PreviewCacheWriter].
  */
 internal object Srgb8Packer {
@@ -143,6 +163,10 @@ internal object Srgb8Packer {
             (quantize(g) shl 8) or
             quantize(b)
 
+    /**
+     * Returns the 4-neighbor central-difference luminance gradient (`max(|dL/dx|, |dL/dy|)`) at
+     * row-major [index] inside a [width] x [height] [lumaMap], or `0.0f` for 1-pixel edges.
+     */
     fun neighborGradient(lumaMap: FloatArray, width: Int, height: Int, index: Int): Float {
         if (width < 2 || height < 2) return 0.0f
         val x = index % width

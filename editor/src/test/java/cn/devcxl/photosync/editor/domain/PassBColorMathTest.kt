@@ -51,7 +51,10 @@ class PassBColorMathTest {
         val shadowGain = chromaOf(applyB2(colorParams, darkShadow)) / chromaOf(darkShadow)
 
         assertTrue("muted blue must get strong vibrance boost: $blueGain", blueGain > 1.4f)
-        assertTrue("45° skin hue must gain much less than blue: skin=$skinGain blue=$blueGain", skinGain < blueGain - 0.25f)
+        assertTrue(
+            "45° skin hue must gain much less than blue: skin=$skinGain blue=$blueGain",
+            skinGain < blueGain - 0.25f
+        )
         assertTrue("high chroma near 0.32 must be protected: vivid=$vividGain blue=$blueGain", vividGain < 1.15f)
         assertTrue("deep shadow L<0.05 must be suppressed: shadow=$shadowGain", shadowGain < 1.02f)
     }
@@ -157,6 +160,53 @@ class PassBColorMathTest {
         val vividOut = applyB2(params, vivid)
         assertTrue("fade must lower chroma of vivid red", chromaOf(vividOut) < chromaOf(vivid))
     }
+
+    @Test
+    fun shouldDesaturateHighGradientPurpleFringePixelViaNeighborGradient_whenRenderedThroughLinearRawPreview() {
+        val purpleSrgb = oklchToSrgb(l = 0.55f, c = 0.18f, hueDeg = 315.0f)
+        val pr = ExposureShaderMath.decodeSrgb(purpleSrgb[0])
+        val pg = ExposureShaderMath.decodeSrgb(purpleSrgb[1])
+        val pb = ExposureShaderMath.decodeSrgb(purpleSrgb[2])
+        // 3x3 linear RAW image: black top row, purple fringe center row, white bottom row (high edge gradient)
+        val rgba = FloatArray(9 * 4)
+        for (x in 0..2) {
+            val mid = (3 + x) * 4
+            rgba[mid] = pr
+            rgba[mid + 1] = pg
+            rgba[mid + 2] = pb
+            rgba[mid + 3] = 1.0f
+            val bot = (6 + x) * 4
+            rgba[bot] = 1.0f
+            rgba[bot + 1] = 1.0f
+            rgba[bot + 2] = 1.0f
+            rgba[bot + 3] = 1.0f
+        }
+        val buffer = cn.devcxl.photosync.wrapper.LinearRawBuffer.fromSamples(
+            width = 3,
+            height = 3,
+            autoBrightGain = 1.0f,
+            effectiveIso = 100.0f,
+            rgbaSamples = rgba
+        )
+        val noDefringe = LinearRawPreviewRenderer.renderArgb(buffer, EditGraph(baseLook = BaseLook.LINEAR_NEUTRAL))
+        val defringed = LinearRawPreviewRenderer.renderArgb(
+            buffer,
+            EditGraph(
+                baseLook = BaseLook.LINEAR_NEUTRAL,
+                effects = EffectsOps(ca = ChromaticAberrationOps(defringe = 100))
+            )
+        )
+        val centerIdx = 4
+        assertTrue(chromaOfPixel(defringed[centerIdx]) < chromaOfPixel(noDefringe[centerIdx]) * 0.40f)
+    }
+
+    private fun chromaOfPixel(argb: Int): Float = chromaOf(
+        floatArrayOf(
+            ((argb ushr 16) and 0xFF) / 255.0f,
+            ((argb ushr 8) and 0xFF) / 255.0f,
+            (argb and 0xFF) / 255.0f
+        )
+    )
 
     private fun applyB2(
         params: ColorGradingParams,

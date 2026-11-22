@@ -4,16 +4,6 @@ import kotlin.math.abs
 import kotlin.math.sqrt
 
 /**
- * The four tone-curve channels stored in [CurveOps].
- */
-enum class CurveChannel {
-    RGB,
-    R,
-    G,
-    B
-}
-
-/**
  * Compiled Fritsch-Carlson monotone cubic Hermite spline ready for fast evaluation.
  *
  * Guarantees zero overshoot on every interval `[x_k, x_{k+1}]` and strict monotonicity whenever
@@ -68,14 +58,24 @@ class CompiledMonotoneCurve internal constructor(
  */
 object MonotoneCubicCurve {
 
+    /** Minimum number of control knots per channel curve (black/shadow and white/highlight ends). */
     const val MIN_POINTS = 2
+
+    /** Maximum number of control knots per channel curve enforced by [EditValidator]. */
     const val MAX_POINTS = 16
+
+    /** Minimum horizontal spacing (`1 / 256`) between adjacent knots to keep slopes finite. */
     const val MIN_SPACING = 1.0f / 256.0f
+
     private const val FLAT_SLOPE_EPSILON = 1e-7f
     private const val MAX_TANGENT_NORM_SQ = 9.0f
 
     /**
      * Normalizes [points] into a valid sorted list of `2..16` knots spaced by at least [MIN_SPACING].
+     *
+     * When more than [MAX_POINTS] valid knots are supplied, the final knot is preserved as the
+     * highlight endpoint whenever spaced cleanly from the penultimate knot, preventing silent
+     * highlight-end flattening.
      */
     fun sanitizePoints(points: List<CurvePoint>): List<CurvePoint> {
         val valid = points
@@ -84,15 +84,22 @@ object MonotoneCubicCurve {
             .sortedBy { it.x }
         if (valid.size < MIN_POINTS) return CurveOps.DEFAULT_LINEAR_CURVE
 
-        val filtered = ArrayList<CurvePoint>(valid.size.coerceAtMost(MAX_POINTS))
+        val filtered = ArrayList<CurvePoint>(valid.size)
         filtered.add(valid.first())
         for (i in 1 until valid.size) {
             if (valid[i].x - filtered.last().x >= MIN_SPACING) {
                 filtered.add(valid[i])
             }
-            if (filtered.size >= MAX_POINTS) break
         }
-        return if (filtered.size >= MIN_POINTS) filtered else CurveOps.DEFAULT_LINEAR_CURVE
+        if (filtered.size < MIN_POINTS) return CurveOps.DEFAULT_LINEAR_CURVE
+        if (filtered.size <= MAX_POINTS) return filtered
+
+        val capped = ArrayList<CurvePoint>(MAX_POINTS)
+        for (i in 0 until MAX_POINTS - 1) {
+            capped.add(filtered[i])
+        }
+        capped.add(filtered.last())
+        return capped
     }
 
     /**

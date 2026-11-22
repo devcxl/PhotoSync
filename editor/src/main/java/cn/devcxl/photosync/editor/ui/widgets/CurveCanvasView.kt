@@ -13,10 +13,14 @@ import android.view.View
 import androidx.core.content.ContextCompat
 
 import cn.devcxl.photosync.editor.R
-import cn.devcxl.photosync.editor.domain.CurveChannel
+import cn.devcxl.photosync.editor.domain.CompiledMonotoneCurve
 import cn.devcxl.photosync.editor.domain.CurveOps
 import cn.devcxl.photosync.editor.domain.CurvePoint
 import cn.devcxl.photosync.editor.domain.MonotoneCubicCurve
+import cn.devcxl.photosync.editor.ui.gesture.CurveKnotMath
+
+/** The four tone-curve channels exposed by [CurveEditorView]. */
+enum class CurveChannel { RGB, R, G, B }
 
 /**
  * Interactive curve grid canvas supporting knot creation, dragging and drag-below-grid deletion
@@ -28,22 +32,34 @@ internal class CurveCanvasView @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : View(context, attrs, defStyleAttr) {
 
+    /** Callbacks raised when the user drags or commits a channel's knot list. */
     interface Listener {
+        /** Raised whenever the active [channel] knot list changes during drag or tap. */
         fun onChannelPointsChanged(channel: CurveChannel, points: List<CurvePoint>)
+
+        /** Raised when the finger lifts and the undo step can be sealed. */
         fun onStopTrackingTouch()
     }
 
+    /** Listener receiving live knot updates and release notifications. */
     var listener: Listener? = null
 
     private var curveOps: CurveOps = CurveOps()
     private var activeChannel: CurveChannel = CurveChannel.RGB
-    private var activePoints: MutableList<CurvePoint> = CurveOps.DEFAULT_LINEAR_CURVE.toMutableList()
+    private var activePoints: List<CurvePoint> = CurveOps.DEFAULT_LINEAR_CURVE
+    private var compiledCurves: Map<CurveChannel, CompiledMonotoneCurve> = emptyMap()
     private var draggingIndex: Int = -1
     private var pendingDelete: Boolean = false
 
     private val density = resources.displayMetrics.density
     private val gridRect = RectF()
     private val curvePath = Path()
+    private val channelColors: Map<CurveChannel, Int> = mapOf(
+        CurveChannel.RGB to ContextCompat.getColor(context, R.color.editor_text_primary),
+        CurveChannel.R to ContextCompat.getColor(context, R.color.editor_curve_r),
+        CurveChannel.G to ContextCompat.getColor(context, R.color.editor_curve_g),
+        CurveChannel.B to ContextCompat.getColor(context, R.color.editor_curve_b)
+    )
 
     private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = ContextCompat.getColor(context, R.color.editor_overlay_grid)
@@ -77,12 +93,18 @@ internal class CurveCanvasView @JvmOverloads constructor(
         style = Paint.Style.FILL
     }
 
+    init {
+        rebuildCompiledCurves()
+    }
+
+    /** Binds [ops] and selects [channel], recompiling cached splines outside `onDraw`. */
     fun bindState(ops: CurveOps, channel: CurveChannel) {
         curveOps = ops
         activeChannel = channel
         if (draggingIndex == -1) {
-            activePoints = pointsFor(ops, channel).toMutableList()
+            activePoints = pointsFor(ops, channel)
         }
+        rebuildCompiledCurves()
         invalidate()
     }
 
@@ -92,15 +114,16 @@ internal class CurveCanvasView @JvmOverloads constructor(
         drawGridAndBaseline(canvas)
         CurveChannel.entries.forEach { ch ->
             if (ch != activeChannel) {
-                drawCompiledCurve(canvas, pointsFor(curveOps, ch), channelColor(ch), inactiveCurvePaint)
+                val compiled = compiledCurves[ch] ?: return@forEach
+                drawCompiledCurve(canvas, compiled, channelColors.getValue(ch), inactiveCurvePaint)
             }
         }
-        val previewPoints = if (pendingDelete && draggingIndex in activePoints.indices) {
-            activePoints.filterIndexed { index, _ -> index != draggingIndex }
+        val activeCompiled = if (pendingDelete && draggingIndex in activePoints.indices) {
+            MonotoneCubicCurve.compile(CurveKnotMath.deleteKnot(activePoints, draggingIndex))
         } else {
-            activePoints
+            compiledCurves[activeChannel] ?: MonotoneCubicCurve.compile(activePoints)
         }
-        drawCompiledCurve(canvas, previewPoints, channelColor(activeChannel), curvePaint)
+        drawCompiledCurve(canvas, activeCompiled, channelColors.getValue(activeChannel), curvePaint)
         drawKnots(canvas)
     }
 
@@ -110,72 +133,54 @@ internal class CurveCanvasView @JvmOverloads constructor(
         return when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> handleDown(event.x, event.y)
             MotionEvent.ACTION_MOVE -> handleMove(event.x, event.y)
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> handleRelease()
+            MotionEvent.ACTION_UP -> handleUp()
+            MotionEvent.ACTION_CANCEL -> handleCancel()
             else -> super.onTouchEvent(event)
         }
     }
-
-    override fun performClick(): Boolean = super.performClick()
 
     private fun handleDown(x: Float, y: Float): Boolean {
         parent?.requestDisallowInterceptTouchEvent(true)
         val hitRadius = HIT_RADIUS_DP * density
         val hitIndex = activePoints.indices.minByOrNull { idx ->
-            val px = toScreenX(activePoints[idx].x)
-            val py = toScreenY(activePoints[idx].y)
-            hypot(x - px, y - py)
+            hypot(x - toScreenX(activePoints[idx].x), y - toScreenY(activePoints[idx].y))
         }?.takeIf { idx ->
             hypot(x - toScreenX(activePoints[idx].x), y - toScreenY(activePoints[idx].y)) <= hitRadius
         }
-
         if (hitIndex != null) {
             draggingIndex = hitIndex
             pendingDelete = false
             invalidate()
             return true
         }
-        if (activePoints.size >= MonotoneCubicCurve.MAX_POINTS) return true
-
-        val nx = toNormX(x)
-        val ny = toNormY(y)
-        val tooClose = activePoints.any { kotlin.math.abs(it.x - nx) < MonotoneCubicCurve.MIN_SPACING }
-        if (tooClose) return true
-
-        val insertAt = activePoints.indexOfFirst { it.x > nx }.let { if (it == -1) activePoints.size else it }
-        activePoints.add(insertAt, CurvePoint(nx, ny))
-        draggingIndex = insertAt
+        val inserted = CurveKnotMath.insertKnot(activePoints, toNormX(x), toNormY(y)) ?: return true
+        activePoints = inserted.first
+        draggingIndex = inserted.second
         pendingDelete = false
         notifyPointsChanged()
-        invalidate()
         return true
     }
 
     private fun handleMove(x: Float, y: Float): Boolean {
         if (draggingIndex !in activePoints.indices) return false
         parent?.requestDisallowInterceptTouchEvent(true)
-        if (activePoints.size > MonotoneCubicCurve.MIN_POINTS && y > gridRect.bottom + DELETE_SLOP_DP * density) {
+        if (activePoints.size > MonotoneCubicCurve.MIN_POINTS &&
+            y > gridRect.bottom + DELETE_SLOP_DP * density
+        ) {
             pendingDelete = true
             invalidate()
             return true
         }
         pendingDelete = false
-        val idx = draggingIndex
-        val minX = if (idx == 0) 0.0f else activePoints[idx - 1].x + MonotoneCubicCurve.MIN_SPACING
-        val maxX = if (idx == activePoints.lastIndex) 1.0f else {
-            activePoints[idx + 1].x - MonotoneCubicCurve.MIN_SPACING
-        }
-        val nx = toNormX(x).coerceIn(minX, maxX.coerceAtLeast(minX))
-        val ny = toNormY(y)
-        activePoints[idx] = CurvePoint(nx, ny)
+        activePoints = CurveKnotMath.moveKnot(activePoints, draggingIndex, toNormX(x), toNormY(y))
         notifyPointsChanged()
-        invalidate()
         return true
     }
 
-    private fun handleRelease(): Boolean {
+    private fun handleUp(): Boolean {
         if (draggingIndex != -1) {
-            if (pendingDelete && activePoints.size > MonotoneCubicCurve.MIN_POINTS) {
-                activePoints.removeAt(draggingIndex)
+            if (pendingDelete) {
+                activePoints = CurveKnotMath.deleteKnot(activePoints, draggingIndex)
                 notifyPointsChanged()
             }
             draggingIndex = -1
@@ -187,19 +192,34 @@ internal class CurveCanvasView @JvmOverloads constructor(
         return true
     }
 
+    private fun handleCancel(): Boolean {
+        if (draggingIndex != -1) {
+            draggingIndex = -1
+            pendingDelete = false
+            activePoints = pointsFor(curveOps, activeChannel)
+            rebuildCompiledCurves()
+            invalidate()
+            listener?.onStopTrackingTouch()
+        }
+        return true
+    }
+
     private fun notifyPointsChanged() {
-        val clean = MonotoneCubicCurve.sanitizePoints(activePoints)
-        listener?.onChannelPointsChanged(activeChannel, clean)
+        listener?.onChannelPointsChanged(activeChannel, activePoints)
+        rebuildCompiledCurves()
+        invalidate()
+    }
+
+    private fun rebuildCompiledCurves() {
+        compiledCurves = CurveChannel.entries.associateWith { ch ->
+            val pts = if (ch == activeChannel) activePoints else pointsFor(curveOps, ch)
+            MonotoneCubicCurve.compile(pts)
+        }
     }
 
     private fun updateGridRect() {
         val pad = GRID_PAD_DP * density
-        gridRect.set(
-            pad,
-            pad,
-            (width - pad).coerceAtLeast(pad + 1.0f),
-            (height - pad).coerceAtLeast(pad + 1.0f)
-        )
+        gridRect.set(pad, pad, (width - pad).coerceAtLeast(pad + 1.0f), (height - pad).coerceAtLeast(pad + 1.0f))
     }
 
     private fun drawGridAndBaseline(canvas: Canvas) {
@@ -214,14 +234,17 @@ internal class CurveCanvasView @JvmOverloads constructor(
         canvas.drawLine(gridRect.left, gridRect.bottom, gridRect.right, gridRect.top, baselinePaint)
     }
 
-    private fun drawCompiledCurve(canvas: Canvas, points: List<CurvePoint>, color: Int, paint: Paint) {
-        val compiled = MonotoneCubicCurve.compile(points)
+    private fun drawCompiledCurve(
+        canvas: Canvas,
+        compiled: CompiledMonotoneCurve,
+        color: Int,
+        paint: Paint
+    ) {
         curvePath.reset()
         for (i in 0..PLOT_STEPS) {
             val x = i.toFloat() / PLOT_STEPS.toFloat()
-            val y = compiled.evaluate(x)
             val sx = toScreenX(x)
-            val sy = toScreenY(y)
+            val sy = toScreenY(compiled.evaluate(x))
             if (i == 0) curvePath.moveTo(sx, sy) else curvePath.lineTo(sx, sy)
         }
         paint.color = color
@@ -229,7 +252,7 @@ internal class CurveCanvasView @JvmOverloads constructor(
     }
 
     private fun drawKnots(canvas: Canvas) {
-        knotStrokePaint.color = channelColor(activeChannel)
+        knotStrokePaint.color = channelColors.getValue(activeChannel)
         activePoints.forEachIndexed { idx, pt ->
             val sx = toScreenX(pt.x)
             val sy = toScreenY(pt.y)
@@ -244,16 +267,6 @@ internal class CurveCanvasView @JvmOverloads constructor(
     private fun toScreenY(ny: Float): Float = gridRect.bottom - ny * gridRect.height()
     private fun toNormX(sx: Float): Float = ((sx - gridRect.left) / gridRect.width()).coerceIn(0.0f, 1.0f)
     private fun toNormY(sy: Float): Float = ((gridRect.bottom - sy) / gridRect.height()).coerceIn(0.0f, 1.0f)
-
-    private fun channelColor(channel: CurveChannel): Int = ContextCompat.getColor(
-        context,
-        when (channel) {
-            CurveChannel.RGB -> R.color.editor_text_primary
-            CurveChannel.R -> R.color.editor_curve_r
-            CurveChannel.G -> R.color.editor_curve_g
-            CurveChannel.B -> R.color.editor_curve_b
-        }
-    )
 
     private fun pointsFor(ops: CurveOps, channel: CurveChannel): List<CurvePoint> = when (channel) {
         CurveChannel.RGB -> ops.rgb

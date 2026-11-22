@@ -36,11 +36,17 @@ internal class EditorPanelController(
 
     /** Host callbacks that keep the preview canvas in sync with the drawer. */
     interface Host {
+        /** The active sub-tool changed; the canvas overlay must follow. */
         fun onEditorToolChanged(tool: EditorTool)
+        /** The graph changed through a continuous drawer interaction. */
         fun onGraphEdited(graph: EditGraph, parameterKey: EditParameterKey)
+        /** A discrete edit that seals its own undo step. */
         fun onGraphCommitted(graph: EditGraph, parameterKey: EditParameterKey)
+        /** Width/height ratio of the frame the preview canvas is currently showing. */
         fun previewAspect(): Float
+        /** The liquify brush mode, size or strength changed. */
         fun onLiquifySettingsChanged(settings: LiquifyBrushSettings)
+        /** The user asked to clear every liquify displacement. */
         fun onLiquifyResetRequested()
     }
 

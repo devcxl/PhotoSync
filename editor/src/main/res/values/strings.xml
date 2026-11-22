@@ -64,7 +64,7 @@
     <string name="editor_tool_vibrance_modified">自然饱和度 •</string>
     <string name="editor_tool_curve">曲线</string>
     <string name="editor_tool_curve_modified">曲线 •</string>
-    <string name="editor_tool_hsl">HSL</string>
+    <string name="editor_tool_hsl" translatable="false">HSL</string>
     <string name="editor_tool_hsl_modified">HSL •</string>
     <string name="editor_tool_split_toning">色调分离</string>
     <string name="editor_tool_split_toning_modified">色调分离 •</string>
@@ -72,10 +72,10 @@
     <string name="editor_tool_fade_modified">褪色 •</string>
 
     <!-- Curve editor -->
-    <string name="editor_curve_channel_rgb">RGB</string>
-    <string name="editor_curve_channel_r">R</string>
-    <string name="editor_curve_channel_g">G</string>
-    <string name="editor_curve_channel_b">B</string>
+    <string name="editor_curve_channel_rgb" translatable="false">RGB</string>
+    <string name="editor_curve_channel_r" translatable="false">R</string>
+    <string name="editor_curve_channel_g" translatable="false">G</string>
+    <string name="editor_curve_channel_b" translatable="false">B</string>
     <string name="editor_curve_reset">重置曲线</string>
     <string name="editor_value_curve_modified">已调整</string>
     <string name="editor_value_curve_linear">线性</string>

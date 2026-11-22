@@ -8,9 +8,20 @@ package cn.devcxl.photosync.editor.domain
  */
 object CurveLutBuilder {
 
+    /** Number of texels along the 1D LUT texture width (`1024 x 1`). */
     const val LUT_SIZE = 1024
+
+    /** Number of RGBA components per texel (`R, G, B, RGB`). */
     const val CHANNELS = 4
     private const val LAST_INDEX = LUT_SIZE - 1
+
+    /**
+     * Maps normalized [x] in `[0, 1]` to the GLSL 1D LUT texture coordinate
+     * `x * (1023 / 1024) + 0.5 / 1024` so texel centers align exactly with CPU sampling.
+     */
+    fun glTextureCoord(x: Float): Float =
+        x.coerceIn(0.0f, 1.0f) * (LAST_INDEX.toFloat() / LUT_SIZE.toFloat()) +
+            (0.5f / LUT_SIZE.toFloat())
 
     /**
      * Builds a `1024 * 4` float LUT in `[r, g, b, rgb]` channel order.

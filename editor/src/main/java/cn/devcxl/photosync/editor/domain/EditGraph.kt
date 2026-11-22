@@ -229,7 +229,9 @@ data class ChromaticAberrationOps(
     val blueYellow: Int = 0,
     val defringe: Int = 0
 ) {
-    fun isIdentity(): Boolean = redCyan == 0 && blueYellow == 0 && defringe == 0
+    fun hasLateralCa(): Boolean = redCyan != 0 || blueYellow != 0
+
+    fun isIdentity(): Boolean = !hasLateralCa() && defringe == 0
 }
 
 data class EffectsOps(
@@ -308,6 +310,13 @@ data class EditGraph(
             detail.isIdentity() &&
             effects.isIdentity() &&
             portrait.isIdentity()
+
+    /**
+     * True when Pass A (crop, rotate, straighten, perspective, lateral CA or warp mesh) must run;
+     * display-domain `defringe` runs in Pass B and does not force a Pass A resample.
+     */
+    fun requiresPassAGeometry(hasWarp: Boolean = false): Boolean =
+        !geometry.isIdentity() || effects.ca.hasLateralCa() || hasWarp
 
     companion object {
         const val CURRENT_SCHEMA_VERSION = 1

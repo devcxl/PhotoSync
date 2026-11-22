@@ -16,7 +16,8 @@ import cn.devcxl.photosync.editor.domain.ToneShaderParams
 
 /**
  * Immutable snapshot of all per-frame render uniforms so the GL thread never observes a torn
- * combination of geometry, liquify warp, Pass B1 tone and Pass B2 display color parameters.
+ * combination of homography, output aspect ratio, CA coefficients, liquify warp, Pass B1 tone
+ * and Pass B2 display color parameters.
  */
 internal data class RenderFrameState(
     val toneParams: ToneShaderParams = ToneShaderParams(),
@@ -47,8 +48,15 @@ internal data class CanvasViewportTransform(
 )
 
 /**
- * GLES 3.0 renderer for the editor preview canvas (Pass A geometry/liquify/lateral CA + Pass B
- * tone, curve LUT, OKLCH saturation/vibrance/HSL, OKLab split toning, defringe and fade).
+ * GLES 3.0 renderer for the editor preview canvas.
+ *
+ * Runs the physical two-pass preview pipeline:
+ * 1. **Pass A** ([GeometryCaGlProgram]) renders the upright source (`GL_RGBA16F` for RAW,
+ *    `GL_RGBA8` for JPEG) through `H^-1` and the liquify `uWarpTex` into an offscreen target sized
+ *    to the cropped aspect ratio, applying aspect-corrected circular pre-crop lateral CA resampling.
+ * 2. **Pass B** ([ExposureGlProgram]) applies RAW `BaseLook` compensation, D65-anchored Bradford WB,
+ *    linear/display tone (Pass B1), plus 1024-entry curve LUT, OKLCH saturation/vibrance/8-band HSL,
+ *    OKLab split toning, edge defringe, film fade (Pass B2), and canvas pan/zoom.
  */
 internal class EditorGlRenderer : GLSurfaceView.Renderer {
 
@@ -63,16 +71,32 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
     private var viewportHeight: Int = 1
     private var geometryFallbackLogged: Boolean = false
 
-    @Volatile private var imageWidth: Int = 1
-    @Volatile private var imageHeight: Int = 1
-    @Volatile private var linearInput: Boolean = false
-    @Volatile private var autoBrightGain: Float = 1.0f
-    @Volatile private var stagedSource: EditorSource? = null
+    @Volatile
+    private var imageWidth: Int = 1
 
-    @Volatile var preferEs3: Boolean = true
-    @Volatile var compareOriginal: Boolean = false
-    @Volatile var frameState: RenderFrameState = RenderFrameState()
-    @Volatile var canvasTransform: CanvasViewportTransform = CanvasViewportTransform()
+    @Volatile
+    private var imageHeight: Int = 1
+
+    @Volatile
+    private var linearInput: Boolean = false
+
+    @Volatile
+    private var autoBrightGain: Float = 1.0f
+
+    @Volatile
+    private var stagedSource: EditorSource? = null
+
+    @Volatile
+    var preferEs3: Boolean = true
+
+    @Volatile
+    var compareOriginal: Boolean = false
+
+    @Volatile
+    var frameState: RenderFrameState = RenderFrameState()
+
+    @Volatile
+    var canvasTransform: CanvasViewportTransform = CanvasViewportTransform()
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         GLES20.glClearColor(0.0f, 0.0f, 0.0f, 1.0f)
@@ -146,8 +170,7 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
         val geometry = graph.geometry
         val aberration = graph.effects.ca
         val liquifyWarp = warpTexture.isWarpActive
-        val geometryActive = !geometry.isIdentity() || aberration.redCyan != 0 ||
-            aberration.blueYellow != 0 || liquifyWarp
+        val geometryActive = graph.requiresPassAGeometry(hasWarp = liquifyWarp)
         val outputAspect = if (geometryActive) GeometryMath.outputAspect(geometry, aspect) else aspect
         val inverseMatrix = if (geometryActive) {
             GeometryMath.buildPassAInverseMatrix(geometry, aspect).toColumnMajorFloatArray()
@@ -182,24 +205,18 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
         state: RenderFrameState,
         viewport: CanvasViewportTransform
     ): Boolean {
-        if (!state.geometryActive && !state.liquifyWarp) return false
-        if (!geometryProgram.isReady) return false
+        if ((!state.geometryActive && !state.liquifyWarp) || !geometryProgram.isReady) return false
         val srcAspect = sourceAspect()
         val aspect = state.outputAspectRatio.takeIf { it.isFinite() && it > 0.0f } ?: srcAspect
         val (scaleX, scaleY) = computeLetterboxScale(aspect, viewport.scale)
         val (targetWidth, targetHeight) = PassAFrameBuffer.targetSizeFor(
-            viewportWidth = viewportWidth,
-            viewportHeight = viewportHeight,
-            scaleX = scaleX,
-            scaleY = scaleY,
-            maxEdgePx = MAX_TARGET_EDGE_PX
+            viewportWidth, viewportHeight, scaleX, scaleY, MAX_TARGET_EDGE_PX
         )
         geometryTarget.ensureSize(targetWidth, targetHeight, allowHalfFloat = true)
         if (!geometryTarget.isReady) {
             logGeometryFallbackOnce()
             return false
         }
-        val encodeSrgbInPassA = linearInput && !geometryTarget.isHalfFloatTarget
         geometryTarget.bind()
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
         geometryProgram.draw(
@@ -209,7 +226,7 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
                 caRedK = state.lateralCaRedK,
                 caBlueK = state.lateralCaBlueK,
                 srcAspect = srcAspect,
-                encodeSrgbWithDither = encodeSrgbInPassA,
+                encodeSrgbWithDither = linearInput && !geometryTarget.isHalfFloatTarget,
                 warpTextureId = if (state.liquifyWarp) warpTexture.textureId else 0,
                 warpDecodeScale = warpTexture.decodeScale,
                 warpDecodeOffset = warpTexture.decodeOffset
@@ -218,14 +235,8 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
         geometryTarget.unbind()
         GLES20.glViewport(0, 0, viewportWidth, viewportHeight)
         drawExposure(
-            textureId = geometryTarget.textureId,
-            state = state,
-            viewport = viewport,
-            comparingOriginal = false,
-            aspect = aspect,
-            inputIsLinear = linearInput && geometryTarget.isHalfFloatTarget,
-            texelWidth = geometryTarget.width,
-            texelHeight = geometryTarget.height
+            geometryTarget.textureId, state, viewport, false, aspect,
+            linearInput && geometryTarget.isHalfFloatTarget, geometryTarget.width, geometryTarget.height
         )
         return true
     }

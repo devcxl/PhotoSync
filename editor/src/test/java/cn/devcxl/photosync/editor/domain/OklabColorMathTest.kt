@@ -61,7 +61,6 @@ class OklabColorMathTest {
         assertTrue(out[2] < input[2])
         assertTrue(out[2] > out[1] && out[1] > out[0])
         assertEquals(luma + (1.4f - luma) / 1.4f, out[2], 1e-6f)
-        assertEquals(max(input[0], max(input[1], input[2])), 1.4f, 1e-6f)
         assertTrue(abs(out[0] - (luma + (0.02f - luma) / 1.4f)) < 1e-6f)
     }
 }

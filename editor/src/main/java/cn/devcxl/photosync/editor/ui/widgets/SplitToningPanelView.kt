@@ -1,22 +1,28 @@
 package cn.devcxl.photosync.editor.ui.widgets
 
-import java.util.Locale
+import kotlin.math.PI
+import kotlin.math.cos
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 import android.content.Context
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.util.AttributeSet
 import android.view.Gravity
+import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
-import androidx.core.content.ContextCompat
 
 import cn.devcxl.photosync.editor.R
+import cn.devcxl.photosync.editor.domain.ExposureShaderMath
+import cn.devcxl.photosync.editor.domain.OklabColorMath
 import cn.devcxl.photosync.editor.domain.SplitToningOps
 import cn.devcxl.photosync.editor.ui.panels.PanelChipFactory
 
 /**
- * Tier-1 controls for OKLab split toning: Highlights / Shadows mode toggle plus Hue (`0..360°`),
- * Saturation (`0..100`) and Balance (`-100..100`) [DialSeekBar] rows.
+ * Tier-1 controls for OKLab split toning: Highlights / Shadows mode toggle with live OKLCH hue
+ * swatch plus Hue (`0..360°`), Saturation (`0..100`) and Balance (`-100..100`) [DialSeekBar] rows.
  */
 class SplitToningPanelView @JvmOverloads constructor(
     context: Context,
@@ -24,23 +30,44 @@ class SplitToningPanelView @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : LinearLayout(context, attrs, defStyleAttr) {
 
+    /** Callbacks raised when split-toning parameters change or a slider drag completes. */
     interface Listener {
-        fun onSplitToningChanged(split: SplitToningOps, fromUser: Boolean)
+        /** Raised when [split] changes from user slider input. */
+        fun onSplitToningChanged(split: SplitToningOps)
+
+        /** Raised when the user releases the active split-toning slider. */
         fun onStopTrackingTouch()
     }
 
     private enum class ToneZone { HIGHLIGHTS, SHADOWS }
 
+    /** Listener notified on split-toning slider changes and release. */
     var listener: Listener? = null
 
     private val density = resources.displayMetrics.density
     private val zoneChips = mutableMapOf<ToneZone, TextView>()
-    private val hueDial: DialSeekBar
-    private val satDial: DialSeekBar
-    private val balanceDial: DialSeekBar
-    private val hueValue: TextView
-    private val satValue: TextView
-    private val balanceValue: TextView
+    private val swatchDrawable = GradientDrawable().apply { shape = GradientDrawable.OVAL }
+    private val swatchPreview = View(context).apply {
+        val size = (SWATCH_SIZE_DP * density).toInt()
+        layoutParams = LayoutParams(size, size).apply { marginStart = (8.0f * density).toInt() }
+        background = swatchDrawable
+    }
+
+    private val hueRow = createRow(
+        0.0f, 360.0f, 0.0f, R.string.editor_split_hue, R.string.editor_value_plain_degrees_fmt
+    ) {
+        if (activeZone == ToneZone.HIGHLIGHTS) currentSplit.copy(hiHue = it) else currentSplit.copy(shHue = it)
+    }
+    private val satRow = createRow(
+        0.0f, 100.0f, 0.0f, R.string.editor_split_saturation, R.string.editor_value_unsigned_fmt
+    ) {
+        if (activeZone == ToneZone.HIGHLIGHTS) currentSplit.copy(hiSat = it) else currentSplit.copy(shSat = it)
+    }
+    private val balanceRow = createRow(
+        -100.0f, 100.0f, 2.0f, R.string.editor_split_balance, R.string.editor_value_signed_fmt
+    ) {
+        currentSplit.copy(balance = it)
+    }
 
     private var currentSplit: SplitToningOps = SplitToningOps()
     private var activeZone: ToneZone = ToneZone.HIGHLIGHTS
@@ -48,47 +75,39 @@ class SplitToningPanelView @JvmOverloads constructor(
     init {
         orientation = VERTICAL
         addView(buildZoneRow())
-        val (hRow, hDial, hVal) = buildRow(
-            R.string.editor_split_hue,
-            0.0f,
-            360.0f,
-            0.0f
-        ) { split, v ->
-            if (activeZone == ToneZone.HIGHLIGHTS) split.copy(hiHue = v) else split.copy(shHue = v)
-        }
-        val (sRow, sDial, sVal) = buildRow(
-            R.string.editor_split_saturation,
-            0.0f,
-            100.0f,
-            0.0f
-        ) { split, v ->
-            if (activeZone == ToneZone.HIGHLIGHTS) split.copy(hiSat = v) else split.copy(shSat = v)
-        }
-        val (bRow, bDial, bVal) = buildRow(
-            R.string.editor_split_balance,
-            -100.0f,
-            100.0f,
-            2.0f
-        ) { split, v ->
-            split.copy(balance = v)
-        }
-        hueDial = hDial
-        satDial = sDial
-        balanceDial = bDial
-        hueValue = hVal
-        satValue = sVal
-        balanceValue = bVal
-        addView(hRow)
-        addView(sRow)
-        addView(bRow)
+        addView(hueRow.rowView)
+        addView(satRow.rowView)
+        addView(balanceRow.rowView)
         refreshUi()
     }
 
-    /** Updates the displayed [split] parameters. */
+    /** Updates the panel controls to display [split]. */
     fun setSplitToningOps(split: SplitToningOps) {
         currentSplit = split
         refreshUi()
     }
+
+    private fun createRow(
+        min: Float,
+        max: Float,
+        zeroSnap: Float,
+        labelRes: Int,
+        formatRes: Int,
+        updater: (Int) -> SplitToningOps
+    ): LabeledDialRow = LabeledDialRow.create(
+        context = context,
+        labelRes = labelRes,
+        min = min,
+        max = max,
+        zeroSnap = zeroSnap,
+        formatRes = formatRes,
+        onChanged = { value ->
+            currentSplit = updater(value)
+            updateHueSwatch()
+            listener?.onSplitToningChanged(currentSplit)
+        },
+        onStopTracking = { listener?.onStopTrackingTouch() }
+    )
 
     private fun buildZoneRow(): LinearLayout {
         val row = LinearLayout(context).apply {
@@ -104,9 +123,9 @@ class SplitToningPanelView @JvmOverloads constructor(
                 } else {
                     R.string.editor_split_shadows
                 },
-                heightPx = (26.0f * density).toInt(),
+                heightPx = (CHIP_HEIGHT_DP * density).toInt(),
                 textSizeSp = 11.0f,
-                paddingPx = (12.0f * density).toInt()
+                paddingPx = (CHIP_PADDING_DP * density).toInt()
             )
             chip.setOnClickListener {
                 activeZone = zone
@@ -115,58 +134,8 @@ class SplitToningPanelView @JvmOverloads constructor(
             zoneChips[zone] = chip
             row.addView(chip)
         }
+        row.addView(swatchPreview)
         return row
-    }
-
-    private fun buildRow(
-        labelRes: Int,
-        min: Float,
-        max: Float,
-        zeroSnap: Float,
-        updater: (SplitToningOps, Int) -> SplitToningOps
-    ): Triple<LinearLayout, DialSeekBar, TextView> {
-        val label = TextView(context).apply {
-            setText(labelRes)
-            textSize = 11.0f
-            setTextColor(ContextCompat.getColor(context, R.color.editor_text_secondary))
-            layoutParams = LayoutParams((40.0f * density).toInt(), LayoutParams.WRAP_CONTENT)
-        }
-        val valueText = TextView(context).apply {
-            textSize = 11.0f
-            gravity = Gravity.END
-            setTextColor(ContextCompat.getColor(context, R.color.editor_accent_blue))
-            layoutParams = LayoutParams((40.0f * density).toInt(), LayoutParams.WRAP_CONTENT)
-        }
-        val dial = DialSeekBar(context).apply {
-            minValue = min
-            maxValue = max
-            stepSize = 1.0f
-            zeroSnapThreshold = zeroSnap
-            layoutParams = LayoutParams(0, (36.0f * density).toInt(), 1.0f)
-            listener = object : DialSeekBar.OnDialChangeListener {
-                override fun onValueChanged(value: Float, fromUser: Boolean) {
-                    if (!fromUser) return
-                    currentSplit = updater(currentSplit, value.roundToInt())
-                    refreshValuesOnly()
-                    this@SplitToningPanelView.listener?.onSplitToningChanged(currentSplit, fromUser = true)
-                }
-
-                override fun onStopTrackingTouch() {
-                    this@SplitToningPanelView.listener?.onStopTrackingTouch()
-                }
-            }
-        }
-        val row = LinearLayout(context).apply {
-            orientation = HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
-                topMargin = (2.0f * density).toInt()
-            }
-            addView(label)
-            addView(dial)
-            addView(valueText)
-        }
-        return Triple(row, dial, valueText)
     }
 
     private fun refreshUi() {
@@ -177,21 +146,26 @@ class SplitToningPanelView @JvmOverloads constructor(
         }
         val hue = if (activeZone == ToneZone.HIGHLIGHTS) currentSplit.hiHue else currentSplit.shHue
         val sat = if (activeZone == ToneZone.HIGHLIGHTS) currentSplit.hiSat else currentSplit.shSat
-        hueDial.setValue(hue.toFloat())
-        satDial.setValue(sat.toFloat())
-        balanceDial.setValue(currentSplit.balance.toFloat())
-        refreshValuesOnly()
+        hueRow.setValue(hue)
+        satRow.setValue(sat)
+        balanceRow.setValue(currentSplit.balance)
+        updateHueSwatch()
     }
 
-    private fun refreshValuesOnly() {
+    private fun updateHueSwatch() {
         val hue = if (activeZone == ToneZone.HIGHLIGHTS) currentSplit.hiHue else currentSplit.shHue
-        val sat = if (activeZone == ToneZone.HIGHLIGHTS) currentSplit.hiSat else currentSplit.shSat
-        hueValue.text = String.format(Locale.US, context.getString(R.string.editor_value_plain_degrees_fmt), hue.toFloat())
-        satValue.text = String.format(Locale.US, context.getString(R.string.editor_value_unsigned_fmt), sat.toFloat())
-        balanceValue.text = String.format(
-            Locale.US,
-            context.getString(R.string.editor_value_signed_fmt),
-            currentSplit.balance.toFloat()
-        )
+        val rad = (hue * PI / 180.0).toFloat()
+        val rgb = FloatArray(3)
+        OklabColorMath.oklabToLinearSrgb(floatArrayOf(0.70f, 0.14f * cos(rad), 0.14f * sin(rad)), rgb)
+        val r = (ExposureShaderMath.encodeSrgb(rgb[0].coerceIn(0.0f, 1.0f)) * 255.0f).roundToInt().coerceIn(0, 255)
+        val g = (ExposureShaderMath.encodeSrgb(rgb[1].coerceIn(0.0f, 1.0f)) * 255.0f).roundToInt().coerceIn(0, 255)
+        val b = (ExposureShaderMath.encodeSrgb(rgb[2].coerceIn(0.0f, 1.0f)) * 255.0f).roundToInt().coerceIn(0, 255)
+        swatchDrawable.setColor(Color.rgb(r, g, b))
+    }
+
+    private companion object {
+        private const val CHIP_HEIGHT_DP = 32.0f
+        private const val CHIP_PADDING_DP = 12.0f
+        private const val SWATCH_SIZE_DP = 18.0f
     }
 }

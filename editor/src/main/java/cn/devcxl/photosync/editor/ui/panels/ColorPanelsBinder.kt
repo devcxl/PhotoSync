@@ -18,7 +18,7 @@ import cn.devcxl.photosync.editor.ui.widgets.SplitToningPanelView
  * `SplitToningPanelView`) to [EditorUndoController] so [EditorPanelController] stays concise.
  */
 internal class ColorPanelsBinder(
-    private val binding: ActivityEditorBinding,
+    binding: ActivityEditorBinding,
     private val undoController: EditorUndoController,
     private val onEdited: (EditGraph, EditParameterKey) -> Unit,
     private val onCommitted: (EditGraph, EditParameterKey) -> Unit
@@ -28,49 +28,22 @@ internal class ColorPanelsBinder(
 
     init {
         panels.curveEditorView.listener = object : CurveEditorView.Listener {
-            override fun onCurveChanged(curve: CurveOps, fromUser: Boolean) {
-                if (!fromUser) return
-                val updated = undoController.currentGraph.let {
-                    it.copy(color = it.color.copy(curve = curve))
-                }
-                val applied = undoController.onParameterDrag(updated, EditParameterKey.COLOR_CURVE)
-                onEdited(applied, EditParameterKey.COLOR_CURVE)
-            }
+            override fun onCurveChanged(curve: CurveOps) =
+                pushChange(EditParameterKey.COLOR_CURVE) { it.copy(color = it.color.copy(curve = curve)) }
 
-            override fun onStopTrackingTouch() {
-                undoController.onParameterRelease()
-                onCommitted(undoController.currentGraph, EditParameterKey.COLOR_CURVE)
-            }
+            override fun onStopTrackingTouch() = commitRelease(EditParameterKey.COLOR_CURVE)
         }
         panels.hslPanelView.listener = object : HslPanelView.Listener {
-            override fun onHslChanged(hsl: HslOps, fromUser: Boolean) {
-                if (!fromUser) return
-                val updated = undoController.currentGraph.let {
-                    it.copy(color = it.color.copy(hsl = hsl))
-                }
-                val applied = undoController.onParameterDrag(updated, EditParameterKey.COLOR_HSL)
-                onEdited(applied, EditParameterKey.COLOR_HSL)
-            }
+            override fun onHslChanged(hsl: HslOps) =
+                pushChange(EditParameterKey.COLOR_HSL) { it.copy(color = it.color.copy(hsl = hsl)) }
 
-            override fun onStopTrackingTouch() {
-                undoController.onParameterRelease()
-                onCommitted(undoController.currentGraph, EditParameterKey.COLOR_HSL)
-            }
+            override fun onStopTrackingTouch() = commitRelease(EditParameterKey.COLOR_HSL)
         }
         panels.splitToningPanelView.listener = object : SplitToningPanelView.Listener {
-            override fun onSplitToningChanged(split: SplitToningOps, fromUser: Boolean) {
-                if (!fromUser) return
-                val updated = undoController.currentGraph.let {
-                    it.copy(color = it.color.copy(split = split))
-                }
-                val applied = undoController.onParameterDrag(updated, EditParameterKey.COLOR_SPLIT_TONING)
-                onEdited(applied, EditParameterKey.COLOR_SPLIT_TONING)
-            }
+            override fun onSplitToningChanged(split: SplitToningOps) =
+                pushChange(EditParameterKey.COLOR_SPLIT_TONING) { it.copy(color = it.color.copy(split = split)) }
 
-            override fun onStopTrackingTouch() {
-                undoController.onParameterRelease()
-                onCommitted(undoController.currentGraph, EditParameterKey.COLOR_SPLIT_TONING)
-            }
+            override fun onStopTrackingTouch() = commitRelease(EditParameterKey.COLOR_SPLIT_TONING)
         }
     }
 
@@ -91,5 +64,15 @@ internal class ColorPanelsBinder(
         panels.curveEditorView.setCurveOps(graph.color.curve)
         panels.hslPanelView.setHslOps(graph.color.hsl)
         panels.splitToningPanelView.setSplitToningOps(graph.color.split)
+    }
+
+    private fun pushChange(key: EditParameterKey, transform: (EditGraph) -> EditGraph) {
+        val applied = undoController.onParameterDrag(transform(undoController.currentGraph), key)
+        onEdited(applied, key)
+    }
+
+    private fun commitRelease(key: EditParameterKey) {
+        undoController.onParameterRelease()
+        onCommitted(undoController.currentGraph, key)
     }
 }

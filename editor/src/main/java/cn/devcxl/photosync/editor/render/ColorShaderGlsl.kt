@@ -95,6 +95,10 @@ internal object ColorShaderGlsl {
             return 1.0 - 0.70 * exp(-0.5 * diff * diff);
         }
 
+        /**
+         * Maps normalized [0, 1] onto 1D LUT texel centers (`(0.5 + x*1023) / 1024`) so GL_LINEAR
+         * agrees bit-for-bit with CurveLutBuilder.sampleChannel on CPU.
+         */
         float curveCoord(float v) {
             return clamp(v, 0.0, 1.0) * (1023.0 / 1024.0) + (0.5 / 1024.0);
         }
@@ -140,7 +144,7 @@ internal object ColorShaderGlsl {
         float sampleBaseSrgbLuma(vec2 uv) {
             vec3 raw = sampleTex2D(uTex0, uv).rgb;
             vec3 srgb = (uIsLinearInput == 1)
-                ? encodeSrgb(clamp(applyBaseLook(max(raw, vec3(0.0)) * uAutoBrightGain), 0.0, 1.0))
+                ? encodeSrgb(clamp(max(raw, vec3(0.0)) * uAutoBrightGain, 0.0, 1.0))
                 : raw;
             return luminance(srgb);
         }

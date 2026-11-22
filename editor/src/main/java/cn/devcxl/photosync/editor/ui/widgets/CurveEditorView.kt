@@ -9,7 +9,6 @@ import android.widget.TextView
 import androidx.core.content.ContextCompat
 
 import cn.devcxl.photosync.editor.R
-import cn.devcxl.photosync.editor.domain.CurveChannel
 import cn.devcxl.photosync.editor.domain.CurveOps
 import cn.devcxl.photosync.editor.domain.CurvePoint
 import cn.devcxl.photosync.editor.ui.panels.PanelChipFactory
@@ -24,11 +23,16 @@ class CurveEditorView @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : LinearLayout(context, attrs, defStyleAttr) {
 
+    /** Callbacks raised when the curve knots change or a drag completes. */
     interface Listener {
-        fun onCurveChanged(curve: CurveOps, fromUser: Boolean)
+        /** Raised when any channel of [curve] changes interactively. */
+        fun onCurveChanged(curve: CurveOps)
+
+        /** Raised when the user releases the active knot or resets a channel. */
         fun onStopTrackingTouch()
     }
 
+    /** Listener notified on interactive curve edits and touch release. */
     var listener: Listener? = null
 
     private val density = resources.displayMetrics.density
@@ -60,8 +64,10 @@ class CurveEditorView @JvmOverloads constructor(
         val resetBtn = TextView(context).apply {
             setText(R.string.editor_curve_reset)
             textSize = 11.0f
+            gravity = Gravity.CENTER
+            minHeight = (CHIP_HEIGHT_DP * density).toInt()
             setTextColor(ContextCompat.getColor(context, R.color.editor_text_secondary))
-            setPadding((8.0f * density).toInt(), 0, (4.0f * density).toInt(), 0)
+            setPadding((10.0f * density).toInt(), 0, (6.0f * density).toInt(), 0)
             setOnClickListener { resetActiveChannel() }
         }
         header.addView(resetBtn)
@@ -74,7 +80,7 @@ class CurveEditorView @JvmOverloads constructor(
             listener = object : CurveCanvasView.Listener {
                 override fun onChannelPointsChanged(channel: CurveChannel, points: List<CurvePoint>) {
                     currentOps = updateChannel(currentOps, channel, points)
-                    this@CurveEditorView.listener?.onCurveChanged(currentOps, fromUser = true)
+                    this@CurveEditorView.listener?.onCurveChanged(currentOps)
                 }
 
                 override fun onStopTrackingTouch() {
@@ -86,7 +92,7 @@ class CurveEditorView @JvmOverloads constructor(
         refreshChannelChips()
     }
 
-    /** Updates the displayed [curve] from the active [cn.devcxl.photosync.editor.domain.EditGraph]. */
+    /** Updates the displayed curves and knots to reflect [curve]. */
     fun setCurveOps(curve: CurveOps) {
         currentOps = curve
         curveCanvas.bindState(currentOps, activeChannel)
@@ -103,7 +109,7 @@ class CurveEditorView @JvmOverloads constructor(
         currentOps = updateChannel(currentOps, activeChannel, CurveOps.DEFAULT_LINEAR_CURVE)
         curveCanvas.bindState(currentOps, activeChannel)
         refreshChannelChips()
-        listener?.onCurveChanged(currentOps, fromUser = true)
+        listener?.onCurveChanged(currentOps)
         listener?.onStopTrackingTouch()
     }
 
@@ -131,7 +137,7 @@ class CurveEditorView @JvmOverloads constructor(
     }
 
     private companion object {
-        private const val CHIP_HEIGHT_DP = 26.0f
+        private const val CHIP_HEIGHT_DP = 32.0f
         private const val CHIP_PADDING_DP = 10.0f
         private const val CANVAS_HEIGHT_DP = 148.0f
     }

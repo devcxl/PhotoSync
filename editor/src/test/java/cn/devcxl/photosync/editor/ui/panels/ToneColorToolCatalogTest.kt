@@ -7,16 +7,21 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 import cn.devcxl.photosync.editor.domain.ColorOps
+import cn.devcxl.photosync.editor.domain.CurveOps
+import cn.devcxl.photosync.editor.domain.CurvePoint
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.EditParameterKey
 import cn.devcxl.photosync.editor.domain.EditorUndoController
+import cn.devcxl.photosync.editor.domain.HslBandShift
+import cn.devcxl.photosync.editor.domain.HslOps
+import cn.devcxl.photosync.editor.domain.SplitToningOps
 import cn.devcxl.photosync.editor.domain.ToneOps
 import cn.devcxl.photosync.editor.ui.gesture.EditorGroup
 import cn.devcxl.photosync.editor.ui.gesture.EditorTool
 
 /**
- * Seam under test: [EditorToolCatalog] — the drawer contract that turns every tone and white
- * balance slider into its own chip with its own undo bucket and its own edit-graph field.
+ * Seam under test: [EditorToolCatalog] — the drawer contract that turns every tone, color and
+ * detail tool into its own chip with its own undo bucket and edit-graph field.
  */
 class ToneColorToolCatalogTest {
 
@@ -107,6 +112,10 @@ class ToneColorToolCatalogTest {
         graph = write(EditorTool.BLACKS, graph, 17.0f)
         graph = write(EditorTool.TEMPERATURE, graph, 18.0f)
         graph = write(EditorTool.TINT, graph, 19.0f)
+        graph = write(EditorTool.SATURATION, graph, 21.0f)
+        graph = write(EditorTool.VIBRANCE, graph, 22.0f)
+        graph = write(EditorTool.FADE, graph, 23.0f)
+        graph = write(EditorTool.DEFRINGE, graph, 24.0f)
 
         assertEquals(11, graph.tone.brightness)
         assertEquals(12, graph.tone.contrast)
@@ -117,6 +126,10 @@ class ToneColorToolCatalogTest {
         assertEquals(17, graph.tone.blacks)
         assertEquals(18, graph.color.temp)
         assertEquals(19, graph.color.tint)
+        assertEquals(21, graph.color.saturation)
+        assertEquals(22, graph.color.vibrance)
+        assertEquals(23, graph.color.fade)
+        assertEquals(24, graph.effects.ca.defringe)
     }
 
     @Test
@@ -134,7 +147,13 @@ class ToneColorToolCatalogTest {
                 contrast = -20,
                 glow = 10
             ),
-            color = ColorOps(temp = 40, tint = -15)
+            color = ColorOps(
+                temp = 40,
+                tint = -15,
+                curve = CurveOps(rgb = listOf(CurvePoint(0.0f, 0.0f), CurvePoint(0.5f, 0.6f), CurvePoint(1.0f, 1.0f))),
+                hsl = HslOps(blue = HslBandShift(luminance = -30)),
+                split = SplitToningOps(hiSat = 25)
+            )
         )
 
         val withoutBrightness = reset(EditorTool.BRIGHTNESS, busy)
@@ -145,20 +164,37 @@ class ToneColorToolCatalogTest {
         val withoutTint = reset(EditorTool.TINT, busy)
         assertEquals(0, withoutTint.color.tint)
         assertEquals(40, withoutTint.color.temp)
-        assertEquals(30, withoutTint.tone.brightness)
+
+        val withoutCurve = reset(EditorTool.CURVE, busy)
+        assertTrue(withoutCurve.color.curve.isIdentity())
+        assertFalse(withoutCurve.color.hsl.isIdentity())
+
+        val withoutHsl = reset(EditorTool.HSL, busy)
+        assertTrue(withoutHsl.color.hsl.isIdentity())
+        assertFalse(withoutHsl.color.split.isIdentity())
+
+        val withoutSplit = reset(EditorTool.SPLIT_TONING, busy)
+        assertTrue(withoutSplit.color.split.isIdentity())
     }
 
     @Test
-    fun shouldReportModifiedOnlyForItsOwnSlider_whenReadingChipState() {
+    fun shouldReportModifiedOnlyForItsOwnSliderOrPanel_whenReadingChipState() {
         val graph = EditGraph(
             tone = ToneOps(highlights = -1),
-            color = ColorOps(temp = 1)
+            color = ColorOps(
+                temp = 1,
+                hsl = HslOps(red = HslBandShift(hue = 10)),
+                split = SplitToningOps(shSat = 15)
+            )
         )
 
-        assertTrue(EditorToolCatalog.specFor(EditorTool.HIGHLIGHTS)!!.isModified(graph))
-        assertTrue(EditorToolCatalog.specFor(EditorTool.TEMPERATURE)!!.isModified(graph))
-        assertFalse(EditorToolCatalog.specFor(EditorTool.SHADOWS)!!.isModified(graph))
-        assertFalse(EditorToolCatalog.specFor(EditorTool.CONTRAST)!!.isModified(graph))
+        assertTrue(specFor(EditorTool.HIGHLIGHTS).isModified(graph))
+        assertTrue(specFor(EditorTool.TEMPERATURE).isModified(graph))
+        assertTrue(specFor(EditorTool.HSL).isModified(graph))
+        assertTrue(specFor(EditorTool.SPLIT_TONING).isModified(graph))
+        assertFalse(specFor(EditorTool.CURVE).isModified(graph))
+        assertFalse(specFor(EditorTool.SHADOWS).isModified(graph))
+        assertFalse(specFor(EditorTool.CONTRAST).isModified(graph))
     }
 
     @Test
@@ -176,11 +212,11 @@ class ToneColorToolCatalogTest {
 
     @Test
     fun shouldExposeDialRangesEverySliderShares_whenInspectingCatalog() {
-        val exposure = EditorToolCatalog.specFor(EditorTool.EXPOSURE)!!.dial!!
+        val exposure = checkNotNull(specFor(EditorTool.EXPOSURE).dial)
         assertEquals(-5.0f, exposure.min, 1e-4f)
         assertEquals(5.0f, exposure.max, 1e-4f)
 
-        val fade = EditorToolCatalog.specFor(EditorTool.FADE)!!.dial!!
+        val fade = checkNotNull(specFor(EditorTool.FADE).dial)
         assertEquals(0.0f, fade.min, 1e-4f)
         assertEquals(100.0f, fade.max, 1e-4f)
 
@@ -191,9 +227,10 @@ class ToneColorToolCatalogTest {
         }) {
             val dial = spec.dial
             assertNotNull("${spec.tool} must have a dial", dial)
-            assertEquals("${spec.tool} min", -100.0f, dial!!.min, 1e-4f)
-            assertEquals("${spec.tool} max", 100.0f, dial.max, 1e-4f)
-            assertEquals("${spec.tool} step", 1.0f, dial.step, 1e-4f)
+            val resolved = checkNotNull(dial)
+            assertEquals("${spec.tool} min", -100.0f, resolved.min, 1e-4f)
+            assertEquals("${spec.tool} max", 100.0f, resolved.max, 1e-4f)
+            assertEquals("${spec.tool} step", 1.0f, resolved.step, 1e-4f)
             assertEquals(spec.tool.name, EditorControlStyle.DIAL, spec.controlStyle)
         }
     }
@@ -201,8 +238,8 @@ class ToneColorToolCatalogTest {
     @Test
     fun shouldCreateTwoUndoSteps_whenTwoSlidersAreDraggedInsideOneCoalescingWindow() {
         val controller = EditorUndoController()
-        val brightness = EditorToolCatalog.specFor(EditorTool.BRIGHTNESS)!!
-        val contrast = EditorToolCatalog.specFor(EditorTool.CONTRAST)!!
+        val brightness = specFor(EditorTool.BRIGHTNESS)
+        val contrast = specFor(EditorTool.CONTRAST)
 
         controller.onParameterDrag(
             brightness.writeValue(controller.currentGraph, 20.0f),
@@ -221,15 +258,14 @@ class ToneColorToolCatalogTest {
         assertEquals(20, afterUndo.tone.brightness)
     }
 
-    private fun write(tool: EditorTool, graph: EditGraph, value: Float): EditGraph {
-        val spec = EditorToolCatalog.specFor(tool) ?: error("Missing spec for $tool")
-        return spec.writeValue(graph, value)
-    }
+    private fun specFor(tool: EditorTool): EditorToolSpec =
+        EditorToolCatalog.specFor(tool) ?: error("Missing spec for $tool")
 
-    private fun reset(tool: EditorTool, graph: EditGraph): EditGraph {
-        val spec = EditorToolCatalog.specFor(tool) ?: error("Missing spec for $tool")
-        return spec.reset(graph)
-    }
+    private fun write(tool: EditorTool, graph: EditGraph, value: Float): EditGraph =
+        specFor(tool).writeValue(graph, value)
+
+    private fun reset(tool: EditorTool, graph: EditGraph): EditGraph =
+        specFor(tool).reset(graph)
 
     private fun toneAndColourSpecs(): List<EditorToolSpec> =
         EditorToolCatalog.toolsFor(EditorGroup.TONE) + EditorToolCatalog.toolsFor(EditorGroup.COLOR)
