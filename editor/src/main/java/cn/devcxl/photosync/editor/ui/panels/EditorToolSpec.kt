@@ -33,7 +33,16 @@ internal enum class EditorControlStyle {
     HSL,
 
     /** Cartesian OKLab split-toning panel. */
-    SPLIT_TONING
+    SPLIT_TONING,
+
+    /** `.cube` 3D LUT importer with LUT chips and a strength slider. */
+    LUT,
+
+    /** Film grain panel (amount, size, roughness). */
+    GRAIN,
+
+    /** Post-crop vignette panel (amount, midpoint, feather, roundness). */
+    VIGNETTE
 }
 
 /**
@@ -67,8 +76,9 @@ internal data class EditorToolSpec(
 )
 
 /**
- * Registry of the tools delivered so far: geometry (including liquify), tone, white balance and
- * lateral chromatic aberration.
+ * Registry of the tools delivered so far: geometry (including liquify), tone, white balance,
+ * display color, the Pass D effect panels (3D LUT, film grain, post-crop vignette) and lens
+ * dispersion / defringe.
  */
 internal object EditorToolCatalog {
 

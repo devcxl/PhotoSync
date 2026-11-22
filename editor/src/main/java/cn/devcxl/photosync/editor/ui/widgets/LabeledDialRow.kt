@@ -29,6 +29,13 @@ internal class LabeledDialRow private constructor(
         updateValueText(value)
     }
 
+    /** Enables or dims the whole row so unavailable controls read as disabled. */
+    fun setEnabled(enabled: Boolean) {
+        dial.isEnabled = enabled
+        dial.alpha = if (enabled) 1.0f else DISABLED_ALPHA
+        rowView.alpha = if (enabled) 1.0f else DISABLED_ALPHA
+    }
+
     private fun updateValueText(value: Int) {
         valueView.text = String.format(Locale.US, context.getString(formatRes), value.toFloat())
     }
@@ -38,6 +45,7 @@ internal class LabeledDialRow private constructor(
         private const val VALUE_WIDTH_DP = 40.0f
         private const val DIAL_HEIGHT_DP = 36.0f
         private const val ROW_TOP_MARGIN_DP = 2.0f
+        private const val DISABLED_ALPHA = 0.4f
 
         fun create(
             context: Context,

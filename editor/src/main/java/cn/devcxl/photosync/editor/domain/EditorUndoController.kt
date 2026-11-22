@@ -23,6 +23,7 @@ enum class EditParameterKey {
     COLOR_CURVE,
     COLOR_SPLIT_TONING,
     COLOR_FADE,
+    COLOR_LUT,
     BASE_LOOK,
     GEOMETRY_CROP,
     GEOMETRY_STRAIGHTEN,
@@ -31,7 +32,9 @@ enum class EditParameterKey {
     GEOMETRY_LIQUIFY,
     DETAIL_CA_RED_CYAN,
     DETAIL_CA_BLUE_YELLOW,
-    DETAIL_CA_DEFRINGE
+    DETAIL_CA_DEFRINGE,
+    DETAIL_GRAIN,
+    DETAIL_VIGNETTE
 }
 
 /**

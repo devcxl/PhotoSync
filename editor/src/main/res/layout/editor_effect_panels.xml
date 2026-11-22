@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/effectPanelsRoot"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="4dp"
+    android:visibility="gone">
+
+    <cn.devcxl.photosync.editor.ui.widgets.LutPanelView
+        android:id="@+id/lutPanelView"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:visibility="gone" />
+
+    <cn.devcxl.photosync.editor.ui.widgets.GrainPanelView
+        android:id="@+id/grainPanelView"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:visibility="gone" />
+
+    <cn.devcxl.photosync.editor.ui.widgets.VignettePanelView
+        android:id="@+id/vignettePanelView"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:visibility="gone" />
+
+</FrameLayout>

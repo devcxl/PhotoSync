@@ -17,7 +17,7 @@ import cn.devcxl.photosync.editor.ui.gesture.EditorTool
 internal object EditorColorSpecs {
 
     fun colourSpecs(): List<EditorToolSpec> =
-        whiteBalanceSpecs() + chromaSpecs() + panelColorSpecs() + listOf(fadeSpec())
+        whiteBalanceSpecs() + chromaSpecs() + panelColorSpecs() + listOf(fadeSpec(), lutSpec())
 
     private fun whiteBalanceSpecs(): List<EditorToolSpec> = listOf(
         EditorToneDetailSpecs.signedSlider(
@@ -102,5 +102,16 @@ internal object EditorColorSpecs {
         parameterKey = EditParameterKey.COLOR_FADE,
         read = { it.color.fade },
         write = { graph, value -> graph.copy(color = graph.color.copy(fade = value)) }
+    )
+
+    private fun lutSpec(): EditorToolSpec = EditorToolSpec(
+        tool = EditorTool.LUT,
+        group = EditorGroup.COLOR,
+        labelRes = R.string.editor_tool_lut,
+        modifiedLabelRes = R.string.editor_tool_lut_modified,
+        parameterKey = EditParameterKey.COLOR_LUT,
+        controlStyle = EditorControlStyle.LUT,
+        isModified = { it.color.lut != null && it.color.lut.strength > 0 },
+        reset = { it.copy(color = it.color.copy(lut = null)) }
     )
 }

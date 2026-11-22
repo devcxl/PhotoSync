@@ -111,6 +111,33 @@
     <string name="editor_tool_ca_blue_yellow_modified">色散 B/Y •</string>
     <string name="editor_tool_defringe">去紫边</string>
     <string name="editor_tool_defringe_modified">去紫边 •</string>
+    <string name="editor_tool_grain">颗粒</string>
+    <string name="editor_tool_grain_modified">颗粒 •</string>
+    <string name="editor_tool_vignette">晕影</string>
+    <string name="editor_tool_vignette_modified">晕影 •</string>
+
+    <!-- 3D LUT sub-tool and panel -->
+    <string name="editor_tool_lut" translatable="false">3D LUT</string>
+    <string name="editor_tool_lut_modified" translatable="false">3D LUT •</string>
+    <string name="editor_lut_import">＋ 导入 .cube</string>
+    <string name="editor_lut_none">无</string>
+    <string name="editor_lut_strength">强度</string>
+    <string name="editor_lut_importing">正在导入 LUT…</string>
+    <string name="editor_lut_imported">已导入 LUT</string>
+    <string name="editor_lut_import_failed">LUT 导入失败，请重新选择 .cube 文件</string>
+    <string name="editor_value_lut_modified">已应用</string>
+    <string name="editor_value_lut_none">—</string>
+
+    <!-- Film grain panel -->
+    <string name="editor_grain_amount">数量</string>
+    <string name="editor_grain_size">大小</string>
+    <string name="editor_grain_roughness">粗糙度</string>
+
+    <!-- Post-crop vignette panel -->
+    <string name="editor_vignette_amount">数量</string>
+    <string name="editor_vignette_midpoint">中点</string>
+    <string name="editor_vignette_feather">羽化</string>
+    <string name="editor_vignette_roundness">圆度</string>
 
     <!-- Liquify tool -->
     <string name="editor_tool_liquify">液化</string>

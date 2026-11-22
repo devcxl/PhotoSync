@@ -1,15 +1,11 @@
 package cn.devcxl.photosync.editor.ui
 
-import android.annotation.SuppressLint
 import android.app.Activity
-import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
-import android.opengl.GLSurfaceView
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.view.MotionEvent
 import android.view.View
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -26,6 +22,7 @@ import cn.devcxl.photosync.editor.domain.EditorUndoController
 import cn.devcxl.photosync.editor.domain.LiquifyBrushSettings
 import cn.devcxl.photosync.editor.domain.LiquifyMeshStore
 import cn.devcxl.photosync.editor.domain.LiquifySession
+import cn.devcxl.photosync.editor.lut.CubeLutStore
 import cn.devcxl.photosync.editor.render.CanvasViewportTransform
 import cn.devcxl.photosync.editor.render.EditorGlRenderer
 import cn.devcxl.photosync.editor.render.EditorPreviewSession
@@ -34,17 +31,18 @@ import cn.devcxl.photosync.editor.ui.gesture.EditorGroup
 import cn.devcxl.photosync.editor.ui.gesture.EditorTool
 import cn.devcxl.photosync.editor.ui.panels.EditorPanelController
 import cn.devcxl.photosync.editor.ui.panels.EditorPreviewGeometry
-import cn.devcxl.photosync.editor.ui.widgets.CropOverlayView
-import cn.devcxl.photosync.editor.ui.widgets.LiquifyBrushOverlayView
 
 /**
  * Full-screen non-destructive photo editor.
  *
  * Combines 16-bit linear RAW decoding + `BaseLook` baseline switching with Pass A geometry /
- * liquify / lateral chromatic-aberration resampling and Pass B D65 Bradford WB + linear/display
- * tone grading.
+ * liquify / lateral chromatic-aberration resampling, Pass B D65 Bradford WB + linear/display tone
+ * grading and Pass D 3D LUT + film grain + post-crop vignette rendering.
  */
-class EditorActivity : AppCompatActivity(), EditorPanelController.Host {
+class EditorActivity : AppCompatActivity(),
+    EditorPanelController.Host,
+    EditorTopBarBinder.Host,
+    EditorCanvasBinder.Host {
 
     private lateinit var binding: ActivityEditorBinding
     private lateinit var previewSession: EditorPreviewSession
@@ -54,9 +52,13 @@ class EditorActivity : AppCompatActivity(), EditorPanelController.Host {
     private lateinit var panel: EditorPanelController
     private lateinit var liquifySession: LiquifySession
     private lateinit var overlaySync: EditorOverlaySync
+    private lateinit var topBar: EditorTopBarBinder
+    private lateinit var canvas: EditorCanvasBinder
+    private lateinit var lutImporter: EditorLutImportCoordinator
     private val renderer = EditorGlRenderer()
     private val undoController = EditorUndoController()
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val lutStore by lazy { CubeLutStore(filesDir) }
 
     private var photoId: Long = 0L
     private var sourcePath: String = ""
@@ -74,18 +76,24 @@ class EditorActivity : AppCompatActivity(), EditorPanelController.Host {
         sourcePath = intent.getStringExtra(EXTRA_SOURCE_PATH).orEmpty()
         isRaw = intent.getBooleanExtra(EXTRA_IS_RAW, false)
         initCoordinators()
-        setupGlSurfaceView()
-        setupOverlay()
-        setupTopBar()
-        panel = EditorPanelController(this, binding, undoController, this)
+        canvas = EditorCanvasBinder(binding, renderer, undoController, liquifySession, this)
+        preferLinearSource = canvas.configureSurfaceView()
+        canvas.attachOverlays()
+        topBar = EditorTopBarBinder(binding, historyCoordinator, this).also { it.bind() }
+        panel = EditorPanelController(this, binding, undoController, this, lutStore)
         overlaySync = EditorOverlaySync(binding, panel, liquifySession, ::previewAspect)
+        overlaySync.syncBrush()
+        lutImporter = EditorLutImportCoordinator(this, lutStore, undoController, previewSession) {
+            renderCurrentGraph(useProxy = false)
+            updateHistoryButtons()
+        }
         panel.selectGroup(EditorGroup.TONE)
         loadInitialPhotoAndEditState()
     }
 
     private fun initCoordinators() {
         liquifySession = LiquifySession(photoId, LiquifyMeshStore(filesDir))
-        previewSession = EditorPreviewSession(renderer, cacheDir, photoId)
+        previewSession = EditorPreviewSession(renderer, cacheDir, photoId, lutStore)
         saveCoordinator = EditorSaveCoordinator(photoId, previewSession, liquifySession)
         sessionLoader = EditorSessionLoader(photoId, previewSession, liquifySession)
         historyCoordinator = EditorHistoryCoordinator(
@@ -110,8 +118,7 @@ class EditorActivity : AppCompatActivity(), EditorPanelController.Host {
 
     override fun onDestroy() {
         mainHandler.removeCallbacks(settleFullQualityRunnable)
-        binding.cropOverlayView.listener = null
-        binding.liquifyBrushOverlayView.listener = null
+        canvas.detachOverlays()
         previewSession.release()
         super.onDestroy()
     }
@@ -137,12 +144,11 @@ class EditorActivity : AppCompatActivity(), EditorPanelController.Host {
         updateHistoryButtons()
     }
 
-    override fun previewAspect(): Float =
-        EditorPreviewGeometry.previewAspect(
-            undoController.currentGraph,
-            panel.currentTool,
-            renderer.sourceAspect()
-        )
+    override fun previewAspect(): Float = EditorPreviewGeometry.previewAspect(
+        undoController.currentGraph,
+        panel.currentTool,
+        renderer.sourceAspect()
+    )
 
     override fun onLiquifySettingsChanged(settings: LiquifyBrushSettings) {
         liquifySession.updateSettings { settings }
@@ -154,67 +160,47 @@ class EditorActivity : AppCompatActivity(), EditorPanelController.Host {
         updateHistoryButtons()
     }
 
-    private fun createOverlayGestures(): CropOverlayView.Listener = EditorGeometryGestures(
-        undoController = undoController,
-        onDragged = {
-            mainHandler.removeCallbacks(settleFullQualityRunnable)
-            renderCurrentGraph(useProxy = true)
-        },
-        onFinished = {
-            renderCurrentGraph(useProxy = false)
-            updateHistoryButtons()
-        },
-        onCanvasTransformChanged = ::onCanvasTransformChanged,
-        onCompareHold = ::setCompareOriginal
-    )
-
-    private fun createLiquifyGestures(): LiquifyBrushOverlayView.Listener = LiquifyGestures(
-        session = liquifySession,
-        projection = {
-            LiquifyStrokeProjection.of(undoController.currentGraph.geometry, renderer.sourceAspect())
-        },
-        onMeshChanged = ::publishLiquifyMesh,
-        onStrokeFinished = {
-            historyCoordinator.onLiquifyStrokeCommitted()
-            renderCurrentGraph(useProxy = false)
-            updateHistoryButtons()
-        },
-        onCanvasTransformChanged = ::onCanvasTransformChanged,
-        onResetRequested = ::onLiquifyResetRequested
-    )
-
-    private fun setupGlSurfaceView() {
-        val activityManager = getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
-        preferLinearSource =
-            (activityManager?.deviceConfigurationInfo?.reqGlEsVersion ?: 0) >= MIN_GLES_VERSION_ES3
-        renderer.preferEs3 = preferLinearSource
-        binding.glSurfaceView.setEGLContextClientVersion(if (preferLinearSource) 3 else 2)
-        binding.glSurfaceView.setRenderer(renderer)
-        binding.glSurfaceView.renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
+    override fun onLutImportRequested() {
+        lutImporter.launch()
     }
 
-    private fun setupOverlay() {
-        binding.cropOverlayView.listener = createOverlayGestures()
-        binding.cropOverlayView.tool = EditorTool.NONE
-        binding.liquifyBrushOverlayView.listener = createLiquifyGestures()
-        binding.liquifyBrushOverlayView.visibility = View.GONE
-        overlaySync.syncBrush()
+    override fun onPreviewDragStarted() {
+        mainHandler.removeCallbacks(settleFullQualityRunnable)
+        renderCurrentGraph(useProxy = true)
     }
 
-    @SuppressLint("ClickableViewAccessibility")
-    private fun setupTopBar() {
-        binding.btnUndo.setOnClickListener { historyCoordinator.undo() }
-        binding.btnRedo.setOnClickListener { historyCoordinator.redo() }
-        binding.btnCompare.setOnTouchListener { _, event ->
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> setCompareOriginal(true)
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> setCompareOriginal(false)
-            }
-            false
-        }
-        binding.baseLookToggle.onLookSelected = ::selectBaseLook
-        binding.btnDone.setOnClickListener { saveEditAndFinish() }
+    override fun onPreviewDragFinished() {
+        renderCurrentGraph(useProxy = false)
         updateHistoryButtons()
+    }
+
+    override fun onLiquifyMeshChanged() {
+        publishLiquifyMesh()
+    }
+
+    override fun onLiquifyStrokeFinished() {
+        historyCoordinator.onLiquifyStrokeCommitted()
+        renderCurrentGraph(useProxy = false)
+        updateHistoryButtons()
+    }
+
+    override fun onCompareChanged(comparing: Boolean) {
+        if (renderer.compareOriginal == comparing) return
+        renderer.compareOriginal = comparing
+        topBar.setComparePillVisible(comparing)
+        binding.glSurfaceView.requestRender()
+    }
+
+    override fun onBaseLookSelected(baseLook: BaseLook) {
+        val current = undoController.currentGraph
+        if (current.baseLook == baseLook) return
+        undoController.onParameterDrag(current.copy(baseLook = baseLook), EditParameterKey.BASE_LOOK)
+        undoController.onParameterRelease()
+        applyHistoryGraph(undoController.currentGraph)
+    }
+
+    override fun onDoneRequested() {
+        saveEditAndFinish()
     }
 
     private fun applyHistoryGraph(graph: EditGraph) {
@@ -239,40 +225,22 @@ class EditorActivity : AppCompatActivity(), EditorPanelController.Host {
         binding.glSurfaceView.requestRender()
     }
 
-    private fun onCanvasTransformChanged(transform: CanvasTransform) {
-        renderer.canvasTransform = CanvasViewportTransform(transform.scale, transform.offsetX, transform.offsetY)
+    override fun onCanvasTransformChanged(transform: CanvasTransform) {
+        renderer.canvasTransform = CanvasViewportTransform(
+            transform.scale,
+            transform.offsetX,
+            transform.offsetY
+        )
         overlaySync.syncCanvasTransform(transform)
         binding.glSurfaceView.requestRender()
     }
 
-    private fun setCompareOriginal(comparing: Boolean) {
-        if (renderer.compareOriginal == comparing) return
-        renderer.compareOriginal = comparing
-        binding.compareStatusPill.visibility = if (comparing) View.VISIBLE else View.GONE
-        binding.glSurfaceView.requestRender()
-    }
-
-    private fun selectBaseLook(baseLook: BaseLook) {
-        val current = undoController.currentGraph
-        if (current.baseLook == baseLook) return
-        undoController.onParameterDrag(current.copy(baseLook = baseLook), EditParameterKey.BASE_LOOK)
-        undoController.onParameterRelease()
-        applyHistoryGraph(undoController.currentGraph)
-    }
-
     private fun updateBaseLookPill(baseLook: BaseLook) {
-        binding.baseLookToggle.visibility =
-            if (isRaw && previewSession.supportsBaseLook) View.VISIBLE else View.GONE
-        binding.baseLookToggle.setLook(baseLook)
+        topBar.updateBaseLookPill(baseLook, isRaw && previewSession.supportsBaseLook)
     }
 
     private fun updateHistoryButtons() {
-        val canUndo = historyCoordinator.canUndo
-        val canRedo = historyCoordinator.canRedo
-        binding.btnUndo.isEnabled = canUndo
-        binding.btnRedo.isEnabled = canRedo
-        binding.btnUndo.alpha = if (canUndo) 1.0f else 0.4f
-        binding.btnRedo.alpha = if (canRedo) 1.0f else 0.4f
+        topBar.updateHistoryButtons()
     }
 
     private fun loadInitialPhotoAndEditState() {
@@ -297,11 +265,7 @@ class EditorActivity : AppCompatActivity(), EditorPanelController.Host {
             val saved = saveCoordinator.persist(finalGraph)
             if (!saved) {
                 binding.btnDone.isEnabled = true
-                Toast.makeText(
-                    this@EditorActivity,
-                    R.string.editor_save_failed,
-                    Toast.LENGTH_SHORT
-                ).show()
+                Toast.makeText(this@EditorActivity, R.string.editor_save_failed, Toast.LENGTH_SHORT).show()
                 return@launch
             }
             val resultIntent = Intent().apply {

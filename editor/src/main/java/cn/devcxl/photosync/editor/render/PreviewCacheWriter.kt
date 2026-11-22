@@ -14,7 +14,10 @@ import cn.devcxl.photosync.editor.domain.ExposureShaderMath
 import cn.devcxl.photosync.editor.domain.GeometryMath
 import cn.devcxl.photosync.editor.domain.LinearRawPreviewRenderer
 import cn.devcxl.photosync.editor.domain.LiquifyMesh
+import cn.devcxl.photosync.editor.domain.Lut3dSamples
 import cn.devcxl.photosync.editor.domain.PassBColorMath
+import cn.devcxl.photosync.editor.domain.PassDEffectsMath
+import cn.devcxl.photosync.editor.domain.PassDEffectsParams
 import cn.devcxl.photosync.editor.domain.Srgb8Packer
 import cn.devcxl.photosync.editor.domain.ToneShaderMath
 import cn.devcxl.photosync.editor.domain.ToneShaderParams
@@ -42,9 +45,10 @@ internal object PreviewCacheWriter {
         graph: EditGraph,
         cacheDir: File,
         photoId: Long,
-        liquifyMesh: LiquifyMesh? = null
+        liquifyMesh: LiquifyMesh? = null,
+        lut: Lut3dSamples? = null
     ): String? {
-        val rendered = renderBitmapFrame(source, graph, liquifyMesh) ?: return null
+        val rendered = renderBitmapFrame(source, graph, liquifyMesh, lut) ?: return null
         return compressAndWrite(rendered, cacheDir, photoId)
     }
 
@@ -56,7 +60,8 @@ internal object PreviewCacheWriter {
         graph: EditGraph,
         cacheDir: File,
         photoId: Long,
-        liquifyMesh: LiquifyMesh? = null
+        liquifyMesh: LiquifyMesh? = null,
+        lut: Lut3dSamples? = null
     ): String? {
         val sourceAspect = source.width.toFloat() / source.height.toFloat()
         val outputAspect = GeometryMath.outputAspect(graph.geometry, sourceAspect)
@@ -76,7 +81,7 @@ internal object PreviewCacheWriter {
         } else {
             source.downscaledTo(PREVIEW_MAX_EDGE_PX)
         }
-        val pixels = LinearRawPreviewRenderer.renderArgb(linearFrame, graph)
+        val pixels = LinearRawPreviewRenderer.renderArgb(linearFrame, graph, lut)
         val outBitmap = Bitmap.createBitmap(
             pixels,
             linearFrame.width,
@@ -89,7 +94,8 @@ internal object PreviewCacheWriter {
     private fun renderBitmapFrame(
         source: Bitmap,
         graph: EditGraph,
-        liquifyMesh: LiquifyMesh?
+        liquifyMesh: LiquifyMesh?,
+        lut: Lut3dSamples?
     ): Bitmap? {
         val sourceAspect = source.width.toFloat() / source.height.toFloat()
         val outputAspect = GeometryMath.outputAspect(graph.geometry, sourceAspect)
@@ -106,7 +112,23 @@ internal object PreviewCacheWriter {
             liquifyMesh = liquifyMesh
         )
         applyPassBToDisplayPixels(resampled, graph)
+        applyPassDEffects(resampled, graph, lut)
         return resampled
+    }
+
+    /**
+     * Applies grain, post-crop vignette and the 3D LUT on the already-cropped frame, matching the
+     * Pass D order used by the GL preview.
+     */
+    private fun applyPassDEffects(bitmap: Bitmap, graph: EditGraph, lut: Lut3dSamples?) {
+        val params = PassDEffectsParams.from(graph, bitmap.width.toFloat() / bitmap.height.toFloat())
+        if (params.isIdentity) return
+        val width = bitmap.width
+        val height = bitmap.height
+        val pixels = IntArray(width * height)
+        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+        PassDEffectsMath.applyDisplayEffects(pixels, width, height, params, lut)
+        bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
     }
 
     private fun applyPassBToDisplayPixels(bitmap: Bitmap, graph: EditGraph) {

@@ -21,9 +21,24 @@ internal object PanelChipFactory {
         heightPx: Int,
         textSizeSp: Float,
         paddingPx: Int
+    ): TextView = createWithText(
+        context = context,
+        label = context.getString(labelRes),
+        heightPx = heightPx,
+        textSizeSp = textSizeSp,
+        paddingPx = paddingPx
+    )
+
+    /** Creates an unselected chip labelled with a dynamic [label], such as an imported LUT name. */
+    fun createWithText(
+        context: Context,
+        label: CharSequence,
+        heightPx: Int,
+        textSizeSp: Float,
+        paddingPx: Int
     ): TextView {
         val chip = TextView(context).apply {
-            setText(labelRes)
+            text = label
             textSize = textSizeSp
             gravity = Gravity.CENTER
             setPadding(paddingPx, 0, paddingPx, 0)

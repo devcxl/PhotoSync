@@ -181,7 +181,22 @@ internal object ExposureShaderSources {
         uniform float uShadows;
         uniform float uWhites;
         uniform float uBlacks;
+        uniform float uDitherAmp;
         ${ColorShaderGlsl.UNIFORMS}
+    """.trimIndent()
+
+    /** Portable helpers shared by both dialects: `tanh` and the `1/255` output dither. */
+    private val HELPER_GLSL = """
+        float softTanh(float x) {
+            float e2 = exp(clamp(2.0 * x, -20.0, 20.0));
+            return (e2 - 1.0) / (e2 + 1.0);
+        }
+
+        float triDither(vec2 position) {
+            float n1 = fract(sin(dot(position, vec2(12.9898, 78.233))) * 43758.5453);
+            float n2 = fract(sin(dot(position + vec2(1.0, 1.0), vec2(39.346, 11.135))) * 43758.5453);
+            return (n1 - n2) * uDitherAmp;
+        }
     """.trimIndent()
 
     val FRAGMENT_SHADER_ES3 = """
@@ -191,14 +206,11 @@ internal object ExposureShaderSources {
         out vec4 fragColor;
         $COMMON_UNIFORMS
 
-        float softTanh(float x) {
-            return tanh(x);
-        }
-
         vec4 sampleTex2D(sampler2D s, vec2 uv) {
             return texture(s, uv);
         }
 
+        $HELPER_GLSL
         $SRGB_GLSL
         $CAMERA_DEFAULT_GLSL
         $TONE_GLSL
@@ -210,14 +222,15 @@ internal object ExposureShaderSources {
                 ? applyBaseLook(max(src.rgb, vec3(0.0)) * uAutoBrightGain)
                 : decodeSrgb(src.rgb);
             if (uCompareOriginal == 1 || (uToneActive == 0 && uPassB2Active == 0)) {
-                fragColor = vec4(encodeSrgb(linear), src.a);
+                vec3 passthrough = encodeSrgb(linear) + vec3(triDither(gl_FragCoord.xy));
+                fragColor = vec4(clamp(passthrough, 0.0, 1.0), src.a);
                 return;
             }
             vec3 srgb = (uToneActive == 1) ? toneDisplay(toneLinear(linear)) : encodeSrgb(linear);
             if (uPassB2Active == 1) {
                 srgb = applyColorGrading(srgb);
             }
-            fragColor = vec4(srgb, src.a);
+            fragColor = vec4(clamp(srgb + vec3(triDither(gl_FragCoord.xy)), 0.0, 1.0), src.a);
         }
     """.trimIndent()
 
@@ -226,15 +239,11 @@ internal object ExposureShaderSources {
         varying vec2 vTexCoord;
         $COMMON_UNIFORMS
 
-        float softTanh(float x) {
-            float e2 = exp(clamp(2.0 * x, -20.0, 20.0));
-            return (e2 - 1.0) / (e2 + 1.0);
-        }
-
         vec4 sampleTex2D(sampler2D s, vec2 uv) {
             return texture2D(s, uv);
         }
 
+        $HELPER_GLSL
         $SRGB_GLSL
         $CAMERA_DEFAULT_GLSL
         $TONE_GLSL
@@ -246,14 +255,15 @@ internal object ExposureShaderSources {
                 ? applyBaseLook(max(src.rgb, vec3(0.0)) * uAutoBrightGain)
                 : decodeSrgb(src.rgb);
             if (uCompareOriginal == 1 || (uToneActive == 0 && uPassB2Active == 0)) {
-                gl_FragColor = vec4(encodeSrgb(linear), src.a);
+                vec3 passthrough = encodeSrgb(linear) + vec3(triDither(gl_FragCoord.xy));
+                gl_FragColor = vec4(clamp(passthrough, 0.0, 1.0), src.a);
                 return;
             }
             vec3 srgb = (uToneActive == 1) ? toneDisplay(toneLinear(linear)) : encodeSrgb(linear);
             if (uPassB2Active == 1) {
                 srgb = applyColorGrading(srgb);
             }
-            gl_FragColor = vec4(srgb, src.a);
+            gl_FragColor = vec4(clamp(srgb + vec3(triDither(gl_FragCoord.xy)), 0.0, 1.0), src.a);
         }
     """.trimIndent()
 
