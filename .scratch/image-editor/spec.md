@@ -1,157 +1,221 @@
-# PhotoSync 手机端图片编辑器（30 项能力 + 联机暗房）完整技术规范
+# PhotoSync 非破坏性图片编辑器与联机暗房规格说明
 
-> **状态**：已锁定（Wayfinder 全图 8 张决策/调研/原型工单全部解决，零待决事项）
-> **范围**：Android `minSdk 24` / `compileSdk 36`；模块 `:app` + `:editor`（新增）+ `:libraw`（扩展）
-> **关联地图与一手材料**：
-> - 寻路地图：[`map.md`](map.md)
-> - 算法基线：[`docs/research/2026-11-21-image-editor-pipeline.md`](../../docs/research/2026-11-21-image-editor-pipeline.md)
-> - MediaPipe 打包与分发实测：[`docs/research/2026-11-22-mediapipe-model-distribution.md`](../../docs/research/2026-11-22-mediapipe-model-distribution.md)（工单 [01](issues/01-mediapipe-model-packaging-and-distribution.md)）
-> - `libjpeg-turbo` 流式编码与 EXIF 写回实测：[`docs/research/2026-11-22-libjpeg-turbo-streaming-exif.md`](../../docs/research/2026-11-22-libjpeg-turbo-streaming-exif.md)（工单 [02](issues/02-libjpeg-turbo-streaming-and-exif-writeback.md)）
-> - 交互与状态机原型：[`prototype-editor-ui-and-state.html`](prototype-editor-ui-and-state.html)（工单 [04](issues/04-editor-ui-layout-and-gesture-prototype.md)）
+Status: ready-for-agent
 
----
+## Problem Statement
 
-## 1. 模块架构与边界契约（无循环依赖）
+摄影师使用 PhotoSync 通过 USB PTP 连接 `Camera`（相机）进行现场联机拍摄或选片交付时，同步（`Sync`）到手机上的 RAW 与 JPEG 照片目前仅能按固定默认曲线浏览和原样导出（`Export`）：
+1. **缺少高位深非破坏性精修能力**：当现场光线复杂导致欠曝/过曝、白平衡偏色、镜头色散、透视变形或需要曲线、HSL、色调分离、`.cube` 胶片 LUT、去雾及人像美肤/重塑时，用户不得不先把每张照片导出到系统相册，再切到第三方修图软件逐张处理，且第三方软件往往只吃 8-bit JPEG，白白丢掉了相机 RAW 的 16-bit 动态余量与拍摄 EXIF。
+2. **缺少面向联机拍摄（Tethering）的批量暗房闭环**：在边拍边传场景下，摄影师调好第一张试光片后，无法将该调色参数（`Preset`）自动套用到后续新同步的照片上（`LiveTetherPreset`），也无法在连拍照片之间快速复制/粘贴调色参数或批量排队烘焙导出（`Bake`），导致现场看片与快修交付效率低下。
 
+## Solution
+
+构建一个专为相机伴侣场景打造的 **GLES 3.0 16-bit 浮点非破坏性图片编辑器与联机暗房（Tethered Darkroom）**：
+1. **30 项编辑能力（34 个原子参数）全端侧 GPU 管线**：RAW 照片以 16-bit 线性光 `RGBA16F` 输入（默认叠加对齐浏览页观感的 `BaseLook`，亦可一键切为纯线性起点），按「几何与光学重采样（横向色散 pre-crop、旋转、翻转、裁切、拉直、透视、液化、人像 MLS 重塑、美体）→ 线性影调与 D65 锚定 Bradford 白平衡（曝光、亮度、高光、阴影、白/黑点、光感）→ 显示域色彩（正负分段对比度、单调三次曲线、软色域压缩、OKLCH 饱和度/自然饱和度/带低色度门控的 8 色带 HSL、笛卡尔 OKLab 色调分离、去紫边、褪色）→ 空间细节（在线/离线双模式人像美肤频率分离、引导滤波降噪、暗通道去雾、清晰度、纹理、联动皮肤抑制的 Y 通道锐化）→ 效果与输出（`.cube` 3D LUT 四面体插值、全局坐标颗粒、Post-crop 晕影、sRGB 三角抖动量化）」顺序渲染。
+2. **非破坏性 `EditGraph` 与联机暗房闭环**：所有编辑仅以 `EditGraph` JSON 保存，永不改写原始照片文件。编辑器内点「完成」秒存参数与屏幕级预览缓存退回主界面；主界面直接展示编辑后效果与「已编辑」标签、支持按住大图对比原图、支持底部快捷预设栏一键换 `Preset`、支持开启 `LiveTetherPreset` 让后续新 `Sync` 照片自动套用预设、支持带 `CopyMask` 的跨图复制/粘贴参数及后台批量队列 `Bake`。
+3. **高像素列带流式 `Bake` 与无损 EXIF 写回**：通过 1024px 全图 Pre-pass 提取全局耦合量，配合三档源图驻留策略与 `1920×512 (halo=64)` 列带 `glReadPixels(GL_PACK_ROW_LENGTH)` 散射至 `libjpeg-turbo` 流式编码，并在落盘后通过可寻址描述符写回白名单拍摄 EXIF（强制置 `Orientation=1`），在 ≤512MB 内存预算内支持高达 61MP–100MP 照片的零拼缝导出。
+
+## User Stories
+
+1. As a photographer, I want to tap an Edit button on the main darkroom toolbar, so that I can open the current photo in the full-screen editor without leaving the app.
+2. As a photographer editing a RAW photo, I want the initial 0-parameter view in the editor to match the main viewer's default tone curve and auto-brightening (`camera_default` `BaseLook`), so that the image does not suddenly jump darker or flatter when I enter the editor.
+3. As a colorist editing a RAW photo, I want a top-bar toggle to switch `BaseLook` between `camera_default` and `linear_neutral`, so that I can start grading from a flat linear response whenever I need full manual control.
+4. As a photographer, I want to adjust Exposure in EV (`-5.0..+5.0`) in linear light, so that overall image brightness scales physically like an in-camera exposure shift.
+5. As a photographer, I want to adjust Brightness (`-100..+100`) weighted around middle gray, so that I can lift or darken midtones without blowing out white points or crushing black points.
+6. As a photographer, I want to recover blown Highlights (`-100..+100`) and lift dark Shadows (`-100..+100`) in linear light before `[0, 1]` clipping, so that I can rescue 16-bit RAW dynamic range headroom.
+7. As a photographer, I want to adjust Whites (`-100..+100`) with a soft shoulder roll-off in linear light, so that negative values recover overexposed highlight detail without turning normal white pixels into muddy gray.
+8. As a photographer, I want to adjust Blacks (`-100..+100`) as a toe stretch anchored at zero, so that I can shape deep shadow contrast distinctly from film fade.
+9. As a photographer, I want to adjust Contrast (`-100..+100`) with a piecewise smooth S-curve for positive values and midrange compression for negative values, so that lowering contrast never distorts endpoint slopes.
+10. As a photographer, I want an Ambiance-style Glow slider (`-100..+100`) that combines midtone power lift, zero-anchored shadow lift, local clarity, and subtle vibrance compensation, so that one slider makes photos look luminous and transparent without washing out colors.
+11. As a photographer, I want to adjust Color Temperature and Tint (`-100..+100`) using Bradford chromatic adaptation anchored to the sRGB D65 white point at `(0, 0)`, so that neutral sliders are strictly identity and warming/cooling feels natural.
+12. As a photographer, I want to adjust Saturation and Vibrance (`-100..+100`) in perceptual OKLCH space with high-chroma clamping, deep-shadow noise attenuation, and skin-tone protection, so that boosting vibrance enriches muted colors without over-saturating existing vivid colors, skin, or shadow chroma noise.
+13. As a photographer, I want to edit 4-channel (RGB composite, R, G, B) tone curves by adding, dragging, or dragging-out-to-delete control points interpolated with Fritsch–Carlson monotone cubic Hermite splines, so that custom curves never produce ringing halos in smooth sky gradients.
+14. As a photographer, I want an 8-band HSL mixer (Red, Orange, Yellow, Green, Aqua, Blue, Purple, Magenta) operating in OKLCH with a low-chroma gate (`smoothstep(0.01, 0.05, C)`), so that shifting blue luminance or hue never creates blotchy artifacts on neutral gray walls or shadows.
+15. As a photographer, I want Split Toning (Highlight Hue/Sat, Shadow Hue/Sat, Balance) computed as Cartesian vector additions in OKLab `(a, b)`, so that even monochrome or neutral gray (`C = 0`) pixels receive the exact target tint hue.
+16. As a photographer, I want a Fade slider (`0..100`) that lifts the pure black floor and slightly desaturates chroma, so that I can create a matte film print look.
+17. As a photographer, I want to import community `.cube` 3D LUT files via the system file picker and blend their strength (`0..100`) using tetrahedral interpolation, so that I can apply external cinema and film looks accurately.
+18. As a photographer, I want to sharpen images on the luminance channel with amount (`0..150`), full-resolution radius (`0.5..3.0px`), threshold (`0..100`), and edge masking (`0..100`), so that edges become crisp without introducing chromatic fringes or amplifying flat-area noise.
+19. As a photographer, I want Clarity (`-100..+100`) and Texture (`-100..+100`) controls driven by a multi-scale low-frequency guide pyramid (`2%` and `0.3%` of the short edge), so that mid-frequency structure pops without halo artifacts.
+20. As a photographer, I want Luminance and Chroma Noise Reduction (`0..100`) with a Detail preservation slider (`0..100`), so that high-ISO grain and color mottling are smoothed while edges remain sharp.
+21. As a photographer, I want a Dehaze slider (`-100..+100`) using dark-channel prior transmission guided by a full-image atmospheric light $A$, so that hazy landscapes regain depth without tile seam mismatches.
+22. As a photographer, I want a Film Grain effect (Amount, Size, Roughness) evaluated in post-crop global coordinates with a deterministic persisted seed, so that preview and tiled full-resolution export show the exact same grain pattern without tile boundaries.
+23. As a photographer, I want a Post-crop Vignette control (Amount, Midpoint, Feather, Roundness), so that darkening or brightening the corners always follows the cropped frame and transitions smoothly according to the feather width.
+24. As a photographer, I want manual Chromatic Aberration correction (Red/Cyan and Blue/Yellow lateral scaling around the pre-crop optical center, plus Defringe purple/green edge desaturation), so that lens color fringing is removed before sharpening.
+25. As a photographer, I want 90-degree rotation, horizontal/vertical flip, aspect-locked cropping, arbitrary-angle straightening, and 4-point perspective correction that automatically compute the maximum inscribed valid rectangle, so that geometric corrections never leave black triangles at the borders.
+26. As a photographer, I want a Liquify brush (Push, Restore/Erase, Size, Strength) that accumulates strokes into a resolution-independent `128×128` displacement mesh, so that I can retouch contours smoothly and reopen the project instantaneously without replaying hundreds of strokes or overflowing database row limits.
+27. As a portrait photographer, I want frequency-separation Skin Smoothing (Smooth, Texture, Even Tone) that automatically excludes eyes, eyebrows, lips, and hair, suppresses sharpening over skin areas, and works offline using built-in lightweight models while seamlessly upgrading when the 6-class segmentation model finishes downloading.
+28. As a portrait photographer, I want 6-axis Face Reshaping (Slim Face, Enlarge Eyes, Slim Nose, Chin, Forehead, Smile) driven by 478 3D landmarks in a rotation-invariant face coordinate frame across up to 5 faces in a group photo, so that tilted faces and multi-person portraits deform naturally without warping neighboring faces or background lines.
+29. As a portrait photographer, I want Body Reshaping (Slim Waist and Lengthen Legs) initialized from face/body mask centroids with two draggable on-canvas guide lines and fixed-aspect inscribed cropping, so that I can refine waist and leg proportions in standing or seated poses without changing image dimensions or bending background walls.
+30. As a photographer, I want two-finger pinch/pan to always zoom and pan the canvas in every tool mode (immediately canceling any unmoved single-finger liquify touch `< 8dp`), so that I never accidentally smear the image while zooming in.
+31. As a photographer dragging a slider, I want real-time preview at 1024px proxy resolution (`≤ 8ms`) with continuous movements within `300ms` coalesced into a single Undo step (up to 50 steps), followed by full-resolution detail rendering `150ms` after release, so that sliders feel instantaneous and Undo steps are meaningful.
+32. As a photographer, I want to tap "Done" in the editor to save my `EditGraph` and a screen-sized preview cache in milliseconds without waiting for a full-resolution `Bake`, so that I can return to the main gallery immediately and see my edited look and an "Edited" badge in the pager and filmstrip.
+33. As a photographer browsing the main gallery or working in the editor, I want to press-and-hold the photo to temporarily view the unedited original (`Before`) and release to return to the edited look (`After`), so that I can judge my adjustments at any time.
+34. As a tethered photographer, I want to save my current adjustments as a reusable `Preset` and toggle it as the active `LiveTetherPreset`, so that every new photo arriving from the `Camera` via USB `Sync` automatically receives that look and renders its preview before `AutoFollow` displays it.
+35. As a photographer editing a photo while the `Camera` is still tethered, I want newly synced photos to be ingested and preset-bound silently in the background with only a subtle `+N new photos` pill in the editor top bar, so that incoming shots never steal focus or interrupt my active brush or slider gesture.
+36. As a photographer reviewing a burst of shots, I want to Copy Edits from one photo (automatically excluding single-photo geometry, liquify, and face/body warps via `CopyMask`, with an option to include them) and Paste Edits onto one or multiple other photos from the main gallery, so that I can grade a series consistently in seconds.
+37. As a photographer, I want to tap Export on an edited photo (or select multiple edited photos for a background batch `Bake` queue) to produce a full-resolution JPEG in the system gallery with original shooting EXIF preserved and `Orientation = 1`, while long-pressing Export lets me export the unedited original if needed.
+38. As a photographer using a 50MP–100MP camera or a mid-range phone without floating-point FBO extensions, I want the exporter and renderer to automatically select the safe source residency tier and dithered FBO fallback, so that exports never crash with OutOfMemoryError or black screens.
+39. As a user deleting a photo in the app, I want its associated `EditGraph`, preview caches, and liquify mesh files to be automatically cleaned up, so that no orphaned data accumulates on disk.
+40. As a user whose system cache was cleared by Android, I want photos with missing source files to retain their `EditGraph` record while gracefully displaying a "Source file missing — reconnect camera to re-sync" state instead of crashing.
+
+## Implementation Decisions
+
+### 1. Module Boundaries and Host Contracts
+- Introduce a standalone `:editor` Android library module that depends on `:libraw` (`RawWrapper`), MediaPipe Tasks Vision (`1.2.3`), and AndroidX ExifInterface (`1.4.2`). `:editor` must **never** depend on `:app`.
+- `:editor` exposes three host contracts implemented and injected by `:app`:
+  - `EditorLaunchArgs(photoId, sourcePath, displayName, isRaw)` for self-contained activity launch without querying `:app` DAOs.
+  - `EditStore` for reading/writing `EditGraph` records, preview cache paths, `UserPreset` entries, and the active `LiveTetherPreset` ID.
+  - `GallerySink` for publishing exported images to `MediaStore` (`IS_PENDING` on API 29+, atomic temp-file rename on API 24–28) and providing a seekable `"rw"` `ParcelFileDescriptor` or `File` for post-encode EXIF writeback.
+- Keep `domain/` inside `:editor` pure Kotlin (zero `android.*` imports) so all color science, spline math, validation, and MLS solvers run in JVM unit tests.
+
+### 2. UI Layout, Gesture Routing, and Throttling State Machine
+- **A+B+C Hybrid Layout**:
+  - `EditorActivity` uses a 3-tier bottom drawer (Tier 1: active control `ViewFlipper` switching between zero-snap `DialSeekBar`, 4-channel `CurveEditorView`, 8-band `HslPanelView`, and `LiquifyBrushPanel`; Tier 2: horizontal sub-tool chips with a blue dot `•` on modified tools and double-tap to reset; Tier 3: 6 fixed category tabs `Preset · Geometry · Tone · Color · Detail · Portrait`). In landscape, the bottom drawer moves to a `320dp` right-hand side panel.
+  - `MainActivity` adds a top-bar `editButton`, a `photoEditedBadge` inside the metadata pill, press-and-hold on the main image for Before/After comparison, and a collapsible `QuickPresetStrip` above the bottom filmstrip housing preset chips, the `LiveTetherPreset` toggle, and Copy/Paste Edits actions.
+- **State Machine & Gesture Router** (distilled from the validated prototype):
+
+```javascript
+// Derived from prototype-editor-ui-and-state.html
+function resolveGestureRoute(group, tool, pointerCount) {
+  if (pointerCount >= 2) {
+    return "CANVAS_TWO_FINGER_PAN_ZOOM"; // Always preempts single-finger tools; cancels liquify stroke if moved < 8dp
+  }
+  if (group === "GEOMETRY" && (tool === "CROP_STRAIGHTEN" || tool === "PERSPECTIVE")) {
+    return "CROP_PERSPECTIVE_HANDLE";    // Drag corners/edges/dial with auto-inscribed valid rectangle
+  }
+  if (group === "GEOMETRY" && tool === "LIQUIFY") {
+    return "LIQUIFY_BRUSH_STROKE";       // Accumulate displacement vectors into 128x128 half-float grid
+  }
+  if (group === "COLOR" && tool === "CURVE") {
+    return "CURVE_HERMITE_KNOT";         // Drag/add/remove monotone cubic knots inside curve grid
+  }
+  return "CANVAS_SINGLE_PAN_HOLD_COMPARE";
+}
 ```
-:app ──► :editor ──► :libraw        (:editor 只依赖 RawWrapper 与自身 contract)
-  │         │
-  │         └──► MediaPipe Tasks Vision (1.2.3) / ExifInterface (1.4.2)
-  └──► :libraw (含 LibRaw + lcms2 + libjpeg-turbo 3.2.2)
+
+- **Render Throttling & Undo Coalescing**:
+  - Active slider drag runs at `1024px` proxy resolution (`PROXY_1024_FAST`, point-operation passes only when spatial params are unchanged, target `≤ 8ms`).
+  - Slider ticks within a `300ms` rolling window coalesce into a single immutable `EditGraph` snapshot on the 50-step Undo stack.
+  - `150ms` after finger release (`IDLE_FULL_16F`), the GL thread executes the full preview resolution `RGBA16F` pipeline including spatial detail passes (`≤ 33ms`).
+
+### 3. Non-Destructive `EditGraph` Schema v1, O(1) Liquify Mesh, and Room v4
+- **Canonical `EditGraph` JSON Schema v1** (from prototype and schema decisions):
+
+```json
+{
+  "schema": 1,
+  "baseLook": "camera_default",
+  "geometry": {
+    "rotate90": 0, "flipH": false, "flipV": false, "straighten": 0.0,
+    "crop": [0.0, 0.0, 1.0, 1.0],
+    "perspective": [0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0],
+    "liquify": { "meshRelPath": "edits/42/liquify_128x128.bin", "gridSize": 128, "sha256": "..." }
+  },
+  "tone": {
+    "exposure": 0.0, "brightness": 0, "contrast": 0, "glow": 0,
+    "highlights": 0, "shadows": 0, "whites": 0, "blacks": 0
+  },
+  "color": {
+    "temp": 0, "tint": 0, "saturation": 0, "vibrance": 0,
+    "hsl": { "red": [0,0,0], "orange": [0,0,0], "yellow": [0,0,0], "green": [0,0,0],
+             "aqua": [0,0,0], "blue": [0,0,0], "purple": [0,0,0], "magenta": [0,0,0] },
+    "curve": { "rgb": [[0,0],[1,1]], "r": [[0,0],[1,1]], "g": [[0,0],[1,1]], "b": [[0,0],[1,1]] },
+    "split": { "hiHue": 45, "hiSat": 0, "shHue": 210, "shSat": 0, "balance": 0 },
+    "fade": 0,
+    "lut": { "id": "kodak_2383", "strength": 60 }
+  },
+  "detail": {
+    "sharpen": { "amount": 0, "radius": 1.0, "threshold": 0, "masking": 0 },
+    "clarity": 0, "texture": 0, "dehaze": 0,
+    "nr": { "luma": 0, "chroma": 0, "detail": 50 }
+  },
+  "effects": {
+    "grain": { "amount": 0, "size": 25, "roughness": 50, "seed": 104729 },
+    "vignette": { "amount": 0, "midpoint": 50, "feather": 50, "roundness": 0 },
+    "ca": { "redCyan": 0, "blueYellow": 0, "defringe": 0 }
+  },
+  "portrait": {
+    "skin": { "smooth": 0, "texture": 50, "evenTone": 0 },
+    "reshape": { "face": 0, "eyes": 0, "nose": 0, "chin": 0, "forehead": 0, "smile": 0 },
+    "body": { "waist": 0, "legs": 0, "waistY": null, "hipY": null }
+  }
+}
 ```
 
-### 1.1 目录与职责划分（遵守单文件 ≤ 500 行、函数 ≤ 50 行）
+- **Liquify Storage**: Never store raw stroke point lists in JSON. Persist a compressed `128×128` 2D half-float displacement grid (`64 KiB` raw, `< 12 KiB` deflated) in private files storage and reference its relative path and SHA-256 in `EditGraph`.
+- **`.cube` 3D LUT Pre-compilation**: On SAF import, parse and resample `.cube` files once into a `33×33×33` `RGBA16F` binary cache (`287,496 B` + 8-byte header) so runtime rendering maps it directly into `sampler3D` without text parsing.
+- **Database Migration (`v3 → v4`)**: Add `photo_edits` (with `FOREIGN KEY(photo_id) REFERENCES photos(id) ON DELETE CASCADE` and unique index on `photo_id`) and `user_presets`. Deleting a photo cascades to `photo_edits` and deletes its preview/liquify directory.
+- **Copy/Paste Mask (`CopyMask`)**: By default copies `{baseLook, tone, color, detail, effects, portrait.skin}` and excludes `{geometry.*, portrait.reshape, portrait.body}`.
 
-- **`:editor` 模块（新增 Android Library）**：
-  - `domain/`（纯 Kotlin，无 Android 依赖，供 JVM 单测直接覆盖）：
-    - `EditGraph.kt`、`EditValidator.kt`、`CopyMask.kt`、`Preset.kt`
-    - `BradfordWbSolver.kt`、`MonotoneCubicCurve.kt`、`HslBands.kt`、`FaceMlsSolver.kt`
-  - `contract/`（宿主解耦接口，由 `:app` 实现并注入，消除 `:editor → :app` 反向依赖）：
-    - `EditorLaunchArgs.kt`（含 `photoId: Long, sourcePath: String, displayName: String, isRaw: Boolean`）
-    - `EditStore.kt`（读写 `EditGraph` JSON、预览缓存路径与 `UserPreset` 列表）
-    - `GallerySink.kt`（分配相册输出流与 `"rw"` `ParcelFileDescriptor`）
-  - `lut/`：`CubeLutParser.kt`（解析 `.cube` 并预烘焙为 `33³ RGBA16F` `.lut16f` 二进制）、`LutTextureCache.kt`
-  - `vision/`：`PortraitAnalyzer.kt`（MediaPipe `FaceLandmarker` + 双模式 `ImageSegmenter` + GPU→CPU 降级黑名单）、`ModelDownloadManager.kt`（HTTPS Range 断点续传 + SHA-256 校验）
-  - `render/`：`GlEngine.kt`、`EglCore.kt`、`TexturePool.kt`、`PrepassAnalyzer.kt`、`ColumnBandExporter.kt`
-  - `render/pass/`：`GeometryCaPass.kt`（Pass A）、`ToneColorPass.kt`（Pass B）、`SpatialDetailChain.kt`（Pass C）、`EffectsOutputPass.kt`（Pass D）
-  - `export/`：`BakeExporter.kt`、`ExifCopier.kt`
-  - `ui/`：`EditorActivity.kt`、`EditorViewModel.kt`、`GestureRouter.kt`、`widgets/DialSeekBar.kt`、`widgets/CurveEditorView.kt`、`widgets/HslPanelView.kt`、`widgets/CropOverlayView.kt`、`widgets/LiquifyBrushOverlayView.kt`
-- **`:libraw` 模块（扩展 Native C++17）**：
-  - `RawWrapper.kt` & `libraw_jni.cpp`：新增 `decodeToLinearRgba16F(path, maxLongEdge): LinearRawBuffer?` 与 `extractRawExifMetadata(path): RawExifMetadata?`
-  - `jpeg_stream_writer.cpp`：封装 `libjpeg-turbo` 3.2.2 的 `JCS_EXT_RGBA` 按条带流式编码 JNI 接口（接收 `detachFd()` 或文件路径）
-- **`:app` 模块（增量改动）**：
-  - `data/entity/PhotoEditEntity.kt`、`data/entity/UserPresetEntity.kt`、`data/PhotoEditDao.kt`
-  - `data/AppDatabase.kt`：升级 `version = 4`，注册 `MIGRATION_3_4`
-  - `editor/RoomEditStore.kt`、`editor/MediaStoreGallerySink.kt`、`editor/BatchBakeWorkManager.kt`
-  - `activity/MainActivity.kt`：集成顶栏 `editButton`、`photoEditedBadge`、大图长按原图对比、底部快捷预设与 `LiveTetherPreset` 栏、复制/粘贴参数及 `deleteLocalCopy` 级联清理 `cacheDir/edits/<photoId>`。
+### 4. Native 16-bit Linear RAW Decoding & Orientation Normalization
+- Extend `:libraw` JNI with a 16-bit linear decoding entry point that sets `output_bps = 16`, `output_color = 1` (sRGB primaries), `gamm[0] = 1.0, gamm[1] = 1.0`, `use_camera_wb = 1`, `no_auto_bright = 1`, computes `autoBrightGain` metadata (matching the viewer's `+2.0 EV` capped auto-brightening), and converts samples in an OpenMP loop into an IEEE 754 `half_float` `RGBA16F` `DirectByteBuffer` (avoiding JVM heap `ByteArray` allocations and bypassing 8-bit `raw_postprocess`).
+- **Orientation Normalization (No Double Rotation)**: LibRaw already rotates output when `user_flip = -1`; JPEG decoding uses `BitmapFactory` (which does not auto-rotate) paired with a single `ExifInterface` orientation transform on texture upload. All working textures enter Pass A with `Orientation = 1`.
 
----
+### 5. Physical 4-Group GLES 3.0 Pipeline, Color Science, and 1024px Pre-pass
+- Logical 6 stages are fused into **4 physical FBO Pass Groups** to halve memory bandwidth:
+  1. **Pass A (`GeometryCaPass`)**: Maps post-crop global UV through the inverse crop/straighten/perspective homography $H^{-1}$ to pre-crop UV, adds `texture(uWarpTex, uvPreCrop).xy` from the unified `128×128 GL_RG16F` warp texture (combining face MLS + body warp + liquify), and performs radial R/B scaling around the pre-crop optical center `(0.5, 0.5)` for Lateral CA.
+  2. **Pass B (`ToneColorPass`, fusing stages ② and ③)**:
+     - Applies `camera_default` `BaseLook` compensation when enabled on RAW inputs.
+     - Applies the CPU-precomputed **D65-anchored relative Bradford chromatic adaptation matrix** (`uv_target = uv_D65 + (uv_t - uv_0)`, strictly identity $I$ at `temp=0, tint=0`, warming for `temp > 0`).
+     - Applies Exposure, middle-gray Brightness, and linear Highlights/Shadows/Whites prior to `[0, 1]` clipping, followed by `softShoulder(x)` roll-off.
+     - Encodes to sRGB, applies zero-anchored Blacks toe stretch, piecewise Contrast (`uContrast >= 0` vs `< 0`), Ambiance Glow stages ①–② ($y^{1/(1+0.20g)} + 0.10g\cdot y(1-y)^2$), and the 1024-entry Fritsch–Carlson monotone cubic 1D LUT (RGB composite then per-channel).
+     - Scales linear RGB by the new luminance ratio with **soft gamut compression** (preventing single-channel `> 1.0` clipping hue shifts), converts to OKLCH for Saturation, Vibrance (`clamp(1 - C/0.32, 0, 1)` × shadow attenuation × skin protection), and 8-band HSL (**multiplying $\Delta h$ and $\Delta L$ by the low-chroma gate `smoothstep(0.01, 0.05, C)`**).
+     - Converts to Cartesian OKLab `(L, a, b)` for Split Toning vector addition, applies high-gradient purple/green Defringe, and applies Fade.
+  3. **Pass C (`SpatialDetailChain`, short-circuited with 0 Draw Calls when all spatial parameters and `glow` are 0)**:
+     - Runs a **1024px full-image Pre-pass** once to compute the global Dehaze atmospheric light $A$ (brightest `0.1%` of dark channel), coarse transmission $t_{\text{low}}$, and the `2%` / `0.3%` short-edge low-frequency guide pyramid (`uPrepassTex`).
+     - Executes frequency-separation Skin Smoothing first, then guided-filter Luminance NR + $5\times 5$ edge-guided Chroma NR, Dehaze upsampling, Clarity (`clarity + 0.20*glow`) & Texture high-pass (`clamp(Y - base, ±0.08)`), and Y-channel edge-gated Sharpening multiplied by `(1 - skinMask)`.
+  4. **Pass D (`EffectsOutputPass`, fusing stages ⑤ and ⑥)**:
+     - Samples `.cube` 3D LUT via tetrahedral interpolation with base grid index clamped to `ivec3(int(size) - 2)` to prevent `texelFetch` out-of-bounds at `c = 1.0`.
+     - Evaluates Film Grain in post-crop global coordinates with midtone envelope $\sqrt{4Y(1-Y)}$ and deterministic `seed`.
+     - Applies Post-crop Vignette over `[mid - 0.5*feather, mid + 0.5*feather]` with aspect roundness.
+     - Outputs sRGB with `1/255` triangular dithering into `GL_RGBA8`.
 
-## 2. 联机暗房（Tethered Darkroom）工作流与 UI 交互规范
+### 6. Portrait Vision Pipeline and Hybrid Model Packaging
+- **Hybrid Model Distribution**: Bundle `face_landmarker.task` (`3.33 MB` deflated) and `selfie_segmenter.tflite` (`250 KB` FP16) inside APK `assets/`. Download `selfie_multiclass_256x256.tflite` (`16.37 MB` FP32) on demand over HTTPS with Range resume and SHA-256 verification on first entry to the Portrait panel. Do not bundle `deeplab_v3` or `pose_landmarker_full`.
+- **Build Guardrails**: Exclude `x86` and `x86_64` JNI libraries (`-26.36 MB` on AAB), set `ndk.debugSymbolLevel = "none"` on release builds (`-6.21 MB` on AAB), and add `-keep class com.google.mediapipe.** { *; }` to ProGuard.
+- **Offline-First Dual-Mode Skin Mask**: Before the 16.37 MB multiclass model is downloaded, synthesize `skinMask` offline from the built-in 478-point face hull (minus eye/eyebrow/lip polygons) + 250 KB person mask + OKLCH skin-color gate; switch seamlessly to the 6-class mask (`body-skin ∪ face-skin - hair - eyeLipBrow`) once downloaded.
+- **Multi-Face MLS & Body Guide Lines**: Configure `FaceLandmarker` with `numFaces = 5`, solve Schaefer 2006 MLS similarity warp on a `64×64` grid using a rotation-invariant per-face coordinate system and $1.8\times$ halo anchor pins. Initialize waist and hip lines from face box + body mask centroids and expose two draggable horizontal guide lines on canvas; lengthen legs with fixed-aspect bottom inscribed cropping.
 
-详见工单 [开放参数语义与非破坏性编辑工作流边界](issues/03-parameter-semantics-and-workflow-boundaries.md) 与 [单屏 XML/ViewBinding 编辑器交互与手势冲突原型](issues/04-editor-ui-layout-and-gesture-prototype.md)。
+### 7. 3-Tier Source Residency, Column-Band Streaming JPEG Bake, and EXIF Writeback
+- **CMake `libjpeg-turbo 3.2.2`**: Build static `libjpeg.a` via `ExternalProject_Add` with ARM NEON SIMD enabled, link with `-Wl,--exclude-libs,ALL`, force `optimize_coding = FALSE` and baseline single-scan (`JCS_EXT_RGBA`, quality `95`) so encoder memory stays $O(1)$ (`< 300 KiB`).
+- **3-Tier Source Residency (capping total memory ≤ 512MB and bypassing `GL_MAX_TEXTURE_SIZE`)**:
+  - **Tier 1 ($\le 26\text{MP}$ and long edge $\le \min(T_{\max}, 6144)$)**: Full-frame `RGBA16F` source texture uploaded once to GPU (`~215 MiB` total).
+  - **Tier 2 ($26\text{MP}..65\text{MP}$ or long edge $> \min(T_{\max}, 6144)$, RAM $\ge 6\text{GB}$)**: Full image held in Native `RGB16` buffer; before rendering each column band, compute its inverse-mapped source bounding box $[x_0..x_1, y_0..y_1]$ and upload only that sub-slice ($\le 2560^2$) to GPU (`~340 MiB` total, preserving full 50MP/61MP native resolution).
+  - **Tier 3 ($> 65\text{MP}$ or RAM $< 6\text{GB}$)**: Decode RAW with LibRaw `half_size = 1` (100MP → 25MP true RGB).
+- **Column-Band Scatter (`1920×512`, `halo = 64px`)**: Render each band in a $(W_{\text{valid}}+128)\times(H_{\text{valid}}+128) \le 2048\times 640$ FBO, strip the 64px halo and scatter into a full-width 512-row `RGBA8` buffer via `glReadPixels(64, 64, W_valid, H_valid)` with `GL_PACK_ROW_LENGTH = W_crop` and `GL_PACK_SKIP_PIXELS = x0`, then feed `H_valid` rows directly to `jpeg_write_scanlines`.
+- **EXIF Writeback**: On API 29+, close the `"w"` encoding descriptor, reopen the MediaStore URI with `"rw"` mode (seekable), copy whitelisted EXIF tags (excluding `TAG_MAKER_NOTE`; mapping RAW fields from LibRaw and decoding `timestamp` with `localtime()`), force `TAG_ORIENTATION = "1"` and cropped `TAG_IMAGE_WIDTH/LENGTH`, call `saveAttributes()`, and flip `IS_PENDING = 0`.
 
-1. **主界面 × 编辑器闭环**：
-   - 编辑器点击 **「✓ 完成」**：仅将 `EditGraph` 存入 `photo_edits` 表，并将当前屏幕渲染帧存为 `cacheDir/edits/<photoId>/<hash>.jpg`（外加 512px 缩略图），秒退回主界面；若 `EditGraph.isIdentity() == true`，则删除该照片的 `photo_edits` 记录与缓存。
-   - 编辑器点击 **「导出」**：保存 `EditGraph` 并立即触发全分辨率列带流式烘焙写入系统相册（`Pictures/PhotoSync/<name>_edit.jpg`）。
-   - 主界面浏览：存在 `EditGraph` 时，`ViewPager2` 与 `FilmstripAdapter` 优先加载 `preview_cache_path` 并点亮 **「已编辑」** 胶囊；**在主界面按住大图不放（`> 250ms`）实时切回未编辑原图（Before），松手恢复（After）**。
-   - 主界面导出：对已编辑照片短按 `exportButton` 直接后台烘焙成片；长按弹出「导出编辑后成片 / 导出未编辑原图」。
-2. **边拍边套 Look（`LiveTetherPreset`）**：
-   - 用户可将当前 `EditGraph` 保存为 `UserPreset`，并在主界面快捷预设栏开启 **「⚡ 联机自动套用」**（持久化于 `SharedPreferences` 的 `pref_live_tether_preset_id`）。
-   - 开启后，`CameraSyncEngine` 每同步入库一张新照片，自动为其插入绑定该预设的 `PhotoEditEntity` 并后台渲染预览缓存；`AutoFollow` 切过去时直接展示套好 Look 的成片效果。
-3. **跨照片复制/粘贴（`CopyMask`）与批量烘焙队列**：
-   - 点击「复制参数」默认按 `CopyMask` 复制 `{baseLook, tone, color, detail, effects, portrait.skin}`，自动排除单图构图项 `{geometry.*, portrait.reshape, portrait.body}`（长按可自定义勾选）；
-   - 多选照片后可一键「粘贴参数」或加入 `WorkManager` 后台批量烘焙导出队列（RAW 并发固定为 1），复用主界面右上角进度卡片展示 `正在导出 k/N…`。
-4. **编辑态联机免打扰**：
-   - 用户处于 `EditorActivity` 时，后台 USB 同步静默入库（并静默应用 `LiveTetherPreset`），绝不抢焦点，仅在编辑器顶栏显示 `+N 新照片` 胶囊。
-5. **画布手势路由与节流**：
-   - **双指（`pointerCount >= 2`）**：在一切工具下强制优先路由给画布缩放/平移（若液化画笔刚按下且移动 `< 8dp`，立即取消该笔防误涂）。
-   - **单指（`pointerCount == 1`）**：普通调色态=平移画布（长按对比原图）；裁切/拉直/透视态=拖拽控制框与刻度盘；曲线态=网格内拖拽控制点（拖出下边界删除）；液化态=画布涂抹更新 `128×128` 位移网格。
-   - **节流与撤销**：拖动期绑定 `1024px` 代理纹理跑点运算（`≤ 8ms`），并以 `300ms` 窗口合并连续滑动为 1 步撤销事务（上限 50 步）；松手 `150ms` 后触发全质量 `RGBA16F` 渲染（`≤ 33ms`）。
+### 8. 4-Tier GPU Fallback Matrix
+- **Tier 1**: GLES 3.0 + complete `GL_RGBA16F` FBOs (`GL_EXT_color_buffer_half_float`).
+- **Tier 2**: GLES 3.0 without `half_float` FBO support → `RGBA16F` source/LUT textures with `GL_RGBA8` intermediate FBOs + per-pass triangular dithering.
+- **Tier 3**: Shader compile/link failure → log `GL_RENDERER`/`GL_VERSION`/`infoLog` via `Timber.e` and fall back to a minimal Geometry + Basic Tone shader.
+- **Tier 4**: MediaPipe Delegate defaults to `CPU`; tries `GPU` only when `reqGlEsVersion >= 0x30001`, catches `MediaPipeException`, persists device blacklist flag, and permanently falls back to `CPU`.
 
----
+## Testing Decisions
 
-## 3. 数据模型：`EditGraph` Schema v1 与 Room v4 契约
+### What Makes a Good Test
+- Tests must assert observable mathematical, pixel, database, or state-machine outcomes at module boundaries—never internal private helpers, shader source strings, or mock interaction counts.
+- Determinism is mandatory: fixed random seeds for grain, exact pixel delta tolerances ($\le 1/255$ for 8-bit outputs), and real SQLite/GLES execution for integration seams.
 
-详见工单 [EditGraph JSON Schema v1 与预置滤镜格式规范](issues/05-editgraph-json-schema-and-preset-spec.md)。
+### High-Level Testing Seams and Modules Under Test
+1. **Pure Domain Compiler Seam (JVM Unit Tests in `:editor`)**:
+   - Exercises `EditValidator`, `EditGraph.isIdentity()`, `CopyMask`, `BradfordWbSolver` (asserting $< 10^{-6}$ deviation from identity $I$ at `temp=0, tint=0`), `MonotoneCubicCurve` (asserting zero overshoot across 500 random knot sets), `CubeLutParser` (asserting rejection of malformed `.cube` files and exact binary `.lut16f` layout), and `FaceMlsSolver` (asserting zero displacement at image borders and $1.8\times$ face halo pins).
+   - *Prior Art*: Pure JVM policy and protocol tests in `:app` (`UsbPtpConnectionPolicyTest`, `CameraDeletionPolicyTest`, `PtpContainerTest`).
+2. **Headless Bake Pipeline Seam (Android Instrumented Tests in `:editor` / `:app`)**:
+   - Exercises `BakeExporter.bake(sourcePhoto, editGraph, gallerySink)` end-to-end on real GLES 3.0 pbuffer + `:libraw` + `libjpeg-turbo` + `ExifInterface`.
+   - Asserts: (a) 0-parameter identity output differs from input by $\le 1/255$ per channel; (b) full-frame export vs `1920×512 (halo=64)` column-band tiled export with Clarity, Dehaze, Grain, Vignette, and Lateral CA enabled differs by $\le 1/255$ with zero visible seams; (c) all 8 EXIF `Orientation` inputs export with `TAG_ORIENTATION == "1"`, upright visual orientation, and intact shooting metadata (`DateTimeOriginal`, `Make`, `Model`, `FNumber`, `ISOSpeedRatings`).
+3. **Tethered Darkroom Storage & Workflow Seam (JVM + Instrumented Migration Tests)**:
+   - Exercises Room `MIGRATION_3_4` (`ON DELETE CASCADE` cleanup of `photo_edits` when a `PhotoEntity` is deleted), `LiveTetherPreset` auto-binding on new photo `Sync`, `300ms` Undo transaction coalescing, and two-finger gesture preemption of single-finger liquify strokes.
+   - *Prior Art*: UI state and dialog decision tests (`MonitorUiStateTest`, `ConnectButtonUiTest`, `DeletePhotoDialogUiTest`).
 
-- **JSON 结构、34 参数范围与归一化映射**：严格遵循工单 05 `## Answer` §1 定义。所有反序列化入口经过 `EditValidator.sanitize()`，将 `NaN`/`Inf` 重置为默认值并将数值 Clamp 至合法区间。
-- **液化 O(1) 外置网格**：固定 `128 × 128` `half_float` `(dx, dy)` 网格（`65,536 B`），会话内 50 步环形缓冲占 `3.125 MiB`，保存时 Deflate 写入 `filesDir/edits/<photoId>/liquify_128x128.bin`，JSON 内仅存相对路径与 SHA-256。
-- **外部 `.cube` 预编译二进制**：SAF 导入时由 `CubeLutParser` 转换为 `filesDir/luts/<lutId>.lut16f`（8B 魔数头 `"LUT16F\x01\x21"` + `33³ × 8B = 287,496 B` `RGBA16F`），渲染时直接 mmap 上传 `sampler3D`。
-- **Room v4 `MIGRATION_3_4`**：新增 `photo_edits`（带 `FOREIGN KEY(photo_id) REFERENCES photos(id) ON DELETE CASCADE` 与 `photo_id` 唯一索引）与 `user_presets` 表（DDL 见工单 05 `## Answer` §3）。
+## Out of Scope
 
----
+- Cloud or on-device Vision-Language Model (VLM) automatic parameter generation (covered separately in an independent study).
+- Modifying or overwriting original RAW/JPEG files on disk or on the `Camera` storage card.
+- Video editing, multi-layer compositing, text/sticker overlays, or healing/clone-stamp patch inpainting (`seamlessClone` blemish removal is deferred to a future standalone tool).
+- Relying on Google Play Asset Delivery (incompatible with direct APK distribution on GitHub Releases).
 
-## 4. 算法数学与 GLES 3.0 物理 4-Group Pass 渲染规范
+## Further Notes
 
-详见 [`docs/research/2026-11-21-image-editor-pipeline.md`](../../docs/research/2026-11-21-image-editor-pipeline.md) §4 及工单 [GLES 3.0 6-Pass Shader 契约与 Pre-pass 列带分块渲染规范](issues/07-gles3-shader-contracts-and-column-band-tiling-spec.md)。
-
-### 4.1 物理 4-Group Pass 管线
-
-1. **Pass A（`GeometryCaPass`，逻辑阶段 ①）**：
-   - 输入：已按 EXIF/LibRaw 一次性转正（`Orientation=1`）的源纹理 `uSrcTex` + `128×128 GL_RG16F` 组合位移纹理 `uWarpTex`（$\Delta uv_{\text{face}} + \Delta uv_{\text{body}} + \Delta uv_{\text{liquify}}$）。
-   - 执行：从列带/画布局部坐标经 `uTileUvTransform` 得 Post-crop 全局坐标 $uv_{\text{global}}$ → 乘旋转/拉直/透视逆单应矩阵 $H^{-1}$（自动内接最大无黑边矩形）得 Pre-crop 原图坐标 $uv_{\text{pre}}$ → 叠加 `texture(uWarpTex, uv_pre).xy` → 绕原图光心 $(0.5, 0.5)$ 按 $1 + k_{R/B}\cdot r^2$ 分离采样 R/G/B 消除横向色散。
-2. **Pass B（`ToneColorPass`，逻辑阶段 ② + ③ 合并）**：
-   - **RAW 基准 Look**：当 `isRaw && baseLook == "camera_default"` 时，先乘 `uAutoBrightGain`（最高 +2EV），并在显示域叠加默认基准曲线（$\gamma = 0.78, k_S = 0.12, \text{vibrance}_0 = 0.18$），确保 0 参数与浏览页观感一致。
-   - **线性影调**：乘 CPU 预计算的 **D65 锚定相对 Bradford 白平衡矩阵**（`temp=0, tint=0` 时严格为单位阵 $I$）→ 曝光 `exp2(uExposure)` → 亮度中灰高斯增益 → 高光/阴影/白色色阶在线性域（未截断前）缩放 → `softShoulder` 软肩部滚降收敛高光余量。
-   - **显示域色彩**：sRGB 编码 → 黑色色阶暗部趾部伸缩（锚定 0 端点，不抬死黑）→ 正负分段对比度（`uContrast >= 0` 用 `smoothstep`，`< 0` 用线性中灰收敛）→ 光感前两段（$y^{1/(1+0.20g)} + 0.10g\cdot y(1-y)^2$）→ 1024 项 Fritsch–Carlson 单调三次 1D 曲线 LUT（先 RGB 复合再单通道）→ 线性域比例带回 RGB + **软色域压缩（防单通道 `> 1` 截断色相漂移）** → 转 OKLCH 做饱和度、自然饱和度（含 `clamp(1-C/0.32,0,1)` + 暗部抑制 + 肤色保护）、8 色带 HSL（**色相与明度必乘 `smoothstep(0.01, 0.05, C)` 低色度门控**）→ 转笛卡尔 OKLab `(L, a, b)` 做色调分离向量叠加 → 纵向色散高梯度紫/绿边去饱和（`defringe`）→ 褪色（`Fade`，抬高纯黑至 `0.12f` 并降饱和）。
-3. **Pass C（`SpatialDetailChain`，逻辑阶段 ④，全 0 时 0 Draw Call 短路）**：
-   - 开头先执行 **人像美肤频率分离**：引导滤波（$r=8..16$）分离 `base` 与 `det = I - base`，按 `skinMask` 压制高频 `out = base + det * (1 - s * M_skin)` 并单独大半径平滑 CbCr 色度；
-   - **降噪 NR**：亮度 $3\times 3$ 引导滤波 + 色度 CbCr $5\times 5$ 可分离边缘引导滤波；
-   - **去雾 Dehaze**：双线性采样 1024px Pre-pass 算出的全局大气光 $A$ 与粗透射率 `uPrepassTex.b`（以当前全清亮度做快速引导上采样），计算 $J = (I - A)/\max(t, 0.1) + A$；
-   - **清晰度 Clarity & 纹理 Texture**：从 `uPrepassTex.rg` 采样 2% 短边与 0.3% 短边低频引导层，高通差值限幅 `clamp(Y - base, -0.08, 0.08)` 后按中间调权重叠加（其中 `clarity_eff = clarity + 0.20 * glow`）；
-   - **锐化 Sharpen**：仅作用于 Y 通道的反锐化掩模 + 梯度门控 + **乘 `(1 - M_skin)` 抑制皮肤区锐化**。
-4. **Pass D（`EffectsOutputPass`，逻辑阶段 ⑤ + ⑥ 合并）**：
-   - `.cube` 3D LUT **四面体插值**（基准网格索引 `ivec3 i = clamp(ivec3(floor(p)), ivec3(0), ivec3(int(size) - 2))`，严防 `c = 1.0` 时 `texelFetch` 越界）；
-   - **全局坐标颗粒 Grain**：基于 Post-crop 全局坐标 $uv_{\text{global}} \cdot \text{cropSize} / \text{size} + \text{seed}$ 生成噪声并乘 $\sqrt{4Y(1-Y)}$ 中间调包络；
-   - **Post-crop 晕影 Vignette**：按 `roundness` 修正宽高比后的径向距离 $r$，在 `[mid - 0.5*feather, mid + 0.5*feather]` 上做 `smoothstep`；
-   - **输出量化**：sRGB 编码 + `1/255` 三角抖动 + 量化为 `RGBA8`。
-
----
-
-## 5. 人像视觉管线与模型混合分发规范
-
-详见 [`docs/research/2026-11-22-mediapipe-model-distribution.md`](../../docs/research/2026-11-22-mediapipe-model-distribution.md) 及工单 [MediaPipe 人像模型体积、许可证与 GitHub APK/AAB 双渠道分发事实调研](issues/01-mediapipe-model-packaging-and-distribution.md)、[人像关键点 MLS 网格与美肤/美体遮罩合成规范](issues/06-portrait-mls-grid-and-mask-composition-spec.md)。
-
-1. **混合分发方案（兼顾 GitHub Release 直发 APK 与 AAB）**：
-   - **随 APK 内置（`assets/models/`）**：`face_landmarker.task`（3,758,596 B，deflate 后 3.33 MB，Apache-2.0）+ `selfie_segmenter.tflite`（249,537 B，FP16，Apache-2.0）。
-   - **按需 HTTPS 下载（`filesDir/models/`）**：首次进入人像面板时后台下载 `selfie_multiclass_256x256.tflite`（16,371,837 B，FP32，Apache-2.0，支持 HTTP Range 断点续传，强制校验 SHA-256 `c6748b121820473ff290c3eab6766d34aad76fd246baa1bf6bef92fb73eb838c` 或官方最新固定哈希后原子重命名）。**不引入** `deeplab_v3.tflite` 与 `pose_landmarker_full.task`。
-   - **Gradle 构建护栏**：
-     - `packaging.jniLibs.excludes += ["**/x86/**", "**/x86_64/**"]`（防止 AAB 混入模拟器架构膨胀 26.36 MB）；
-     - `buildTypes.release.ndk.debugSymbolLevel = "none"`（防止 AAB 混入调试符号膨胀 6.21 MB）；
-     - `proguard-rules.pro` 显式添加 `-keep class com.google.mediapipe.** { *; }`。
-2. **双模式美肤、478 点多人脸 MLS 与美体双引导线**：
-   - 16.37 MB 模型未就绪前，直接用内置 `face_landmarker` + `selfie_segmenter` + OKLCH 肤色门控合成离线 `skinMask`；下载完成后无缝切至 6 类精细 Mask（`body-skin ∪ face-skin - hair - eyeLipBrow`）。
-   - `FaceLandmarker` 设 `numFaces = 5`，按旋转不变局部人脸坐标系与工单 06 索引表求解 `64×64` MLS 相似变换网格（人脸外围 $1.8\times$ 与图像四边布设不动锚点）。
-   - 美体由人脸框+人体 Mask 质心自动定腰线 `yWaist` 与髋线 `yHip` 初值，并在画布提供两条可拖拽水平引导线微调；拉腿保持输出画幅比例不变并自动裁切底边外溢。
-
----
-
-## 6. 全分辨率流式分块烘焙导出与 EXIF 写回规范
-
-详见 [`docs/research/2026-11-22-libjpeg-turbo-streaming-exif.md`](../../docs/research/2026-11-22-libjpeg-turbo-streaming-exif.md) 及工单 [NDK libjpeg-turbo 流式编码与 ExifInterface FileDescriptor 写回技术调研](issues/02-libjpeg-turbo-streaming-and-exif-writeback.md)、[GLES 3.0 6-Pass Shader 契约与 Pre-pass 列带分块渲染规范](issues/07-gles3-shader-contracts-and-column-band-tiling-spec.md)。
-
-1. **`libjpeg-turbo 3.2.2` CMake 集成**：
-   - 作为 `libraw/src/main/cpp/third_party/libjpeg-turbo` submodule 引入，在 `:libraw` 的 `CMakeLists.txt` 中通过 `ExternalProject_Add` 编译 `libjpeg.a`（开启 `WITH_SIMD=ON`，关闭 `WITH_TURBOJPEG/ENABLE_SHARED`）并以 `IMPORTED` 静态库链接，配合 `-Wl,--exclude-libs,ALL`（`arm64-v8a` stripped `.so` 仅增 330 KiB）。
-   - **编码器铁律**：必须设置 `cinfo.optimize_coding = FALSE`、禁用 `jpeg_simple_progression()`、输入色空间用 `JCS_EXT_RGBA`、质量 `95`，确保编码器自身内存恒为 $O(1)$（`< 300 KiB`），杜绝 291 MiB 全图 DCT 系数分配。
-2. **三档源图驻留 + 「`1920×512 (halo=64)` 列带 + `GL_PACK_ROW_LENGTH` 散射」**：
-   - 先跑 1 次 `1024px` 全图 Pre-pass 生成 `uPrepassTex`（去雾全局大气光 $A$、粗透射率 $t_{low}$、清晰度/纹理低频层）；
-   - 按工单 07 §3 的三档策略驻留源图（≤26MP 整图驻留 GPU；26–65MP Native `RGB16` 驻留+按列带逆映射包围盒动态切片上传 GPU；>65MP 启用 LibRaw `half_size=1`）；
-   - 按行条带（512 高）× 列带（1920 宽，外扩 64px Halo → FBO 物理尺寸 $\le 2048 \times 640$）渲染 Pass A→D，用 `glReadPixels(64, 64, W_valid, H_valid)` + `GL_PACK_ROW_LENGTH = W_crop` + `GL_PACK_SKIP_PIXELS = x0` 剥离 Halo 并直接散射进全宽行缓冲，满一条带调一次 `jpeg_write_scanlines`。
-3. **EXIF 写回契约（API 24–28 vs API 29+）**：
-   - **API 29+**：`insert(IS_PENDING=1)` → `openFileDescriptor(uri, "w")` 交 native 写完 JPEG 并关闭 → **重新以 `openFileDescriptor(uri, "rw")`（可 seek）打开**交 `ExifInterface(pfd.fileDescriptor)` → 按显式标签白名单（排除 `TAG_MAKER_NOTE`；RAW 源从 LibRaw `idata/other/lens` 提取，时间戳用 `localtime()` 反解）写入拍摄属性 → **强制设置 `TAG_ORIENTATION = "1"` 及裁切后 `TAG_IMAGE_WIDTH/LENGTH`** → `saveAttributes()` → 关闭 FD → `update(IS_PENDING=0)`（异常时 `delete(uri)`）。
-   - **API 24–28**：先写 `<name>.jpg.tmp` → `ExifInterface(tmpFile)` 写回属性并 `saveAttributes()` → `renameTo(finalFile)` → `MediaStore.insert`。
-
----
-
-## 7. GPU 4 级降级矩阵、金标验收测试与分期实施路径
-
-详见工单 [GPU 降级矩阵、金标验收测试集与最终规范总装](issues/08-gpu-fallback-matrix-and-golden-acceptance-spec.md)。
-
-- **4 级安全降级矩阵**：Tier 1（`GL_RGBA16F` FBO）→ Tier 2（无 `half_float` FBO 时回退 `GL_RGBA8` FBO + 每 Pass 三角抖动）→ Tier 3（Shader 编译失败回退最小几何+影调管线并 `Timber.e` 记录 GPU 签名）→ Tier 4（MediaPipe GPU 异常自动写入 `SharedPreferences` 黑名单并永久回退 `Delegate.CPU`）。
-- **金标验收套件**：执行工单 08 §2 定义的 6 项 JVM 单测与 4 项 Android Instrumented 测试，通过门禁为 `./gradlew testDebugUnitTest lintDebug connectedAndroidTest`。
-- **分期实施路径（P0 → P3）**：
-  1. **P0（基础管线 + 联机预设闭环 + 无损 EXIF 导出）**：`:editor` 骨架与契约接口、`:libraw` `decodeToLinearRgba16F` + `libjpeg-turbo` `ExternalProject_Add`、Room v4（`photo_edits` + `user_presets`）、Pass A（旋转/翻转/裁切/拉直）+ Pass B（`BaseLook`、Bradford 色温/色调、曝光/亮度/对比度/高光/阴影/白黑点/光感、饱和度/自然饱和度）+ Pass D（输出抖动）、列带流式导出 + EXIF 写回、主界面 `editButton` / `LiveTetherPreset` / 复制粘贴 / 长按对比原图。
-  2. **P1（专业调色 + 空间细节 + 滤镜与光学）**：1024px Pre-pass 金字塔、曲线（Fritsch–Carlson 1D LUT）、8 色带 OKLCH HSL（带色度门控）、OKLab 色调分离、褪色、Pass C（清晰度/纹理/锐化/降噪）、透视校正、横向色散（Pass A）+ 纵向去紫边（Pass B）、晕影、全局颗粒、`.cube` 3D LUT 导入与四面体采样、后台批量烘焙队列。
-  3. **P2（端侧人像 + 液化）**：MediaPipe `tasks-vision:1.2.3` 集成（含 ABI 过滤与 R8 规则）、内置 `face_landmarker` + `selfie_segmenter` 与按需下载 `selfie_multiclass_256x256`、双模式美肤频率分离（联动抑制皮肤锐化）、478 点 5 人脸 64×64 MLS 面部重塑、美体（头身比+质心初值+双引导线）、128×128 液化画笔网格与 O(1) 外置存储。
-  4. **P3（去雾 + 进阶增强）**：Pre-pass 暗通道全局大气光 $A$ 去雾、自动横向色散估计、宽色域 Display P3 预览适配与 XMP `crs:` 侧车导出。
+- All user-facing slider names, category tabs, badges, and error messages must be externalized in Chinese and English string resources.
+- All logging must use `Timber` without logging full user file paths or sensitive biometric coordinates.
