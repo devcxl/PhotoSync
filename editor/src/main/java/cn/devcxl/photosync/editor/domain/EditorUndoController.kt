@@ -8,6 +8,15 @@ package cn.devcxl.photosync.editor.domain
  */
 enum class EditParameterKey {
     TONE_EXPOSURE,
+    TONE_BRIGHTNESS,
+    TONE_CONTRAST,
+    TONE_GLOW,
+    TONE_HIGHLIGHTS,
+    TONE_SHADOWS,
+    TONE_WHITES,
+    TONE_BLACKS,
+    COLOR_TEMP,
+    COLOR_TINT,
     BASE_LOOK,
     GEOMETRY_CROP,
     GEOMETRY_STRAIGHTEN,

@@ -1,6 +1,7 @@
 package cn.devcxl.photosync.editor.ui.panels
 
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 import cn.devcxl.photosync.editor.R
 import cn.devcxl.photosync.editor.domain.CropRect
@@ -63,17 +64,28 @@ internal data class EditorToolSpec(
 internal object EditorToolCatalog {
 
     private const val QUARTER_TURNS = 4
+    private const val SLIDER_MIN = -100.0f
+    private const val SLIDER_MAX = 100.0f
+    private const val SLIDER_STEP = 1.0f
+    private const val SLIDER_ZERO_SNAP = 2.0f
 
-    private val DISPERSION_DIAL = DialSpec(
-        min = -100.0f,
-        max = 100.0f,
-        step = 1.0f,
-        zeroSnapThreshold = 2.0f,
+    /** Shared dial for every `-100..100` slider: tone, white balance and dispersion. */
+    private val SIGNED_DIAL = DialSpec(
+        min = SLIDER_MIN,
+        max = SLIDER_MAX,
+        step = SLIDER_STEP,
+        zeroSnapThreshold = SLIDER_ZERO_SNAP,
         valueFormatRes = R.string.editor_value_signed_fmt
     )
 
     private val specs: Map<EditorTool, EditorToolSpec> =
-        (cropAndStraightenSpecs() + flipAndPerspectiveSpecs() + toneSpecs() + detailSpecs())
+        (
+            cropAndStraightenSpecs() +
+                flipAndPerspectiveSpecs() +
+                toneSpecs() +
+                colourSpecs() +
+                detailSpecs()
+            )
             .associateBy { it.tool }
 
     /**
@@ -195,44 +207,156 @@ internal object EditorToolCatalog {
             writeValue = { graph, value -> graph.copy(tone = graph.tone.copy(exposure = value)) },
             isModified = { abs(it.tone.exposure) >= 1e-4f },
             reset = { it.copy(tone = it.tone.copy(exposure = 0.0f)) }
+        ),
+        toneSlider(
+            tool = EditorTool.BRIGHTNESS,
+            labelRes = R.string.editor_tool_brightness,
+            modifiedLabelRes = R.string.editor_tool_brightness_modified,
+            parameterKey = EditParameterKey.TONE_BRIGHTNESS,
+            read = { it.tone.brightness },
+            write = { graph, value -> graph.copy(tone = graph.tone.copy(brightness = value)) }
+        ),
+        toneSlider(
+            tool = EditorTool.CONTRAST,
+            labelRes = R.string.editor_tool_contrast,
+            modifiedLabelRes = R.string.editor_tool_contrast_modified,
+            parameterKey = EditParameterKey.TONE_CONTRAST,
+            read = { it.tone.contrast },
+            write = { graph, value -> graph.copy(tone = graph.tone.copy(contrast = value)) }
+        ),
+        toneSlider(
+            tool = EditorTool.HIGHLIGHTS,
+            labelRes = R.string.editor_tool_highlights,
+            modifiedLabelRes = R.string.editor_tool_highlights_modified,
+            parameterKey = EditParameterKey.TONE_HIGHLIGHTS,
+            read = { it.tone.highlights },
+            write = { graph, value -> graph.copy(tone = graph.tone.copy(highlights = value)) }
+        ),
+        toneSlider(
+            tool = EditorTool.SHADOWS,
+            labelRes = R.string.editor_tool_shadows,
+            modifiedLabelRes = R.string.editor_tool_shadows_modified,
+            parameterKey = EditParameterKey.TONE_SHADOWS,
+            read = { it.tone.shadows },
+            write = { graph, value -> graph.copy(tone = graph.tone.copy(shadows = value)) }
+        ),
+        toneSlider(
+            tool = EditorTool.WHITES,
+            labelRes = R.string.editor_tool_whites,
+            modifiedLabelRes = R.string.editor_tool_whites_modified,
+            parameterKey = EditParameterKey.TONE_WHITES,
+            read = { it.tone.whites },
+            write = { graph, value -> graph.copy(tone = graph.tone.copy(whites = value)) }
+        ),
+        toneSlider(
+            tool = EditorTool.BLACKS,
+            labelRes = R.string.editor_tool_blacks,
+            modifiedLabelRes = R.string.editor_tool_blacks_modified,
+            parameterKey = EditParameterKey.TONE_BLACKS,
+            read = { it.tone.blacks },
+            write = { graph, value -> graph.copy(tone = graph.tone.copy(blacks = value)) }
+        ),
+        toneSlider(
+            tool = EditorTool.GLOW,
+            labelRes = R.string.editor_tool_glow,
+            modifiedLabelRes = R.string.editor_tool_glow_modified,
+            parameterKey = EditParameterKey.TONE_GLOW,
+            read = { it.tone.glow },
+            write = { graph, value -> graph.copy(tone = graph.tone.copy(glow = value)) }
+        )
+    )
+
+    private fun colourSpecs(): List<EditorToolSpec> = listOf(
+        signedSlider(
+            tool = EditorTool.TEMPERATURE,
+            group = EditorGroup.COLOR,
+            labelRes = R.string.editor_tool_temperature,
+            modifiedLabelRes = R.string.editor_tool_temperature_modified,
+            parameterKey = EditParameterKey.COLOR_TEMP,
+            read = { it.color.temp },
+            write = { graph, value -> graph.copy(color = graph.color.copy(temp = value)) }
+        ),
+        signedSlider(
+            tool = EditorTool.TINT,
+            group = EditorGroup.COLOR,
+            labelRes = R.string.editor_tool_tint,
+            modifiedLabelRes = R.string.editor_tool_tint_modified,
+            parameterKey = EditParameterKey.COLOR_TINT,
+            read = { it.color.tint },
+            write = { graph, value -> graph.copy(color = graph.color.copy(tint = value)) }
         )
     )
 
     private fun detailSpecs(): List<EditorToolSpec> = listOf(
-        EditorToolSpec(
+        signedSlider(
             tool = EditorTool.DISPERSION_RED_CYAN,
             group = EditorGroup.DETAIL,
             labelRes = R.string.editor_tool_ca_red_cyan,
             modifiedLabelRes = R.string.editor_tool_ca_red_cyan_modified,
             parameterKey = EditParameterKey.DETAIL_CA_RED_CYAN,
-            controlStyle = EditorControlStyle.DIAL,
-            dial = DISPERSION_DIAL,
-            readValue = { it.effects.ca.redCyan.toFloat() },
-            writeValue = { graph, value ->
-                graph.copy(effects = graph.effects.copy(ca = graph.effects.ca.copy(redCyan = value.toInt())))
-            },
-            isModified = { it.effects.ca.redCyan != 0 },
-            reset = { it.copy(effects = it.effects.copy(ca = it.effects.ca.copy(redCyan = 0))) }
+            read = { it.effects.ca.redCyan },
+            write = { graph, value ->
+                graph.copy(effects = graph.effects.copy(ca = graph.effects.ca.copy(redCyan = value)))
+            }
         ),
-        EditorToolSpec(
+        signedSlider(
             tool = EditorTool.DISPERSION_BLUE_YELLOW,
             group = EditorGroup.DETAIL,
             labelRes = R.string.editor_tool_ca_blue_yellow,
             modifiedLabelRes = R.string.editor_tool_ca_blue_yellow_modified,
             parameterKey = EditParameterKey.DETAIL_CA_BLUE_YELLOW,
-            controlStyle = EditorControlStyle.DIAL,
-            dial = DISPERSION_DIAL,
-            readValue = { it.effects.ca.blueYellow.toFloat() },
-            writeValue = { graph, value ->
-                graph.copy(
-                    effects = graph.effects.copy(
-                        ca = graph.effects.ca.copy(blueYellow = value.toInt())
-                    )
-                )
-            },
-            isModified = { it.effects.ca.blueYellow != 0 },
-            reset = { it.copy(effects = it.effects.copy(ca = it.effects.ca.copy(blueYellow = 0))) }
+            read = { it.effects.ca.blueYellow },
+            write = { graph, value ->
+                graph.copy(effects = graph.effects.copy(ca = graph.effects.ca.copy(blueYellow = value)))
+            }
         )
+    )
+
+    private fun toneSlider(
+        tool: EditorTool,
+        labelRes: Int,
+        modifiedLabelRes: Int,
+        parameterKey: EditParameterKey,
+        read: (EditGraph) -> Int,
+        write: (EditGraph, Int) -> EditGraph
+    ): EditorToolSpec = signedSlider(
+        tool = tool,
+        group = EditorGroup.TONE,
+        labelRes = labelRes,
+        modifiedLabelRes = modifiedLabelRes,
+        parameterKey = parameterKey,
+        read = read,
+        write = write
+    )
+
+    /**
+     * Declares a `-100..100` integer slider backed by the shared [SIGNED_DIAL].
+     *
+     * The dial reports floats, so values are rounded before they reach the integer [EditGraph]
+     * fields; [reset] is what a double tap on the chip applies, and it always lands on zero.
+     */
+    private fun signedSlider(
+        tool: EditorTool,
+        group: EditorGroup,
+        labelRes: Int,
+        modifiedLabelRes: Int,
+        parameterKey: EditParameterKey,
+        read: (EditGraph) -> Int,
+        write: (EditGraph, Int) -> EditGraph
+    ): EditorToolSpec = EditorToolSpec(
+        tool = tool,
+        group = group,
+        labelRes = labelRes,
+        modifiedLabelRes = modifiedLabelRes,
+        parameterKey = parameterKey,
+        controlStyle = EditorControlStyle.DIAL,
+        dial = SIGNED_DIAL,
+        readValue = { read(it).toFloat() },
+        writeValue = { graph, value ->
+            write(graph, value.roundToInt().coerceIn(SLIDER_MIN.toInt(), SLIDER_MAX.toInt()))
+        },
+        isModified = { read(it) != 0 },
+        reset = { graph -> write(graph, 0) }
     )
 
 }

@@ -36,6 +36,28 @@
     <string name="editor_tool_perspective">透视</string>
     <string name="editor_tool_perspective_modified">透视 •</string>
 
+    <!-- Tone sub-tools -->
+    <string name="editor_tool_brightness">亮度</string>
+    <string name="editor_tool_brightness_modified">亮度 •</string>
+    <string name="editor_tool_contrast">对比度</string>
+    <string name="editor_tool_contrast_modified">对比度 •</string>
+    <string name="editor_tool_highlights">高光</string>
+    <string name="editor_tool_highlights_modified">高光 •</string>
+    <string name="editor_tool_shadows">阴影</string>
+    <string name="editor_tool_shadows_modified">阴影 •</string>
+    <string name="editor_tool_whites">白色色阶</string>
+    <string name="editor_tool_whites_modified">白色色阶 •</string>
+    <string name="editor_tool_blacks">黑色色阶</string>
+    <string name="editor_tool_blacks_modified">黑色色阶 •</string>
+    <string name="editor_tool_glow">光感</string>
+    <string name="editor_tool_glow_modified">光感 •</string>
+
+    <!-- Colour sub-tools -->
+    <string name="editor_tool_temperature">色温</string>
+    <string name="editor_tool_temperature_modified">色温 •</string>
+    <string name="editor_tool_tint">色调</string>
+    <string name="editor_tool_tint_modified">色调 •</string>
+
     <!-- Detail sub-tools -->
     <string name="editor_tool_ca_red_cyan">色散 R/C</string>
     <string name="editor_tool_ca_red_cyan_modified">色散 R/C •</string>
