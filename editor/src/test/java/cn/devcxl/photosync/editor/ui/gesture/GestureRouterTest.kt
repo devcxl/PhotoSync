@@ -1,6 +1,8 @@
 package cn.devcxl.photosync.editor.ui.gesture
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -71,5 +73,51 @@ class GestureRouterTest {
             GestureRoute.CANVAS_SINGLE_PAN_HOLD_COMPARE,
             GestureRouter.resolveGestureRoute(EditorGroup.TONE, EditorTool.EXPOSURE, pointerCount = 0)
         )
+    }
+
+    @Test
+    fun shouldRouteToLiquifyBrushStroke_whenGeometryLiquifyIsActive() {
+        assertEquals(
+            GestureRoute.LIQUIFY_BRUSH_STROKE,
+            GestureRouter.resolveGestureRoute(EditorGroup.GEOMETRY, EditorTool.LIQUIFY, pointerCount = 1)
+        )
+    }
+
+    @Test
+    fun shouldRollBackTheUncommittedStroke_whenASecondPointerArrivesBelowEightDp() {
+        val density = 2.75f
+        val arbiter = LiquifyStrokeArbiter(GestureRouter.preemptionSlopPx(density))
+
+        arbiter.beginStroke()
+        arbiter.onMove(6.0f * density)
+        arbiter.onMove(1.5f * density)
+
+        assertEquals(LiquifyPreemption.ROLL_BACK_UNCOMMITTED_STROKE, arbiter.onSecondPointerDown())
+        assertFalse("the rolled-back stroke must not be committed", arbiter.isStrokeActive)
+    }
+
+    @Test
+    fun shouldCommitTheStroke_whenASecondPointerArrivesAtOrAboveEightDp() {
+        val density = 2.75f
+        val arbiter = LiquifyStrokeArbiter(GestureRouter.preemptionSlopPx(density))
+
+        arbiter.beginStroke()
+        arbiter.onMove(8.0f * density)
+
+        assertEquals(LiquifyPreemption.KEEP_STROKE, arbiter.onSecondPointerDown())
+        assertFalse("the committed stroke is sealed once the pinch takes over", arbiter.isStrokeActive)
+    }
+
+    @Test
+    fun shouldCommitOnlyMovedStrokes_whenTheFingerLifts() {
+        val density = 1.0f
+        val moved = LiquifyStrokeArbiter(GestureRouter.preemptionSlopPx(density))
+        moved.beginStroke()
+        moved.onMove(12.0f)
+        assertTrue(moved.endStroke())
+
+        val tap = LiquifyStrokeArbiter(GestureRouter.preemptionSlopPx(density))
+        tap.beginStroke()
+        assertFalse("a tap without movement produces no undo step", tap.endStroke())
     }
 }

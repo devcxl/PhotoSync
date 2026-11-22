@@ -4,10 +4,8 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Typeface
 import android.view.GestureDetector
-import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
-import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.ContextCompat
@@ -18,6 +16,7 @@ import cn.devcxl.photosync.editor.domain.CropRect
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.EditParameterKey
 import cn.devcxl.photosync.editor.domain.EditorUndoController
+import cn.devcxl.photosync.editor.domain.LiquifyBrushSettings
 import cn.devcxl.photosync.editor.ui.gesture.CropHandleMath
 import cn.devcxl.photosync.editor.ui.gesture.EditorGroup
 import cn.devcxl.photosync.editor.ui.gesture.EditorTool
@@ -25,10 +24,12 @@ import cn.devcxl.photosync.editor.ui.widgets.DialSeekBar
 
 /**
  * Binds the three-tier bottom drawer to the edit graph: six category tabs, the sub-tool chips of the
- * active category, the tier-1 dial, the crop aspect-ratio lock chips and the value read-out.
+ * active category, the tier-1 control block, the crop aspect-ratio lock chips and the value read-out.
  *
  * Every interaction funnels through [EditorUndoController], so a continuous drag coalesces into a
- * single undo step per [EditParameterKey] and the host only re-renders what changed.
+ * single undo step per [EditParameterKey] and the host only re-renders what changed. The liquify
+ * control block is delegated to [LiquifyBrushPanelController] and the aspect chips to
+ * [CropAspectChipRow].
  */
 internal class EditorPanelController(
     private val context: Context,
@@ -52,6 +53,12 @@ internal class EditorPanelController(
 
         /** Width/height ratio of the frame the preview canvas is currently showing. */
         fun previewAspect(): Float
+
+        /** The liquify brush mode, size or strength changed. */
+        fun onLiquifySettingsChanged(settings: LiquifyBrushSettings)
+
+        /** The user asked to clear every liquify displacement. */
+        fun onLiquifyResetRequested()
     }
 
     var currentGroup: EditorGroup = EditorGroup.TONE
@@ -66,6 +73,20 @@ internal class EditorPanelController(
 
     private val formatter = EditorReadoutFormatter(context)
     private val density = context.resources.displayMetrics.density
+    private val liquifyPanel = LiquifyBrushPanelController(
+        context = context,
+        binding = binding,
+        host = object : LiquifyBrushPanelController.Host {
+            override fun onLiquifySettingsChanged(settings: LiquifyBrushSettings) {
+                host.onLiquifySettingsChanged(settings)
+            }
+
+            override fun onLiquifyResetRequested() {
+                host.onLiquifyResetRequested()
+            }
+        }
+    )
+    private val aspectRow = CropAspectChipRow(context, binding, ::applyAspectPreset)
     private val tabViews: Map<EditorGroup, TextView> = mapOf(
         EditorGroup.PRESET to binding.tabPreset,
         EditorGroup.GEOMETRY to binding.tabGeometry,
@@ -75,13 +96,13 @@ internal class EditorPanelController(
         EditorGroup.PORTRAIT to binding.tabPortrait
     )
     private val chipViews = mutableMapOf<EditorTool, TextView>()
-    private val aspectChipViews = mutableMapOf<String, TextView>()
     private var dialTool: EditorTool? = null
 
     init {
         tabViews.forEach { (group, view) -> view.setOnClickListener { selectGroup(group) } }
         setupDial()
-        setupAspectChips()
+        liquifyPanel.setVisible(false)
+        aspectRow.setVisible(false)
     }
 
     /**
@@ -96,10 +117,8 @@ internal class EditorPanelController(
         if (currentTool != EditorTool.NONE) {
             binding.activeValueText.text = formatter.valueText(currentTool, graph, host.previewAspect())
         }
-        binding.aspectChipScroll.visibility =
-            if (currentTool == EditorTool.CROP) View.VISIBLE else View.GONE
-        val activeKey = EditorReadoutFormatter.aspectKey(lockedAspect, host.previewAspect())
-        aspectChipViews.forEach { (key, view) -> bindAspectChip(view, key == activeKey) }
+        aspectRow.setVisible(currentTool == EditorTool.CROP)
+        aspectRow.refresh(lockedAspect, host.previewAspect())
     }
 
     /**
@@ -123,7 +142,7 @@ internal class EditorPanelController(
     fun selectTool(tool: EditorTool, applyInstantAction: Boolean = true) {
         val spec = EditorToolCatalog.specFor(tool) ?: return
         currentTool = tool
-        configureDial(spec)
+        configureTierOneControl(spec)
         binding.activeToolLabel.setText(spec.labelRes)
         val action = spec.instantAction
         if (applyInstantAction && spec.controlStyle == EditorControlStyle.INSTANT && action != null) {
@@ -156,7 +175,8 @@ internal class EditorPanelController(
         dialTool = null
         buildChips(emptyList())
         binding.dialSeekBar.visibility = View.GONE
-        binding.aspectChipScroll.visibility = View.GONE
+        liquifyPanel.setVisible(false)
+        aspectRow.setVisible(false)
         val tabLabel = tabViews[group]?.text
         binding.activeToolLabel.text = tabLabel
         binding.activeValueText.setText(R.string.editor_tool_coming_soon)
@@ -189,7 +209,13 @@ internal class EditorPanelController(
         binding.subToolChipContainer.removeAllViews()
         chipViews.clear()
         tools.forEach { spec ->
-            val chip = createChip(spec.labelRes, chipHeightPx(), 12.0f)
+            val chip = PanelChipFactory.create(
+                context = context,
+                labelRes = spec.labelRes,
+                heightPx = (CHIP_HEIGHT_DP * density).toInt(),
+                textSizeSp = 12.0f,
+                paddingPx = (CHIP_PADDING_DP * density).toInt()
+            )
             val detector = GestureDetector(
                 context,
                 object : GestureDetector.SimpleOnGestureListener() {
@@ -201,7 +227,7 @@ internal class EditorPanelController(
                     }
 
                     override fun onDoubleTap(e: MotionEvent): Boolean {
-                        commit(spec.parameterKey) { spec.reset(it) }
+                        resetTool(spec)
                         selectTool(spec.tool, applyInstantAction = false)
                         return true
                     }
@@ -217,36 +243,16 @@ internal class EditorPanelController(
         }
     }
 
-    private fun setupAspectChips() {
-        binding.aspectChipContainer.removeAllViews()
-        aspectChipViews.clear()
-        EditorReadoutFormatter.presets.forEach { preset ->
-            val chip = createChip(preset.labelRes, aspectChipHeightPx(), 11.0f)
-            chip.setOnClickListener { applyAspectPreset(preset) }
-            aspectChipViews[preset.key] = chip
-            binding.aspectChipContainer.addView(chip)
+    private fun resetTool(spec: EditorToolSpec) {
+        if (spec.controlStyle == EditorControlStyle.LIQUIFY) {
+            host.onLiquifyResetRequested()
+            return
         }
+        commit(spec.parameterKey) { spec.reset(it) }
     }
 
-    private fun createChip(labelRes: Int, heightPx: Int, textSizeSp: Float): TextView {
-        val chip = TextView(context).apply {
-            setText(labelRes)
-            textSize = textSizeSp
-            gravity = Gravity.CENTER
-            setPadding(chipPaddingPx(), 0, chipPaddingPx(), 0)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                heightPx
-            ).apply { marginEnd = chipPaddingPx() / 3 }
-            setTextColor(ContextCompat.getColor(context, R.color.editor_text_primary))
-            isClickable = true
-            isFocusable = true
-        }
-        chip.setBackgroundColor(ContextCompat.getColor(context, R.color.editor_surface_elevated))
-        return chip
-    }
-
-    private fun configureDial(spec: EditorToolSpec) {
+    private fun configureTierOneControl(spec: EditorToolSpec) {
+        liquifyPanel.setVisible(spec.controlStyle == EditorControlStyle.LIQUIFY)
         val dial = spec.dial
         dialTool = if (dial == null) null else spec.tool
         if (dial == null) {
@@ -284,32 +290,12 @@ internal class EditorPanelController(
         val spec = EditorToolCatalog.specFor(tool) ?: return
         view.setText(if (spec.isModified(graph)) spec.modifiedLabelRes else spec.labelRes)
         val selected = tool == currentTool
-        applySelectionBackground(view, selected)
+        PanelChipFactory.applySelection(context, view, selected)
         view.alpha = if (selected) 1.0f else 0.75f
     }
 
-    private fun bindAspectChip(view: TextView, selected: Boolean) {
-        applySelectionBackground(view, selected)
-    }
-
-    private fun applySelectionBackground(view: View, selected: Boolean) {
-        view.setBackgroundColor(
-            ContextCompat.getColor(
-                context,
-                if (selected) R.color.editor_accent_blue else R.color.editor_surface_elevated
-            )
-        )
-    }
-
-    private fun chipHeightPx(): Int = (CHIP_HEIGHT_DP * density).toInt()
-
-    private fun aspectChipHeightPx(): Int = (ASPECT_CHIP_HEIGHT_DP * density).toInt()
-
-    private fun chipPaddingPx(): Int = (CHIP_PADDING_DP * density).toInt()
-
     private companion object {
         private const val CHIP_HEIGHT_DP = 30.0f
-        private const val ASPECT_CHIP_HEIGHT_DP = 26.0f
         private const val CHIP_PADDING_DP = 13.0f
     }
 }

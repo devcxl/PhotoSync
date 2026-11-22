@@ -9,6 +9,7 @@ object EditValidator {
 
     private const val MIN_CROP_SPAN = 0.05f
     private const val MIN_CURVE_DX = 1.0f / 256.0f
+    private const val SHA256_HEX_LENGTH = 64
 
     fun sanitize(graph: EditGraph): EditGraph {
         return EditGraph(
@@ -37,8 +38,30 @@ object EditValidator {
             rotate90 = g.rotate90.coerceIn(0, 3),
             straighten = sanitizeFloat(g.straighten, 0.0f, -45.0f, 45.0f),
             crop = CropRect(left = l, top = t, right = r, bottom = b),
-            perspective = persp
+            perspective = persp,
+            liquify = sanitizeLiquifyRef(g.liquify)
         )
+    }
+
+    /**
+     * Keeps a liquify reference only when it can be trusted: a confined relative path, the fixed
+     * `128 x 128` grid and either a pending (empty) or a full SHA-256 digest. A hostile or corrupt
+     * row therefore degrades to "no liquify" instead of pointing the loader at arbitrary files.
+     */
+    private fun sanitizeLiquifyRef(ref: LiquifyRef?): LiquifyRef? {
+        if (ref == null) return null
+        val path = ref.meshRelPath.trim()
+        val pathIsConfined = path.isNotEmpty() && !path.startsWith("/") && !path.contains("..")
+        val gridIsSupported = ref.gridSize == LiquifyMesh.GRID_SIZE
+        val digestIsValid = ref.sha256.isEmpty() || (
+            ref.sha256.length == SHA256_HEX_LENGTH &&
+                ref.sha256.all { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' }
+            )
+        return if (pathIsConfined && gridIsSupported && digestIsValid) {
+            LiquifyRef(meshRelPath = path, gridSize = ref.gridSize, sha256 = ref.sha256)
+        } else {
+            null
+        }
     }
 
     private fun sanitizeTone(t: ToneOps): ToneOps = ToneOps(

@@ -3,11 +3,28 @@ package cn.devcxl.photosync.editor.render
 import android.opengl.GLES20
 
 /**
- * GLES 3.0 Pass A: single-fetch geometry resampling plus pre-crop lateral chromatic-aberration
- * correction.
+ * Immutable per-draw uniforms of the Pass A program.
+ */
+internal data class GeometryDrawParams(
+    val sourceTextureId: Int,
+    val columnMajorInverseMatrix: FloatArray,
+    val caRedK: Float,
+    val caBlueK: Float,
+    val srcAspect: Float,
+    val encodeSrgbWithDither: Boolean,
+    val warpTextureId: Int = 0,
+    val warpDecodeScale: Float = 1.0f,
+    val warpDecodeOffset: Float = 0.0f
+)
+
+/**
+ * GLES 3.0 Pass A: single-fetch geometry resampling, liquify warp and pre-crop lateral
+ * chromatic-aberration correction.
  *
- * Evaluates the pre-compiled inverse homography `H^-1`, then scales the red and blue lookups by
- * `1 + k * r^2` in aspect-corrected circular physical coordinates around `(0.5, 0.5)`.
+ * Evaluates the pre-compiled inverse homography `H^-1`, adds the liquify displacement sampled from
+ * the `128 x 128` `uWarpTex` (the seam the portrait MLS and body warps will also feed), then scales
+ * the red and blue lookups by `1 + k * r^2` in aspect-corrected circular physical coordinates
+ * around `(0.5, 0.5)`.
  *
  * When writing a 16-bit linear source into a Tier 2 `GL_RGBA8` intermediate target, sets
  * `uEncodeSrgbWithDither = 1` so dark shadows are stored in sRGB with triangular dithering
@@ -19,6 +36,10 @@ internal class GeometryCaGlProgram {
     private var aPositionLoc: Int = -1
     private var aTexCoordLoc: Int = -1
     private var uTextureLoc: Int = -1
+    private var uWarpTextureLoc: Int = -1
+    private var uHasWarpLoc: Int = -1
+    private var uWarpScaleLoc: Int = -1
+    private var uWarpOffsetLoc: Int = -1
     private var uInverseMatrixLoc: Int = -1
     private var uCaRedLoc: Int = -1
     private var uCaBlueLoc: Int = -1
@@ -36,6 +57,10 @@ internal class GeometryCaGlProgram {
         aPositionLoc = GLES20.glGetAttribLocation(programId, "aPosition")
         aTexCoordLoc = GLES20.glGetAttribLocation(programId, "aTexCoord")
         uTextureLoc = GLES20.glGetUniformLocation(programId, "uTex0")
+        uWarpTextureLoc = GLES20.glGetUniformLocation(programId, "uWarpTex")
+        uHasWarpLoc = GLES20.glGetUniformLocation(programId, "uHasWarpTex")
+        uWarpScaleLoc = GLES20.glGetUniformLocation(programId, "uWarpScale")
+        uWarpOffsetLoc = GLES20.glGetUniformLocation(programId, "uWarpOffset")
         uInverseMatrixLoc = GLES20.glGetUniformLocation(programId, "uInverseMatrix")
         uCaRedLoc = GLES20.glGetUniformLocation(programId, "uCaRedK")
         uCaBlueLoc = GLES20.glGetUniformLocation(programId, "uCaBlueK")
@@ -44,25 +69,33 @@ internal class GeometryCaGlProgram {
         return true
     }
 
-    fun draw(
-        textureId: Int,
-        columnMajorInverseMatrix: FloatArray,
-        caRedK: Float,
-        caBlueK: Float,
-        srcAspect: Float,
-        encodeSrgbWithDither: Boolean
-    ) {
-        if (programId == 0 || textureId == 0) return
+    fun draw(params: GeometryDrawParams) {
+        if (programId == 0 || params.sourceTextureId == 0) return
         GLES20.glUseProgram(programId)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, textureId)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, params.sourceTextureId)
         GLES20.glUniform1i(uTextureLoc, 0)
-        GLES20.glUniformMatrix3fv(uInverseMatrixLoc, 1, false, columnMajorInverseMatrix, 0)
-        GLES20.glUniform1f(uCaRedLoc, caRedK)
-        GLES20.glUniform1f(uCaBlueLoc, caBlueK)
-        GLES20.glUniform1f(uSrcAspectLoc, srcAspect)
-        GLES20.glUniform1i(uEncodeSrgbDitherLoc, if (encodeSrgbWithDither) 1 else 0)
+        bindWarpTexture(params)
+        GLES20.glUniformMatrix3fv(uInverseMatrixLoc, 1, false, params.columnMajorInverseMatrix, 0)
+        GLES20.glUniform1f(uCaRedLoc, params.caRedK)
+        GLES20.glUniform1f(uCaBlueLoc, params.caBlueK)
+        GLES20.glUniform1f(uSrcAspectLoc, params.srcAspect)
+        GLES20.glUniform1i(
+            uEncodeSrgbDitherLoc,
+            if (params.encodeSrgbWithDither) 1 else 0
+        )
         quad.draw(aPositionLoc, aTexCoordLoc)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+    }
+
+    private fun bindWarpTexture(params: GeometryDrawParams) {
+        val hasWarp = params.warpTextureId != 0
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, params.warpTextureId)
+        GLES20.glUniform1i(uWarpTextureLoc, 1)
+        GLES20.glUniform1i(uHasWarpLoc, if (hasWarp) 1 else 0)
+        GLES20.glUniform1f(uWarpScaleLoc, params.warpDecodeScale)
+        GLES20.glUniform1f(uWarpOffsetLoc, params.warpDecodeOffset)
     }
 
     private companion object {
@@ -82,6 +115,10 @@ internal class GeometryCaGlProgram {
             precision highp float;
             in vec2 vTexCoord;
             uniform sampler2D uTex0;
+            uniform sampler2D uWarpTex;
+            uniform int uHasWarpTex;
+            uniform float uWarpScale;
+            uniform float uWarpOffset;
             uniform mat3 uInverseMatrix;
             uniform float uCaRedK;
             uniform float uCaBlueK;
@@ -105,6 +142,11 @@ internal class GeometryCaGlProgram {
             void main() {
                 vec3 mapped = uInverseMatrix * vec3(vTexCoord, 1.0);
                 vec2 preCropUv = mapped.xy / mapped.z;
+                // Liquify (and later face/body) inverse-mapping displacement, in pre-crop UV units.
+                if (uHasWarpTex == 1) {
+                    vec2 warp = texture(uWarpTex, preCropUv).xy * uWarpScale + vec2(uWarpOffset);
+                    preCropUv += warp;
+                }
                 vec2 delta = preCropUv - vec2(0.5);
                 float aspect = max(uSrcAspect, 0.0001);
                 vec2 physDelta = vec2(delta.x * aspect, delta.y);

@@ -12,13 +12,14 @@ import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.ExposureShaderMath
 import cn.devcxl.photosync.editor.domain.GeometryMath
 import cn.devcxl.photosync.editor.domain.LinearRawPreviewRenderer
+import cn.devcxl.photosync.editor.domain.LiquifyMesh
 import cn.devcxl.photosync.wrapper.LinearRawBuffer
 
 /**
  * Renders the screen-sized JPEG preview cache under `cacheDir/edits/<photoId>/` for the main
  * gallery and filmstrip.
  *
- * Applies the full Pass A (crop, rotate, straighten, perspective, lateral CA) + Pass B
+ * Applies the full Pass A (crop, rotate, straighten, perspective, liquify, lateral CA) + Pass B
  * (`BaseLook` + linear-light exposure) contract so the cached thumbnail matches the GL canvas.
  */
 internal object PreviewCacheWriter {
@@ -28,30 +29,40 @@ internal object PreviewCacheWriter {
 
     /**
      * Writes the preview cache for an 8-bit sRGB [source] bitmap.
+     *
+     * @param liquifyMesh The photo's displacement grid, so the cache reproduces the exact warp the
+     *   canvas shows; `null` when the photo has no liquify edit.
      */
     fun writePreviewCache(
         source: Bitmap,
         graph: EditGraph,
         cacheDir: File,
-        photoId: Long
+        photoId: Long,
+        liquifyMesh: LiquifyMesh? = null
     ): String? {
-        val rendered = renderBitmapFrame(source, graph) ?: return null
+        val rendered = renderBitmapFrame(source, graph, liquifyMesh) ?: return null
         return compressAndWrite(rendered, cacheDir, photoId)
     }
 
     /**
      * Writes the preview cache for a 16-bit linear RAW [source] buffer.
+     *
+     * @param liquifyMesh The photo's displacement grid, so the cache reproduces the exact warp the
+     *   canvas shows; `null` when the photo has no liquify edit.
      */
     fun writePreviewCache(
         source: LinearRawBuffer,
         graph: EditGraph,
         cacheDir: File,
-        photoId: Long
+        photoId: Long,
+        liquifyMesh: LiquifyMesh? = null
     ): String? {
         val sourceAspect = source.width.toFloat() / source.height.toFloat()
         val outputAspect = GeometryMath.outputAspect(graph.geometry, sourceAspect)
         val (outW, outH) = previewSize(outputAspect)
-        val geometryActive = !graph.geometry.isIdentity() || !graph.effects.ca.isIdentity()
+        val geometryActive = !graph.geometry.isIdentity() ||
+            !graph.effects.ca.isIdentity() ||
+            liquifyMesh != null
         val linearFrame = if (geometryActive) {
             val ca = graph.effects.ca
             GeometryCpuResampler.resampleLinear(
@@ -60,7 +71,8 @@ internal object PreviewCacheWriter {
                 outputWidth = outW,
                 outputHeight = outH,
                 caRedK = GeometryMath.lateralCaKFromSlider(ca.redCyan),
-                caBlueK = GeometryMath.lateralCaKFromSlider(ca.blueYellow)
+                caBlueK = GeometryMath.lateralCaKFromSlider(ca.blueYellow),
+                liquifyMesh = liquifyMesh
             )
         } else {
             source.downscaledTo(PREVIEW_MAX_EDGE_PX)
@@ -79,7 +91,11 @@ internal object PreviewCacheWriter {
         return compressAndWrite(outBitmap, cacheDir, photoId)
     }
 
-    private fun renderBitmapFrame(source: Bitmap, graph: EditGraph): Bitmap? {
+    private fun renderBitmapFrame(
+        source: Bitmap,
+        graph: EditGraph,
+        liquifyMesh: LiquifyMesh?
+    ): Bitmap? {
         val sourceAspect = source.width.toFloat() / source.height.toFloat()
         val outputAspect = GeometryMath.outputAspect(graph.geometry, sourceAspect)
         val (width, height) = previewSize(outputAspect)
@@ -91,7 +107,8 @@ internal object PreviewCacheWriter {
             outputWidth = width,
             outputHeight = height,
             caRedK = GeometryMath.lateralCaKFromSlider(ca.redCyan),
-            caBlueK = GeometryMath.lateralCaKFromSlider(ca.blueYellow)
+            caBlueK = GeometryMath.lateralCaKFromSlider(ca.blueYellow),
+            liquifyMesh = liquifyMesh
         )
         if (abs(graph.tone.exposure) >= 1e-4f) {
             applyExposure(resampled, graph.tone.exposure)

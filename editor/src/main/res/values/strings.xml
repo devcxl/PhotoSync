@@ -42,6 +42,17 @@
     <string name="editor_tool_ca_blue_yellow">色散 B/Y</string>
     <string name="editor_tool_ca_blue_yellow_modified">色散 B/Y •</string>
 
+    <!-- Liquify tool -->
+    <string name="editor_tool_liquify">液化</string>
+    <string name="editor_tool_liquify_modified">液化 •</string>
+    <string name="editor_liquify_mode_push">推拉</string>
+    <string name="editor_liquify_mode_restore">恢复</string>
+    <string name="editor_liquify_size_label">笔刷大小</string>
+    <string name="editor_liquify_strength_label">强度</string>
+    <string name="editor_liquify_reset">重置液化</string>
+    <string name="editor_value_liquify_modified">已涂抹</string>
+    <string name="editor_value_liquify_none">—</string>
+
     <!-- Value formats -->
     <string name="editor_value_degrees_fmt">%1$+.1f°</string>
     <string name="editor_value_plain_degrees_fmt">%1$.0f°</string>

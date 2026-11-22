@@ -14,20 +14,18 @@ import android.view.View
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import timber.log.Timber
 
 import cn.devcxl.photosync.editor.R
-import cn.devcxl.photosync.editor.contract.EditorHostRegistry
 import cn.devcxl.photosync.editor.contract.EditorLaunchArgs
 import cn.devcxl.photosync.editor.databinding.ActivityEditorBinding
 import cn.devcxl.photosync.editor.domain.BaseLook
 import cn.devcxl.photosync.editor.domain.EditGraph
-import cn.devcxl.photosync.editor.domain.EditGraphJsonCodec
 import cn.devcxl.photosync.editor.domain.EditParameterKey
 import cn.devcxl.photosync.editor.domain.EditorUndoController
+import cn.devcxl.photosync.editor.domain.LiquifyBrushSettings
+import cn.devcxl.photosync.editor.domain.LiquifyMeshStore
+import cn.devcxl.photosync.editor.domain.LiquifySession
 import cn.devcxl.photosync.editor.render.CanvasViewportTransform
 import cn.devcxl.photosync.editor.render.EditorGlRenderer
 import cn.devcxl.photosync.editor.render.EditorPreviewSession
@@ -37,19 +35,24 @@ import cn.devcxl.photosync.editor.ui.gesture.EditorTool
 import cn.devcxl.photosync.editor.ui.panels.EditorPanelController
 import cn.devcxl.photosync.editor.ui.panels.EditorPreviewGeometry
 import cn.devcxl.photosync.editor.ui.widgets.CropOverlayView
+import cn.devcxl.photosync.editor.ui.widgets.LiquifyBrushOverlayView
 
 /**
  * Full-screen non-destructive photo editor.
  *
  * Combines 16-bit linear RAW decoding + `BaseLook` baseline switching with Pass A geometry /
- * lateral chromatic-aberration resampling and Pass B linear-light exposure grading.
+ * liquify / lateral chromatic-aberration resampling and Pass B linear-light exposure grading.
  */
 class EditorActivity : AppCompatActivity(), EditorPanelController.Host {
 
     private lateinit var binding: ActivityEditorBinding
     private lateinit var previewSession: EditorPreviewSession
     private lateinit var saveCoordinator: EditorSaveCoordinator
+    private lateinit var sessionLoader: EditorSessionLoader
+    private lateinit var liquifyController: EditorLiquifyController
     private lateinit var panel: EditorPanelController
+    private lateinit var liquifySession: LiquifySession
+    private lateinit var overlaySync: EditorOverlaySync
     private val renderer = EditorGlRenderer()
     private val undoController = EditorUndoController()
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -69,13 +72,26 @@ class EditorActivity : AppCompatActivity(), EditorPanelController.Host {
         photoId = intent.getLongExtra(EXTRA_PHOTO_ID, 0L)
         sourcePath = intent.getStringExtra(EXTRA_SOURCE_PATH).orEmpty()
         isRaw = intent.getBooleanExtra(EXTRA_IS_RAW, false)
+        liquifySession = LiquifySession(photoId, LiquifyMeshStore(filesDir))
         previewSession = EditorPreviewSession(renderer, cacheDir, photoId)
-        saveCoordinator = EditorSaveCoordinator(photoId, previewSession)
+        saveCoordinator = EditorSaveCoordinator(photoId, previewSession, liquifySession)
+        sessionLoader = EditorSessionLoader(photoId, previewSession, liquifySession)
+        liquifyController = EditorLiquifyController(
+            photoId = photoId,
+            undoController = undoController,
+            session = liquifySession,
+            onMeshPublished = ::publishLiquifyMesh,
+            onGraphChanged = {
+                renderCurrentGraph(useProxy = false)
+                updateHistoryButtons()
+            }
+        )
 
         setupGlSurfaceView()
         setupOverlay()
         setupTopBar()
         panel = EditorPanelController(this, binding, undoController, this)
+        overlaySync = EditorOverlaySync(binding, panel, liquifySession, ::previewAspect)
         panel.selectGroup(EditorGroup.TONE)
         loadInitialPhotoAndEditState()
     }
@@ -94,14 +110,18 @@ class EditorActivity : AppCompatActivity(), EditorPanelController.Host {
     override fun onDestroy() {
         mainHandler.removeCallbacks(settleFullQualityRunnable)
         binding.cropOverlayView.listener = null
+        binding.liquifyBrushOverlayView.listener = null
         previewSession.release()
         super.onDestroy()
     }
 
     override fun onEditorToolChanged(tool: EditorTool) {
-        binding.cropOverlayView.tool = tool
-        binding.cropOverlayView.group = panel.currentGroup
+        val liquifyActive = isLiquifyToolActive()
+        binding.cropOverlayView.visibility = if (liquifyActive) View.GONE else View.VISIBLE
+        binding.liquifyBrushOverlayView.visibility = if (liquifyActive) View.VISIBLE else View.GONE
+        overlaySync.sync(undoController.currentGraph)
         renderCurrentGraph(useProxy = false)
+        updateHistoryButtons()
     }
 
     override fun onGraphEdited(graph: EditGraph, parameterKey: EditParameterKey) {
@@ -123,6 +143,16 @@ class EditorActivity : AppCompatActivity(), EditorPanelController.Host {
             renderer.sourceAspect()
         )
 
+    override fun onLiquifySettingsChanged(settings: LiquifyBrushSettings) {
+        liquifySession.updateSettings { settings }
+        overlaySync.syncBrush()
+    }
+
+    override fun onLiquifyResetRequested() {
+        liquifyController.requestReset()
+        updateHistoryButtons()
+    }
+
     private fun createOverlayGestures(): CropOverlayView.Listener = EditorGeometryGestures(
         undoController = undoController,
         onDragged = {
@@ -137,6 +167,23 @@ class EditorActivity : AppCompatActivity(), EditorPanelController.Host {
         onCompareHold = ::setCompareOriginal
     )
 
+    private fun createLiquifyGestures(): LiquifyBrushOverlayView.Listener = LiquifyGestures(
+        session = liquifySession,
+        projection = ::liquifyProjection,
+        onMeshChanged = ::publishLiquifyMesh,
+        onStrokeFinished = {
+            liquifyController.onStrokeCommitted()
+            renderCurrentGraph(useProxy = false)
+            updateHistoryButtons()
+        },
+        onCanvasTransformChanged = ::onCanvasTransformChanged,
+        onResetRequested = ::onLiquifyResetRequested
+    )
+
+    /** Rebuilds the pre-crop projection per stroke so a live crop or straighten edit is reflected. */
+    private fun liquifyProjection(): LiquifyStrokeProjection =
+        LiquifyStrokeProjection.of(undoController.currentGraph.geometry, renderer.sourceAspect())
+
     private fun setupGlSurfaceView() {
         val activityManager = getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
         preferLinearSource =
@@ -150,12 +197,15 @@ class EditorActivity : AppCompatActivity(), EditorPanelController.Host {
     private fun setupOverlay() {
         binding.cropOverlayView.listener = createOverlayGestures()
         binding.cropOverlayView.tool = EditorTool.NONE
+        binding.liquifyBrushOverlayView.listener = createLiquifyGestures()
+        binding.liquifyBrushOverlayView.visibility = View.GONE
+        overlaySync.syncBrush()
     }
 
     @SuppressLint("ClickableViewAccessibility")
     private fun setupTopBar() {
-        binding.btnUndo.setOnClickListener { applyHistoryGraph(undoController.undo()) }
-        binding.btnRedo.setOnClickListener { applyHistoryGraph(undoController.redo()) }
+        binding.btnUndo.setOnClickListener { undoStep() }
+        binding.btnRedo.setOnClickListener { redoStep() }
         binding.btnCompare.setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> setCompareOriginal(true)
@@ -168,6 +218,23 @@ class EditorActivity : AppCompatActivity(), EditorPanelController.Host {
         updateHistoryButtons()
     }
 
+    /**
+     * Undo prefers the liquify stroke history while the brush tool is active, then falls back to the
+     * parametric `EditGraph` history.
+     */
+    private fun undoStep() {
+        if (isLiquifyToolActive() && liquifyController.undo()) return
+        applyHistoryGraph(undoController.undo())
+    }
+
+    private fun redoStep() {
+        if (isLiquifyToolActive() && liquifyController.redo()) return
+        applyHistoryGraph(undoController.redo())
+    }
+
+    private fun isLiquifyToolActive(): Boolean =
+        panel.currentGroup == EditorGroup.GEOMETRY && panel.currentTool == EditorTool.LIQUIFY
+
     private fun applyHistoryGraph(graph: EditGraph) {
         mainHandler.removeCallbacks(settleFullQualityRunnable)
         renderCurrentGraph(useProxy = false)
@@ -179,20 +246,15 @@ class EditorActivity : AppCompatActivity(), EditorPanelController.Host {
         val graph = undoController.currentGraph
         val preview = EditorPreviewGeometry.previewGraph(graph, panel.currentTool)
         previewSession.applyGraph(preview, useProxy = useProxy)
-        syncOverlay(graph)
+        overlaySync.sync(graph)
         panel.refresh()
         updateBaseLookPill(graph.baseLook)
         binding.glSurfaceView.requestRender()
     }
 
-    private fun syncOverlay(graph: EditGraph) {
-        val overlay = binding.cropOverlayView
-        overlay.cropRect = graph.geometry.crop
-        overlay.perspectiveQuad = graph.geometry.perspective.toFloatArray()
-        overlay.lockedAspect = panel.lockedAspect
-        overlay.frameAspect = previewAspect()
-        overlay.tool = panel.currentTool
-        overlay.group = panel.currentGroup
+    private fun publishLiquifyMesh() {
+        previewSession.applyLiquifyMesh(liquifySession.mesh)
+        binding.glSurfaceView.requestRender()
     }
 
     private fun onCanvasTransformChanged(transform: CanvasTransform) {
@@ -201,6 +263,7 @@ class EditorActivity : AppCompatActivity(), EditorPanelController.Host {
             offsetX = transform.offsetX,
             offsetY = transform.offsetY
         )
+        overlaySync.syncCanvasTransform(transform)
         binding.glSurfaceView.requestRender()
     }
 
@@ -229,22 +292,22 @@ class EditorActivity : AppCompatActivity(), EditorPanelController.Host {
     }
 
     private fun updateHistoryButtons() {
-        binding.btnUndo.isEnabled = undoController.canUndo
-        binding.btnRedo.isEnabled = undoController.canRedo
-        binding.btnUndo.alpha = if (undoController.canUndo) 1.0f else 0.4f
-        binding.btnRedo.alpha = if (undoController.canRedo) 1.0f else 0.4f
+        val canUndo = undoController.canUndo || (isLiquifyToolActive() && liquifyController.canUndo)
+        val canRedo = undoController.canRedo || (isLiquifyToolActive() && liquifyController.canRedo)
+        binding.btnUndo.isEnabled = canUndo
+        binding.btnRedo.isEnabled = canRedo
+        binding.btnUndo.alpha = if (canUndo) 1.0f else 0.4f
+        binding.btnRedo.alpha = if (canRedo) 1.0f else 0.4f
     }
 
     private fun loadInitialPhotoAndEditState() {
         lifecycleScope.launch {
-            val (loadedGraph, source) = withContext(Dispatchers.IO) {
-                readPersistedGraph() to previewSession.loadSource(
-                    sourcePath = sourcePath,
-                    isRaw = isRaw,
-                    preferLinear = preferLinearSource
-                )
-            }
-            if (source == null) {
+            val loaded = sessionLoader.load(
+                sourcePath = sourcePath,
+                isRaw = isRaw,
+                preferLinear = preferLinearSource
+            )
+            if (!loaded.hasSource) {
                 Toast.makeText(
                     this@EditorActivity,
                     R.string.editor_source_missing,
@@ -253,27 +316,18 @@ class EditorActivity : AppCompatActivity(), EditorPanelController.Host {
                 finish()
                 return@launch
             }
-            undoController.resetTo(loadedGraph)
+            undoController.resetTo(loaded.graph)
+            publishLiquifyMesh()
             renderCurrentGraph(useProxy = false)
             updateHistoryButtons()
         }
-    }
-
-    private suspend fun readPersistedGraph(): EditGraph {
-        val existingRecord = EditorHostRegistry.editStore?.getEditForPhoto(photoId)
-        return existingRecord?.graphJson?.let { json ->
-            EditGraphJsonCodec.decode(json) ?: run {
-                Timber.w("Corrupt EditGraph JSON for photoId=%d; resetting to neutral", photoId)
-                EditGraph()
-            }
-        } ?: EditGraph()
     }
 
     private fun saveEditAndFinish() {
         binding.btnDone.isEnabled = false
         val finalGraph = undoController.currentGraph
         lifecycleScope.launch {
-            withContext(Dispatchers.IO) { saveCoordinator.persist(finalGraph) }
+            saveCoordinator.persist(finalGraph)
             val resultIntent = Intent().apply {
                 putExtra(EXTRA_PHOTO_ID, photoId)
                 putExtra(EXTRA_SOURCE_PATH, sourcePath)

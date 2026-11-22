@@ -3,6 +3,7 @@ package cn.devcxl.photosync.editor.render
 import java.io.File
 
 import cn.devcxl.photosync.editor.domain.EditGraph
+import cn.devcxl.photosync.editor.domain.LiquifyMesh
 
 /**
  * Owns the editor's preview textures and preview-cache rendering.
@@ -45,25 +46,33 @@ internal class EditorPreviewSession(
         renderer.applyState(graph, useFastProxy = useProxy)
     }
 
+    /** Stages the liquify displacement grid the canvas must warp by. */
+    fun applyLiquifyMesh(mesh: LiquifyMesh?) {
+        renderer.setLiquifyMesh(mesh)
+    }
+
     /**
      * Renders the screen-sized preview cache for [graph]. Blocking: call from an IO dispatcher.
      *
+     * @param liquifyMesh The photo's displacement grid so the cache matches the canvas exactly.
      * @return Absolute path of the written JPEG, or `null` when nothing was written.
      */
-    fun writePreviewCache(graph: EditGraph): String? =
+    fun writePreviewCache(graph: EditGraph, liquifyMesh: LiquifyMesh? = null): String? =
         when (val current = source) {
             null -> null
             is EditorSource.LinearRawSource -> PreviewCacheWriter.writePreviewCache(
                 source = current.full,
                 graph = graph,
                 cacheDir = cacheDir,
-                photoId = photoId
+                photoId = photoId,
+                liquifyMesh = liquifyMesh
             )
             is EditorSource.BitmapSource -> PreviewCacheWriter.writePreviewCache(
                 source = current.full,
                 graph = graph,
                 cacheDir = cacheDir,
-                photoId = photoId
+                photoId = photoId,
+                liquifyMesh = liquifyMesh
             )
         }
 
