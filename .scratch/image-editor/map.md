@@ -29,6 +29,7 @@ Labels: wayfinder:map
 - [EditGraph JSON Schema v1 与预置滤镜格式规范](issues/05-editgraph-json-schema-and-preset-spec.md): 冻结 6 大组 34 参数 JSON Schema v1 与 `EditValidator` 归一化/NaN 防护契约；液化采用固定 `128×128` FP16 位移网格二进制外置存储（64KB，防撑爆 Room 2MB `CursorWindow` 且重开 O(1) 上传）；外部 `.cube` 导入预烘焙为 `33³ RGBA16F`（287KB）二进制缓存；Room v4 新增 `photo_edits`（`ON DELETE CASCADE`）与 `user_presets` 两张表；`CopyMask` 默认复制调色/美肤并排除单图几何/液化/人像形变。
 - [人像关键点 MLS 网格与美肤/美体遮罩合成规范](issues/06-portrait-mls-grid-and-mask-composition-spec.md): 锁定 478 点关键点分组与旋转不变局部坐标系，支持最多 5 张脸合影同步重塑（外围 1.8× 布设不动锚点）；美肤提供在线 6 类精细 Mask 与离线（内置 478 点+250KB 模型+OKLCH 肤色门控）双模式无缝升级；美体由人脸+分割质心定初值配画布双横线微调（省去 9.4MB 姿态模型）；面部 MLS、美体与液化合并为单张 `128×128 GL_RG16F` 位移纹理在阶段 ① 一次采样。
 - [GLES 3.0 6-Pass Shader 契约与 Pre-pass 列带分块渲染规范](issues/07-gles3-shader-contracts-and-column-band-tiling-spec.md): 逻辑 6 阶段合并为物理 4 组 Pass（②+③ 合并为 `ToneColorPass`，⑤+⑥ 合并为 `EffectsOutputPass`，阶段 ④ 全 0 时 0 Draw Call 短路）；1024px 全图 Pre-pass 一次性提取去雾大气光 $A$ 与清晰度/纹理低频引导金字塔；导出源图分三档驻留（≤26MP 整图驻留 GPU；26–65MP Native `RGB16` 驻留+按列带逆映射包围盒动态切片上传突破 `GL_MAX_TEXTURE_SIZE`；>65MP 启用 LibRaw `half_size=1`）；列带 `glReadPixels(h, h, W_valid, H_valid)` 配 `GL_PACK_ROW_LENGTH = W_crop` 与 `JCS_EXT_RGBA` 零拷贝喂入 `jpeg_write_scanlines`。
+- [GPU 降级矩阵、金标验收测试集与最终规范总装](issues/08-gpu-fallback-matrix-and-golden-acceptance-spec.md): 确立 4 级安全降级矩阵（Tier 1 `RGBA16F` FBO → Tier 2 `RGBA8` FBO + 三角抖动 → Tier 3 最小 Shader 兜底 → Tier 4 MediaPipe GPU 异常自动黑名单回退 CPU）与 JVM + Instrumented 双层金标验收测试套件，并完成全图总装规范 [`.scratch/image-editor/spec.md`](spec.md)。
 
 ## Not yet specified
 
