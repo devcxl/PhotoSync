@@ -116,9 +116,18 @@ internal class EffectsOutputStage(private val exposureProgram: ExposureGlProgram
         )
         stagingTarget.unbind()
         GLES20.glViewport(0, 0, request.viewportWidth, request.viewportHeight)
+        drawFromTexture(stagingTarget.textureId, request)
+        return true
+    }
+
+    /**
+     * Applies Pass D directly to [inputTextureId] (e.g. Pass C output) and presents to the screen.
+     */
+    fun drawFromTexture(inputTextureId: Int, request: EffectsStageRequest) {
+        GLES20.glViewport(0, 0, request.viewportWidth, request.viewportHeight)
         program.draw(
             EffectsDrawParams(
-                textureId = stagingTarget.textureId,
+                textureId = inputTextureId,
                 lutTextureId = if (lutTexture.isReady) lutTexture.textureId else 0,
                 compareOriginal = request.passBDraw.compareOriginal,
                 scaleX = request.scaleX,
@@ -129,7 +138,6 @@ internal class EffectsOutputStage(private val exposureProgram: ExposureGlProgram
                 ditherAmp = PassDEffectsMath.DITHER_AMPLITUDE
             )
         )
-        return true
     }
 
     private fun logFallbackOnce() {

@@ -18,6 +18,8 @@ import cn.devcxl.photosync.editor.domain.Lut3dSamples
 import cn.devcxl.photosync.editor.domain.PassBColorMath
 import cn.devcxl.photosync.editor.domain.PassDEffectsMath
 import cn.devcxl.photosync.editor.domain.PassDEffectsParams
+import cn.devcxl.photosync.editor.domain.PreviewDetailPass
+import cn.devcxl.photosync.editor.domain.SpatialDetailParams
 import cn.devcxl.photosync.editor.domain.Srgb8Packer
 import cn.devcxl.photosync.editor.domain.ToneShaderMath
 import cn.devcxl.photosync.editor.domain.ToneShaderParams
@@ -28,8 +30,9 @@ import cn.devcxl.photosync.wrapper.LinearRawBuffer
  * gallery and filmstrip.
  *
  * Applies the full Pass A (crop, rotate, straighten, perspective, liquify, lateral CA) + Pass B
- * (`BaseLook`, D65-anchored white balance, linear tone, display tone) contract so the cached
- * thumbnail matches the GL canvas.
+ * (`BaseLook`, D65-anchored white balance, linear tone, display tone) + Pass C (noise reduction,
+ * dehaze, clarity/texture, sharpening) + Pass D (3D LUT, grain, post-crop vignette) contract so the
+ * cached thumbnail matches the GL canvas.
  */
 internal object PreviewCacheWriter {
 
@@ -37,9 +40,7 @@ internal object PreviewCacheWriter {
     private const val PREVIEW_MAX_EDGE_PX = 1280
     private const val CHANNELS_RGB = 3
 
-    /**
-     * Writes the preview cache for an 8-bit sRGB [source] bitmap.
-     */
+    /** Writes the preview cache for an 8-bit sRGB [source] bitmap. */
     fun writePreviewCache(
         source: Bitmap,
         graph: EditGraph,
@@ -52,9 +53,7 @@ internal object PreviewCacheWriter {
         return compressAndWrite(rendered, cacheDir, photoId)
     }
 
-    /**
-     * Writes the preview cache for a 16-bit linear RAW [source] buffer.
-     */
+    /** Writes the preview cache for a 16-bit linear RAW [source] buffer. */
     fun writePreviewCache(
         source: LinearRawBuffer,
         graph: EditGraph,
@@ -81,7 +80,12 @@ internal object PreviewCacheWriter {
         } else {
             source.downscaledTo(PREVIEW_MAX_EDGE_PX)
         }
-        val pixels = LinearRawPreviewRenderer.renderArgb(linearFrame, graph, lut)
+        val pixels = LinearRawPreviewRenderer.renderArgb(
+            source = linearFrame,
+            graph = graph,
+            lut = lut,
+            fullResolutionShortEdge = minOf(source.width, source.height)
+        )
         val outBitmap = Bitmap.createBitmap(
             pixels,
             linearFrame.width,
@@ -112,14 +116,23 @@ internal object PreviewCacheWriter {
             liquifyMesh = liquifyMesh
         )
         applyPassBToDisplayPixels(resampled, graph)
+        applyPassC(resampled, graph, minOf(source.width, source.height))
         applyPassDEffects(resampled, graph, lut)
         return resampled
     }
 
-    /**
-     * Applies grain, post-crop vignette and the 3D LUT on the already-cropped frame, matching the
-     * Pass D order used by the GL preview.
-     */
+    private fun applyPassC(bitmap: Bitmap, graph: EditGraph, fullResolutionShortEdge: Int) {
+        if (SpatialDetailParams.from(graph).isZeroDrawCallShortCircuit) return
+        val width = bitmap.width
+        val height = bitmap.height
+        val pixels = IntArray(width * height)
+        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+        val detailed = PreviewDetailPass.apply(
+            pixels, width, height, graph, fullResolutionShortEdge = fullResolutionShortEdge
+        )
+        bitmap.setPixels(detailed, 0, width, 0, 0, width, height)
+    }
+
     private fun applyPassDEffects(bitmap: Bitmap, graph: EditGraph, lut: Lut3dSamples?) {
         val params = PassDEffectsParams.from(graph, bitmap.width.toFloat() / bitmap.height.toFloat())
         if (params.isIdentity) return
@@ -140,18 +153,7 @@ internal object PreviewCacheWriter {
         val height = bitmap.height
         val pixels = IntArray(width * height)
         bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
-        val lumaMap = if (colorParams.defringe > 0.0f) {
-            FloatArray(pixels.size) { i ->
-                val p = pixels[i]
-                ToneShaderMath.luminance(
-                    ((p ushr 16) and 0xFF) / 255.0f,
-                    ((p ushr 8) and 0xFF) / 255.0f,
-                    (p and 0xFF) / 255.0f
-                )
-            }
-        } else {
-            null
-        }
+        val lumaMap = if (colorParams.defringe > 0.0f) buildLumaMap(pixels) else null
         val linear = FloatArray(CHANNELS_RGB)
         val display = FloatArray(CHANNELS_RGB)
         val scratch = PassBColorMath.Scratch()
@@ -162,14 +164,18 @@ internal object PreviewCacheWriter {
             linear[2] = ExposureShaderMath.decodeSrgb((pixel and 0xFF) / 255.0f)
             val grad = lumaMap?.let { Srgb8Packer.neighborGradient(it, width, height, index) } ?: 0.0f
             PassBColorMath.apply(toneParams, colorParams, curveLut, linear, display, grad, scratch)
-            pixels[index] = Srgb8Packer.packRgb(
-                display[0],
-                display[1],
-                display[2],
-                alphaBits = pixel
-            )
+            pixels[index] = Srgb8Packer.packRgb(display[0], display[1], display[2], alphaBits = pixel)
         }
         bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
+    }
+
+    private fun buildLumaMap(pixels: IntArray): FloatArray = FloatArray(pixels.size) { i ->
+        val p = pixels[i]
+        ToneShaderMath.luminance(
+            ((p ushr 16) and 0xFF) / 255.0f,
+            ((p ushr 8) and 0xFF) / 255.0f,
+            (p and 0xFF) / 255.0f
+        )
     }
 
     private fun compressAndWrite(rendered: Bitmap, cacheDir: File, photoId: Long): String? {

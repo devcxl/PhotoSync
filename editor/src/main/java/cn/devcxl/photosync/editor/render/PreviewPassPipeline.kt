@@ -14,11 +14,10 @@ import cn.devcxl.photosync.editor.domain.PassDEffectsMath
  * 1. **Pass A** ([GeometryCaGlProgram]) resamples the source through `H^-1`, the liquify warp and
  *    lateral CA into [OffscreenColorTarget].
  * 2. **Pass B** ([ExposureGlProgram]) applies `BaseLook`, Bradford WB, linear/display tone (B1) and
- *    display color (B2), either straight to the canvas or into the Pass D staging target.
- * 3. **Pass D** ([EffectsOutputStage]) adds the 3D LUT, film grain, post-crop vignette and dithering.
- *
- * The pipeline keeps [EditorGlRenderer] a thin lifecycle/state shell and gives the 4-tier fallback
- * matrix exactly one place to degrade.
+ *    display color (B2).
+ * 3. **Pass C** ([SpatialDetailRenderer]) runs the 1024px Pre-pass + spatial-detail chain when
+ *    non-neutral outside a fast proxy drag, otherwise short-circuits at **0 FBO draw calls**.
+ * 4. **Pass D** ([EffectsOutputStage]) adds the 3D LUT, film grain, post-crop vignette and dithering.
  */
 internal class PreviewPassPipeline {
 
@@ -32,6 +31,7 @@ internal class PreviewPassPipeline {
 
     private val exposureProgram = ExposureGlProgram()
     private val geometryProgram = GeometryCaGlProgram()
+    private val spatialDetail = SpatialDetailRenderer()
     private val effectsStage = EffectsOutputStage(exposureProgram)
     private val geometryTarget = OffscreenColorTarget()
     private val textures = EditorSourceTextures()
@@ -43,6 +43,10 @@ internal class PreviewPassPipeline {
     val isLiquifyWarpActive: Boolean
         get() = warpTexture.isWarpActive
 
+    /** FBO draw calls Pass C issued in the most recent frame. */
+    var lastPassCDrawCalls: Int = 0
+        private set
+
     /** Creates every GL object. Must run on the GL thread after the EGL context exists. */
     fun init(preferEs3: Boolean) {
         GLES20.glClearColor(0.0f, 0.0f, 0.0f, 1.0f)
@@ -51,8 +55,10 @@ internal class PreviewPassPipeline {
         exposureProgram.init(preferEs3)
         geometryTarget.release()
         geometryTarget.resetDisableFlag()
+        if (preferEs3) spatialDetail.init() else spatialDetail.release()
         effectsStage.init(preferEs3)
         geometryFallbackLogged = false
+        lastPassCDrawCalls = 0
         warpTexture.invalidate()
         curveLutTexture.invalidate()
         textures.invalidateContext()
@@ -74,6 +80,9 @@ internal class PreviewPassPipeline {
     /** Stages the 3D LUT samples for the next frame. */
     fun stageLut(samples: Lut3dSamples?) = effectsStage.stageLut(samples)
 
+    /** Marks the 1024px Pass C Pre-pass dirty after a graph change. */
+    fun invalidatePrepass() = spatialDetail.invalidatePrepass()
+
     /** Texture to sample for this frame, or `0` when nothing is uploaded yet. */
     fun activeTexture(useFastProxy: Boolean): Int = textures.activeTexture(useFastProxy)
 
@@ -81,11 +90,7 @@ internal class PreviewPassPipeline {
     fun activeDimensions(useFastProxy: Boolean): Pair<Int, Int> =
         textures.activeDimensions(useFastProxy)
 
-    /**
-     * Uploads everything staged. Must run on the GL thread.
-     *
-     * @return True when the liquify upload failed and the warp must be disabled.
-     */
+    /** Uploads everything staged on the GL thread. */
     fun uploadPending(preferEs3: Boolean): Boolean {
         textures.uploadPending()
         val warpFailed = warpTexture.uploadIfNeeded()
@@ -94,7 +99,7 @@ internal class PreviewPassPipeline {
         return warpFailed
     }
 
-    /** Draws one frame into the default framebuffer. */
+    /** Draws one frame (`Pass A -> Pass B -> Pass C -> Pass D`) into the default framebuffer. */
     fun drawFrame(request: PreviewFrameRequest) {
         GLES20.glViewport(0, 0, request.viewportWidth, request.viewportHeight)
         val source = FrameInput(
@@ -105,14 +110,18 @@ internal class PreviewPassPipeline {
             texelHeight = request.sourceHeight
         )
         if (request.compareOriginal) {
+            lastPassCDrawCalls = 0
             drawPassB(request, source)
             return
         }
         val frame = renderGeometryPass(request, source)
-        if (request.state.effectsParams.isIdentity || !effectsStage.isReady) {
-            drawPassB(request, frame)
-        } else {
-            drawPassD(request, frame)
+        val passCTexture = renderSpatialDetailIfActive(request, frame)
+        val effectsActive = !request.state.effectsParams.isIdentity && effectsStage.isReady
+        when {
+            effectsActive && passCTexture != 0 -> drawPassDFromTexture(request, frame, passCTexture)
+            effectsActive -> drawPassD(request, frame)
+            passCTexture != 0 -> presentPassC(request, frame, passCTexture)
+            else -> drawPassB(request, frame)
         }
     }
 
@@ -155,45 +164,82 @@ internal class PreviewPassPipeline {
         )
     }
 
+    private fun renderSpatialDetailIfActive(request: PreviewFrameRequest, frame: FrameInput): Int {
+        val state = request.state
+        if (state.useFastProxy || state.spatialParams.isZeroDrawCallShortCircuit || !spatialDetail.isReady) {
+            lastPassCDrawCalls = 0
+            return 0
+        }
+        val (scaleX, scaleY) = letterboxScale(request, frame.aspect)
+        val (targetWidth, targetHeight) = OffscreenColorTarget.targetSizeFor(
+            request.viewportWidth, request.viewportHeight, scaleX, scaleY
+        )
+        val outputTex = spatialDetail.renderToTexture(
+            aspect = frame.aspect,
+            params = state.spatialParams,
+            revision = request.graphRevision,
+            targetWidth = targetWidth,
+            targetHeight = targetHeight,
+            allowHalfFloat = true
+        ) { target ->
+            target.bind()
+            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+            val dither = if (target.isHalfFloatTarget) 0.0f else PassDEffectsMath.DITHER_AMPLITUDE
+            exposureProgram.draw(passBDrawParams(request, frame, 1.0f, 1.0f, 0.0f, 0.0f, dither))
+            target.unbind()
+            true
+        }
+        lastPassCDrawCalls = if (outputTex != 0) spatialDetail.lastDrawCalls else 0
+        GLES20.glViewport(0, 0, request.viewportWidth, request.viewportHeight)
+        return outputTex
+    }
+
+    private fun presentPassC(request: PreviewFrameRequest, frame: FrameInput, textureId: Int) {
+        val (scaleX, scaleY) = letterboxScale(request, frame.aspect)
+        spatialDetail.present(
+            textureId = textureId,
+            viewportWidth = request.viewportWidth,
+            viewportHeight = request.viewportHeight,
+            scaleX = scaleX,
+            scaleY = scaleY,
+            offsetX = request.canvas.offsetX,
+            offsetY = request.canvas.offsetY
+        )
+    }
+
     private fun drawPassB(request: PreviewFrameRequest, frame: FrameInput) {
         val (scaleX, scaleY) = letterboxScale(request, frame.aspect)
         exposureProgram.draw(
             passBDrawParams(
-                request = request,
-                frame = frame,
-                scaleX = scaleX,
-                scaleY = scaleY,
-                offsetX = request.canvas.offsetX,
-                offsetY = request.canvas.offsetY,
-                ditherAmp = PassDEffectsMath.DITHER_AMPLITUDE
+                request, frame, scaleX, scaleY,
+                request.canvas.offsetX, request.canvas.offsetY, PassDEffectsMath.DITHER_AMPLITUDE
             )
         )
     }
 
     private fun drawPassD(request: PreviewFrameRequest, frame: FrameInput) {
+        if (!effectsStage.draw(buildEffectsRequest(request, frame))) {
+            drawPassB(request, frame)
+        }
+    }
+
+    private fun drawPassDFromTexture(request: PreviewFrameRequest, frame: FrameInput, textureId: Int) {
+        effectsStage.drawFromTexture(textureId, buildEffectsRequest(request, frame))
+    }
+
+    private fun buildEffectsRequest(request: PreviewFrameRequest, frame: FrameInput): EffectsStageRequest {
         val (scaleX, scaleY) = letterboxScale(request, frame.aspect)
-        val drawn = effectsStage.draw(
-            EffectsStageRequest(
-                viewportWidth = request.viewportWidth,
-                viewportHeight = request.viewportHeight,
-                scaleX = scaleX,
-                scaleY = scaleY,
-                offsetX = request.canvas.offsetX,
-                offsetY = request.canvas.offsetY,
-                aspect = frame.aspect,
-                effects = request.state.effectsParams,
-                passBDraw = passBDrawParams(
-                    request = request,
-                    frame = frame,
-                    scaleX = 1.0f,
-                    scaleY = 1.0f,
-                    offsetX = 0.0f,
-                    offsetY = 0.0f,
-                    ditherAmp = 0.0f
-                )
-            )
+        return EffectsStageRequest(
+            viewportWidth = request.viewportWidth,
+            viewportHeight = request.viewportHeight,
+            scaleX = scaleX,
+            scaleY = scaleY,
+            offsetX = request.canvas.offsetX,
+            offsetY = request.canvas.offsetY,
+            aspect = frame.aspect,
+            effects = request.state.effectsParams,
+            passBDraw = passBDrawParams(request, frame, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f)
         )
-        if (!drawn) drawPassB(request, frame)
     }
 
     private fun passBDrawParams(
@@ -225,28 +271,14 @@ internal class PreviewPassPipeline {
         )
     }
 
-    private fun letterboxScale(
-        request: PreviewFrameRequest,
-        imageAspect: Float
-    ): Pair<Float, Float> {
+    private fun letterboxScale(request: PreviewFrameRequest, imageAspect: Float): Pair<Float, Float> {
         val viewAspect = request.viewportWidth.toFloat() / request.viewportHeight.toFloat()
-        val zoom = request.canvas.scale
-            .takeIf { it.isFinite() && it > 0.0f }
-            ?.coerceIn(1.0f, MAX_CANVAS_ZOOM) ?: 1.0f
-        return if (imageAspect > viewAspect) {
-            zoom to (viewAspect / imageAspect) * zoom
-        } else {
-            (imageAspect / viewAspect) * zoom to zoom
-        }
+        return CanvasLetterbox.scale(imageAspect, viewAspect, request.canvas.scale)
     }
 
     private fun logGeometryFallbackOnce() {
         if (geometryFallbackLogged) return
         geometryFallbackLogged = true
         Timber.w("Pass A target unavailable; preview falls back to the un-warped source")
-    }
-
-    private companion object {
-        private const val MAX_CANVAS_ZOOM = 8.0f
     }
 }

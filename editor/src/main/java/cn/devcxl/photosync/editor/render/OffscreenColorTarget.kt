@@ -1,22 +1,18 @@
 package cn.devcxl.photosync.editor.render
 
 import kotlin.math.abs
-import kotlin.math.roundToInt
 
 import android.opengl.GLES20
 import android.opengl.GLES30
 import timber.log.Timber
 
 /**
- * Reusable offscreen colour target used by every intermediate preview pass (Pass A geometry and the
- * Pass B staging target Pass D reads).
+ * Reusable offscreen colour target shared by intermediate preview passes (Pass A geometry,
+ * Pass B staging for Pass C/D, and Pass C ping-pong buffers).
  *
- * Picks the highest available tier from the fallback matrix:
+ * Picks the highest available tier from [GlCapabilities]:
  * - Tier 1: `GL_RGBA16F` when `EXT_color_buffer_half_float` is complete.
  * - Tier 2: `GL_RGBA8` otherwise, where each pass dithers its own output.
- *
- * The attachment is only reallocated when the requested size drifts by more than
- * [SIZE_TOLERANCE_PX], so a live crop or straighten drag does not thrash GPU memory.
  */
 internal class OffscreenColorTarget {
 
@@ -41,7 +37,7 @@ internal class OffscreenColorTarget {
     /**
      * Ensures an attachment of the requested pixel size exists.
      *
-     * @param allowHalfFloat Whether Tier 1 `GL_RGBA16F` rendering is supported by the driver.
+     * @param allowHalfFloat Whether Tier 1 `GL_RGBA16F` rendering is requested for this pass.
      * @return True when the target was (re)allocated, so the caller can redraw unconditionally.
      */
     fun ensureSize(width: Int, height: Int, allowHalfFloat: Boolean): Boolean {
@@ -57,24 +53,18 @@ internal class OffscreenColorTarget {
         return true
     }
 
-    /**
-     * Binds the framebuffer and points the viewport at the attachment.
-     */
+    /** Binds the framebuffer and points the viewport at the attachment. */
     fun bind() {
         GLES20.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, framebufferId)
         GLES20.glViewport(0, 0, width, height)
     }
 
-    /**
-     * Restores the default framebuffer.
-     */
+    /** Restores the default framebuffer. */
     fun unbind() {
         GLES20.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
     }
 
-    /**
-     * Releases every GL object owned by this target. Safe to call without a live context.
-     */
+    /** Releases every GL object owned by this target. Safe to call without a live context. */
     fun release() {
         if (framebufferId != 0) {
             GLES20.glDeleteFramebuffers(1, intArrayOf(framebufferId), 0)
@@ -88,9 +78,7 @@ internal class OffscreenColorTarget {
         height = 0
     }
 
-    /**
-     * Re-arms the target after an EGL context recreation.
-     */
+    /** Re-arms the target after an EGL context recreation. */
     fun resetDisableFlag() {
         isDisabled = false
     }
@@ -147,23 +135,15 @@ internal class OffscreenColorTarget {
 
         private const val SIZE_TOLERANCE_PX = 2
 
-        /**
-         * Computes the attachment size for a letterboxed image rect inside a viewport.
-         */
+        /** Computes the attachment size for a letterboxed image rect inside a viewport. */
         fun targetSizeFor(
             viewportWidth: Int,
             viewportHeight: Int,
             scaleX: Float,
             scaleY: Float,
             maxEdgePx: Int = MAX_PREVIEW_EDGE_PX
-        ): Pair<Int, Int> {
-            val rawWidth = (viewportWidth * scaleX).roundToInt().coerceAtLeast(1)
-            val rawHeight = (viewportHeight * scaleY).roundToInt().coerceAtLeast(1)
-            val longEdge = maxOf(rawWidth, rawHeight)
-            if (longEdge <= maxEdgePx) return rawWidth to rawHeight
-            val shrink = maxEdgePx.toFloat() / longEdge.toFloat()
-            return ((rawWidth * shrink).roundToInt().coerceAtLeast(1)) to
-                ((rawHeight * shrink).roundToInt().coerceAtLeast(1))
-        }
+        ): Pair<Int, Int> = CanvasLetterbox.targetSize(
+            viewportWidth, viewportHeight, scaleX, scaleY, maxEdgePx
+        )
     }
 }

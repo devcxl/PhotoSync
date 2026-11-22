@@ -18,11 +18,12 @@ internal object LinearRawPreviewRenderer {
     private const val CHANNELS = 4
     private const val CHANNELS_RGB = 3
 
-    /** Renders [source] into packed `ARGB_8888` pixels, row-major. */
+    /** Renders [source] into packed `ARGB_8888` pixels, row-major (Pass B -> Pass C -> Pass D). */
     fun renderArgb(
         source: LinearRawBuffer,
         graph: EditGraph,
-        lut: Lut3dSamples? = null
+        lut: Lut3dSamples? = null,
+        fullResolutionShortEdge: Int = minOf(source.width, source.height)
     ): IntArray {
         val toneParams = ToneShaderParams.from(graph)
         val colorParams = ColorGradingParams.from(graph)
@@ -45,7 +46,14 @@ internal object LinearRawPreviewRenderer {
                 toneParams, colorParams, curveLut, pixelCount, argb, PassBColorMath.Scratch()
             )
         }
-        return applyPassDEffects(argb, width, height, graph, lut)
+        val detailed = PreviewDetailPass.apply(
+            argb = argb,
+            width = width,
+            height = height,
+            graph = graph,
+            fullResolutionShortEdge = fullResolutionShortEdge
+        )
+        return applyPassDEffects(detailed, width, height, graph, lut)
     }
 
     private fun renderStraight(

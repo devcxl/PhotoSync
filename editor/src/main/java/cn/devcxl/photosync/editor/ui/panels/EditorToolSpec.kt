@@ -42,7 +42,13 @@ internal enum class EditorControlStyle {
     GRAIN,
 
     /** Post-crop vignette panel (amount, midpoint, feather, roundness). */
-    VIGNETTE
+    VIGNETTE,
+
+    /** Sharpening panel: amount, radius, threshold and masking rows. */
+    SHARPEN,
+
+    /** Noise reduction panel: luma, chroma and detail rows. */
+    NOISE_REDUCTION
 }
 
 /**
@@ -77,8 +83,8 @@ internal data class EditorToolSpec(
 
 /**
  * Registry of the tools delivered so far: geometry (including liquify), tone, white balance,
- * display color, the Pass D effect panels (3D LUT, film grain, post-crop vignette) and lens
- * dispersion / defringe.
+ * display color, the Pass C spatial-detail group, the Pass D effect panels (3D LUT, film grain,
+ * post-crop vignette) and lens dispersion / defringe.
  */
 internal object EditorToolCatalog {
 
@@ -90,6 +96,7 @@ internal object EditorToolCatalog {
                 flipAndPerspectiveSpecs() +
                 EditorToneDetailSpecs.toneSpecs() +
                 EditorColorSpecs.colourSpecs() +
+                EditorSpatialDetailSpecs.spatialDetailSpecs() +
                 EditorToneDetailSpecs.detailSpecs()
             )
             .associateBy { it.tool }

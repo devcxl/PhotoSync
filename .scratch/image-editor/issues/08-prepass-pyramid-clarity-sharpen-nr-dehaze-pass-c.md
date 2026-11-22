@@ -4,10 +4,10 @@
 
 **Blocked by:** 06: 显示域色彩、单调三次曲线、8 色带 OKLCH HSL 与色调分离切片（Pass B 下半段）
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] 实现 `PrepassAnalyzer`：在 1024px 代理图上提取 $256\times 256$ 暗通道前 0.1% 全局大气光 $A$、引导滤波平滑后的粗透射率 $t_{\text{low}}$，以及 512px（0.3% 短边）与 128px（2.0% 短边）两级低频亮度引导层，打包入 `uPrepassTex`。
-- [ ] 实现 Pass C 降噪（亮度 $3\times 3$ 引导滤波 + `detail` 回混；色度 CbCr $5\times 5$ 可分离边缘引导平滑）与去雾（采样全局 $A$ 与 $t_{\text{low}}$，透射率下界 $\max(t, 0.1)$，$\omega \le 0.95$）。
-- [ ] 实现清晰度（`clarity + 0.20 * glow`）与纹理：按 Post-crop 全局 UV 采样 `uPrepassTex.rg`，高通差值限幅 `clamp(Y - base, -0.08, 0.08)` 后乘中间调权重叠加。
-- [ ] 实现 Y 通道锐化（数量 `0..150`、半径 `0.5..3.0px` 按全清像素缩放、阈值与梯度边缘蒙版，并预留 `1 - skinMask` 皮肤区抑制接口）。
-- [ ] 验证当细节组滑杆与 `glow` 全为 0 时，Pass C 完全短路跳过（0 次 FBO Draw Call）。
+- [x] 实现 `PrepassAnalyzer`：在 1024px 代理图上提取 $256\times 256$ 暗通道前 0.1% 全局大气光 $A$、引导滤波平滑后的粗透射率 $t_{\text{low}}$，以及 512px（0.3% 短边）与 128px（2.0% 短边）两级低频亮度引导层，打包入 `uPrepassTex`。
+- [x] 实现 Pass C 降噪（亮度 $3\times 3$ 引导滤波 + `detail` 回混；色度 CbCr $5\times 5$ 可分离边缘引导平滑）与去雾（采样全局 $A$ 与 $t_{\text{low}}$，透射率下界 $\max(t, 0.1)$，$\omega \le 0.95$）。
+- [x] 实现清晰度（`clarity + 0.20 * glow`）与纹理：按 Post-crop 全局 UV 采样 `uPrepassTex.rg`，高通差值限幅 `clamp(Y - base, -0.08, 0.08)` 后乘中间调权重叠加。
+- [x] 实现 Y 通道锐化（数量 `0..150`、半径 `0.5..3.0px` 按全清像素缩放、阈值与梯度边缘蒙版，并预留 `1 - skinMask` 皮肤区抑制接口）。
+- [x] 验证当细节组滑杆与 `glow` 全为 0 时，Pass C 完全短路跳过（0 次 FBO Draw Call）。

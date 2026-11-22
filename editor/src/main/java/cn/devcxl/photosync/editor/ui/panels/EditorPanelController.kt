@@ -22,9 +22,8 @@ import cn.devcxl.photosync.editor.ui.widgets.DialSeekBar
 
 /**
  * Binds the three-tier bottom drawer to the edit graph: six category tabs, the sub-tool chips of the
- * active category, the tier-1 control slot (`DialSeekBar`, `CurveEditorView`, `HslPanelView`,
- * `SplitToningPanelView`, `LutPanelView`, `GrainPanelView`, `VignettePanelView` or
- * `LiquifyBrushPanel`), the crop aspect chips and the value read-out.
+ * active category, the tier-1 control slot (`DialSeekBar`, color, spatial-detail, effect or liquify
+ * panels), the crop aspect chips and the value read-out.
  */
 internal class EditorPanelController(
     private val context: Context,
@@ -76,28 +75,22 @@ internal class EditorPanelController(
     private val colorPanels = ColorPanelsBinder(
         binding = binding,
         undoController = undoController,
-        onEdited = { graph, key ->
-            refreshHeaderReadout(graph)
-            host.onGraphEdited(graph, key)
-        },
-        onCommitted = { graph, key ->
-            host.onGraphCommitted(graph, key)
-            refresh()
-        }
+        onEdited = ::handleSubPanelEdited,
+        onCommitted = ::handleSubPanelCommitted
+    )
+    private val detailPanels = DetailPanelsBinder(
+        binding = binding,
+        undoController = undoController,
+        onEdited = ::handleSubPanelEdited,
+        onCommitted = ::handleSubPanelCommitted
     )
     private val effectsPanels = EffectsPanelsBinder(
         binding = binding,
         undoController = undoController,
         lutStore = lutStore,
         onImportRequested = host::onLutImportRequested,
-        onEdited = { graph, key ->
-            refreshHeaderReadout(graph)
-            host.onGraphEdited(graph, key)
-        },
-        onCommitted = { graph, key ->
-            host.onGraphCommitted(graph, key)
-            refresh()
-        }
+        onEdited = ::handleSubPanelEdited,
+        onCommitted = ::handleSubPanelCommitted
     )
     private val aspectRow = CropAspectChipRow(context, binding, ::applyAspectPreset)
     private val tabViews: Map<EditorGroup, TextView> = mapOf(
@@ -124,6 +117,7 @@ internal class EditorPanelController(
         setupDial()
         liquifyPanel.setVisible(false)
         colorPanels.showFor(null)
+        detailPanels.showFor(null)
         effectsPanels.showFor(null)
         aspectRow.setVisible(false)
     }
@@ -136,6 +130,7 @@ internal class EditorPanelController(
             EditorToolCatalog.specFor(tool)?.let { binding.dialSeekBar.setValue(it.readValue(graph)) }
         }
         colorPanels.refresh(graph)
+        detailPanels.refresh(graph)
         effectsPanels.refresh(graph)
         refreshHeaderReadout(graph)
         aspectRow.setVisible(currentTool == EditorTool.CROP)
@@ -185,6 +180,16 @@ internal class EditorPanelController(
         refresh()
     }
 
+    private fun handleSubPanelEdited(graph: EditGraph, key: EditParameterKey) {
+        refreshHeaderReadout(graph)
+        host.onGraphEdited(graph, key)
+    }
+
+    private fun handleSubPanelCommitted(graph: EditGraph, key: EditParameterKey) {
+        host.onGraphCommitted(graph, key)
+        refresh()
+    }
+
     private fun refreshHeaderReadout(graph: EditGraph) {
         if (currentTool != EditorTool.NONE) {
             binding.activeValueText.text = formatter.valueText(currentTool, graph, host.previewAspect())
@@ -198,6 +203,7 @@ internal class EditorPanelController(
         binding.dialSeekBar.visibility = View.GONE
         liquifyPanel.setVisible(false)
         colorPanels.showFor(null)
+        detailPanels.showFor(null)
         effectsPanels.showFor(null)
         aspectRow.setVisible(false)
         binding.activeToolLabel.text = tabViews[group]?.text
@@ -237,6 +243,7 @@ internal class EditorPanelController(
     private fun configureTierOneControl(spec: EditorToolSpec) {
         liquifyPanel.setVisible(spec.controlStyle == EditorControlStyle.LIQUIFY)
         colorPanels.showFor(spec.controlStyle)
+        detailPanels.showFor(spec.controlStyle)
         effectsPanels.showFor(spec.controlStyle)
         val dial = spec.dial
         dialTool = if (dial == null) null else spec.tool

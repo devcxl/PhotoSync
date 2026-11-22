@@ -80,9 +80,20 @@ internal class EditorReadoutFormatter(private val context: Context) {
                 context.getString(R.string.editor_value_signed_fmt),
                 graph.effects.vignette.amount.toFloat()
             )
+            EditorTool.SHARPEN -> panelStatusText(
+                spec?.isModified?.invoke(graph) == true,
+                R.string.editor_value_sharpen_modified
+            )
+            EditorTool.NOISE_REDUCTION -> panelStatusText(
+                spec?.isModified?.invoke(graph) == true,
+                R.string.editor_value_nr_modified
+            )
             else -> ""
         }
     }
+
+    private fun panelStatusText(modified: Boolean, modifiedRes: Int): String =
+        statusText(modified, modifiedRes, R.string.editor_value_scalar_none)
 
     private fun statusText(modified: Boolean, modifiedRes: Int, neutralRes: Int): String =
         context.getString(if (modified) modifiedRes else neutralRes)

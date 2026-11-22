@@ -66,11 +66,16 @@ class ToneColorToolCatalogTest {
     }
 
     @Test
-    fun shouldOfferCaAndDefringeTools_whenDetailGroupIsSelected() {
+    fun shouldOfferSpatialDetailAndLensTools_whenDetailGroupIsSelected() {
         val tools = EditorToolCatalog.toolsFor(EditorGroup.DETAIL).map { it.tool }
 
         assertEquals(
             listOf(
+                EditorTool.CLARITY,
+                EditorTool.TEXTURE,
+                EditorTool.DEHAZE,
+                EditorTool.SHARPEN,
+                EditorTool.NOISE_REDUCTION,
                 EditorTool.DISPERSION_RED_CYAN,
                 EditorTool.DISPERSION_BLUE_YELLOW,
                 EditorTool.DEFRINGE,

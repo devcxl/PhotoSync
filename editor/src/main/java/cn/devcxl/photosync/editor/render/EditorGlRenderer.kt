@@ -6,27 +6,27 @@ import javax.microedition.khronos.opengles.GL10
 import android.opengl.GLES20
 import android.opengl.GLSurfaceView
 
-import cn.devcxl.photosync.editor.domain.BaseLook
 import cn.devcxl.photosync.editor.domain.ColorGradingParams
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.GeometryMath
 import cn.devcxl.photosync.editor.domain.LiquifyMesh
 import cn.devcxl.photosync.editor.domain.Lut3dSamples
 import cn.devcxl.photosync.editor.domain.PassDEffectsParams
+import cn.devcxl.photosync.editor.domain.SpatialDetailParams
 import cn.devcxl.photosync.editor.domain.ToneShaderParams
 
 /**
  * GLES 3.0 renderer for the editor preview canvas.
  *
- * Runs the physical three-pass preview pipeline owned by [PreviewPassPipeline]:
- * 1. **Pass A** ([GeometryCaGlProgram]) renders the upright source (`GL_RGBA16F` for RAW,
- *    `GL_RGBA8` for JPEG) through `H^-1` and the liquify `uWarpTex` into an offscreen target sized
- *    to the cropped aspect ratio, applying aspect-corrected circular pre-crop lateral CA resampling.
- * 2. **Pass B** ([ExposureGlProgram]) applies RAW `BaseLook` compensation, D65-anchored Bradford WB,
- *    linear/display tone (Pass B1), plus 1024-entry curve LUT, OKLCH saturation/vibrance/8-band HSL,
- *    OKLab split toning, edge defringe and film fade (Pass B2).
- * 3. **Pass D** ([EffectsOutputStage]) applies the tetrahedral 3D LUT, post-crop film grain,
- *    post-crop vignette and `1/255` triangular dithering on the cropped frame's global UVs.
+ * Runs the physical four-pass preview pipeline owned by [PreviewPassPipeline]:
+ * 1. **Pass A** ([GeometryCaGlProgram]) renders the upright source through `H^-1`, `uWarpTex` and
+ *    aspect-corrected lateral CA resampling.
+ * 2. **Pass B** ([ExposureGlProgram]) applies `BaseLook`, Bradford WB, Pass B1 tone and Pass B2
+ *    display color grading.
+ * 3. **Pass C** ([SpatialDetailRenderer]) runs the 1024px Pre-pass, guided NR, dark-channel
+ *    dehaze, Clarity/Texture and Y sharpening (short-circuited to 0 FBO draw calls when neutral).
+ * 4. **Pass D** ([EffectsOutputStage]) applies tetrahedral 3D LUT, post-crop grain, vignette and
+ *    `1/255` triangular dithering.
  */
 internal class EditorGlRenderer : GLSurfaceView.Renderer {
 
@@ -34,6 +34,9 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
 
     private var viewportWidth: Int = 1
     private var viewportHeight: Int = 1
+
+    @Volatile
+    private var graphRevision: Int = 0
 
     @Volatile
     private var imageWidth: Int = 1
@@ -62,6 +65,16 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
     @Volatile
     var canvasTransform: CanvasViewportTransform = CanvasViewportTransform()
 
+    /** FBO draw calls Pass C issued in the most recent frame; `0` when short-circuited. */
+    @Volatile
+    var lastPassCDrawCalls: Int = 0
+        private set
+
+    /** True when the current graph activates Pass C outside a fast proxy drag. */
+    @Volatile
+    var isPassCActive: Boolean = false
+        private set
+
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         pipeline.init(preferEs3)
         applySourceMetadata(stagedSource)
@@ -81,7 +94,10 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
 
         val state = frameState
         val activeTexture = pipeline.activeTexture(state.useFastProxy)
-        if (activeTexture == 0) return
+        if (activeTexture == 0) {
+            lastPassCDrawCalls = 0
+            return
+        }
         val (srcW, srcH) = pipeline.activeDimensions(state.useFastProxy)
         pipeline.drawFrame(
             PreviewFrameRequest(
@@ -95,9 +111,11 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
                 viewportHeight = viewportHeight,
                 canvas = canvasTransform,
                 state = state,
-                compareOriginal = compareOriginal
+                compareOriginal = compareOriginal,
+                graphRevision = graphRevision
             )
         )
+        lastPassCDrawCalls = pipeline.lastPassCDrawCalls
     }
 
     /** Stages [source] for upload on the GL thread and adopts its dimensions and gain metadata. */
@@ -119,9 +137,7 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
     }
 
     /** Stages the imported 3D LUT samples for the next frame, or `null` to unbind it. */
-    fun setLut3d(samples: Lut3dSamples?) {
-        pipeline.stageLut(samples)
-    }
+    fun setLut3d(samples: Lut3dSamples?) = pipeline.stageLut(samples)
 
     /** Width/height ratio of the upright source texture, used when geometry is neutral. */
     fun sourceAspect(): Float = imageWidth.toFloat() / imageHeight.toFloat()
@@ -139,10 +155,12 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
         } else {
             RenderFrameState.IDENTITY_MATRIX
         }
+        val spatialParams = SpatialDetailParams.from(graph)
         pipeline.stageCurve(graph.color.curve)
         frameState = RenderFrameState(
             toneParams = ToneShaderParams.from(graph),
             colorParams = ColorGradingParams.from(graph),
+            spatialParams = spatialParams,
             effectsParams = PassDEffectsParams.from(graph, outputAspect),
             baseLook = graph.baseLook,
             useFastProxy = useFastProxy,
@@ -153,6 +171,9 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
             outputAspectRatio = outputAspect,
             liquifyWarp = liquifyWarp
         )
+        isPassCActive = !useFastProxy && !spatialParams.isZeroDrawCallShortCircuit
+        pipeline.invalidatePrepass()
+        graphRevision++
     }
 
     private fun applySourceMetadata(source: EditorSource?) {

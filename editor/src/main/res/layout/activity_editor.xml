@@ -200,6 +200,10 @@
             layout="@layout/editor_color_panels" />
 
         <include
+            android:id="@+id/detailPanels"
+            layout="@layout/editor_detail_panels" />
+
+        <include
             android:id="@+id/effectPanels"
             layout="@layout/editor_effect_panels" />
 
