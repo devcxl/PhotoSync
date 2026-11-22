@@ -6,6 +6,7 @@ import org.junit.Test
 import cn.devcxl.photosync.editor.domain.CropRect
 import cn.devcxl.photosync.editor.domain.GeometryMath
 import cn.devcxl.photosync.editor.domain.GeometryOps
+import cn.devcxl.photosync.editor.domain.LiquifyMesh
 import cn.devcxl.photosync.wrapper.LinearRawBuffer
 
 class GeometryLinearResamplerTest {
@@ -58,5 +59,64 @@ class GeometryLinearResamplerTest {
         out.readPixel(1, pixel1)
         // u=0.75 of right-half crop maps to pre-crop u=0.875 -> x=2.625 (purely inside 1.5f half)
         assertEquals(1.5f, pixel1[0], 0.02f)
+    }
+
+    @Test
+    fun shouldApplyTheLiquifyWarpBeforeResampling_whenALiquifyMeshIsSupplied() {
+        val source = halfDarkHalfBrightLinearSource()
+        val identity = GeometryMath.buildPassAInverseMatrix(GeometryOps(), srcAspect = 2.0f)
+        val warp = LiquifyMesh.fromDisplacements(
+            FloatArray(LiquifyMesh.COMPONENT_COUNT) { index ->
+                // Uniform +0.5 frame-width shift: every output pixel reads half a frame to the right.
+                if (index % 2 == 0) 0.5f else 0.0f
+            }
+        )
+
+        val plain = GeometryCpuResampler.resampleLinear(
+            source = source,
+            inverseMatrix = identity,
+            outputWidth = 2,
+            outputHeight = 1,
+            caRedK = 0.0f,
+            caBlueK = 0.0f
+        )
+        val warped = GeometryCpuResampler.resampleLinear(
+            source = source,
+            inverseMatrix = identity,
+            outputWidth = 2,
+            outputHeight = 1,
+            caRedK = 0.0f,
+            caBlueK = 0.0f,
+            liquifyMesh = warp
+        )
+
+        val plainLeft = FloatArray(4)
+        plain.readPixel(0, plainLeft)
+        val warpedLeft = FloatArray(4)
+        warped.readPixel(0, warpedLeft)
+
+        assertEquals(0.1f, plainLeft[0], 0.02f)
+        assertEquals(1.5f, warpedLeft[0], 0.02f)
+    }
+
+    private fun halfDarkHalfBrightLinearSource(): LinearRawBuffer {
+        val samples = FloatArray(4 * 2 * 4)
+        for (y in 0 until 2) {
+            for (x in 0 until 4) {
+                val base = (y * 4 + x) * 4
+                val v = if (x < 2) 0.1f else 1.5f
+                samples[base] = v
+                samples[base + 1] = v
+                samples[base + 2] = v
+                samples[base + 3] = 1.0f
+            }
+        }
+        return LinearRawBuffer.fromSamples(
+            width = 4,
+            height = 2,
+            autoBrightGain = 1.0f,
+            effectiveIso = 100f,
+            rgbaSamples = samples
+        )
     }
 }

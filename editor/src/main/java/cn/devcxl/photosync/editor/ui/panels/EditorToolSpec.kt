@@ -22,7 +22,10 @@ internal enum class EditorControlStyle {
     INSTANT,
 
     /** The preview canvas owns the gesture; no dial is shown. */
-    CANVAS
+    CANVAS,
+
+    /** The canvas owns the gesture and the tool needs its own brush control block. */
+    LIQUIFY
 }
 
 /**
@@ -56,10 +59,11 @@ internal data class EditorToolSpec(
 )
 
 /**
- * Registry of the tools delivered by the geometry / dispersion slice.
+ * Registry of the tools delivered so far: geometry (including liquify), exposure and lateral
+ * chromatic dispersion.
  *
- * Groups that are not part of this slice report an empty list, which the panel controller turns
- * into the "coming soon" hint instead of silently doing nothing.
+ * Groups that are not part of a delivered slice report an empty list, which the panel controller
+ * turns into the "coming soon" hint instead of silently doing nothing.
  */
 internal object EditorToolCatalog {
 
@@ -185,6 +189,16 @@ internal object EditorToolCatalog {
                     geometry = it.geometry.copy(perspective = GeometryOps.DEFAULT_PERSPECTIVE_QUAD)
                 )
             }
+        ),
+        EditorToolSpec(
+            tool = EditorTool.LIQUIFY,
+            group = EditorGroup.GEOMETRY,
+            labelRes = R.string.editor_tool_liquify,
+            modifiedLabelRes = R.string.editor_tool_liquify_modified,
+            parameterKey = EditParameterKey.GEOMETRY_LIQUIFY,
+            controlStyle = EditorControlStyle.LIQUIFY,
+            isModified = { it.geometry.liquify != null },
+            reset = { it.copy(geometry = it.geometry.copy(liquify = null)) }
         )
     )
 

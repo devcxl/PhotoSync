@@ -4,21 +4,30 @@ import timber.log.Timber
 
 import cn.devcxl.photosync.editor.contract.EditorHostRegistry
 import cn.devcxl.photosync.editor.domain.EditGraph
+import cn.devcxl.photosync.editor.domain.LiquifySession
 import cn.devcxl.photosync.editor.render.EditorPreviewSession
 
 /**
- * Persists a finished edit: renders the screen-sized preview cache, then stores the [EditGraph]
- * through the host `EditStore`, which drops the record when the graph is an identity edit.
+ * Persists a finished edit: writes the liquify displacement grid, renders the screen-sized preview
+ * cache, then stores the [EditGraph] through the host `EditStore`, which drops the record when the
+ * graph is an identity edit.
  *
  * Blocking; call from an IO dispatcher.
  */
 internal class EditorSaveCoordinator(
     private val photoId: Long,
-    private val previewSession: EditorPreviewSession
+    private val previewSession: EditorPreviewSession,
+    private val liquifySession: LiquifySession
 ) {
 
     suspend fun persist(graph: EditGraph) {
-        val previewPath = if (graph.isIdentity()) null else previewSession.writePreviewCache(graph)
+        val liquifyRef = liquifySession.persist()
+        val finalGraph = graph.copy(geometry = graph.geometry.copy(liquify = liquifyRef))
+        val previewPath = if (finalGraph.isIdentity()) {
+            null
+        } else {
+            previewSession.writePreviewCache(finalGraph, liquifySession.mesh)
+        }
         val store = EditorHostRegistry.editStore
         if (store == null) {
             Timber.e("EditorHostRegistry.editStore is null; edit cannot be persisted")
@@ -26,7 +35,7 @@ internal class EditorSaveCoordinator(
         }
         store.saveEditForPhoto(
             photoId = photoId,
-            graph = graph,
+            graph = finalGraph,
             previewCachePath = previewPath
         )
     }

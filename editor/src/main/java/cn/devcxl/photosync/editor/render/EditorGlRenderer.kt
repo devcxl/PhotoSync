@@ -10,12 +10,12 @@ import timber.log.Timber
 import cn.devcxl.photosync.editor.domain.BaseLook
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.GeometryMath
+import cn.devcxl.photosync.editor.domain.LiquifyMesh
 import cn.devcxl.photosync.editor.domain.ToneShaderParams
-import cn.devcxl.photosync.wrapper.LinearRawBuffer
 
 /**
  * Immutable snapshot of all per-frame render uniforms so the GL thread never observes a torn
- * combination of homography, output aspect ratio, CA coefficients and tone parameters.
+ * combination of homography, output aspect ratio, CA coefficients, liquify warp and tone parameters.
  */
 internal data class RenderFrameState(
     val toneParams: ToneShaderParams = ToneShaderParams(),
@@ -25,7 +25,8 @@ internal data class RenderFrameState(
     val geometryInverseMatrix: FloatArray = IDENTITY_MATRIX,
     val lateralCaRedK: Float = 0.0f,
     val lateralCaBlueK: Float = 0.0f,
-    val outputAspectRatio: Float = 1.0f
+    val outputAspectRatio: Float = 1.0f,
+    val liquifyWarp: Boolean = false
 ) {
     companion object {
         val IDENTITY_MATRIX = floatArrayOf(
@@ -50,8 +51,8 @@ internal data class CanvasViewportTransform(
  *
  * Runs the physical two-pass preview pipeline:
  * 1. **Pass A** ([GeometryCaGlProgram]) renders the upright source (`GL_RGBA16F` for RAW,
- *    `GL_RGBA8` for JPEG) through `H^-1` into an offscreen target sized to the cropped aspect
- *    ratio, applying aspect-corrected circular pre-crop lateral CA resampling.
+ *    `GL_RGBA8` for JPEG) through `H^-1` and the liquify `uWarpTex` into an offscreen target sized
+ *    to the cropped aspect ratio, applying aspect-corrected circular pre-crop lateral CA resampling.
  * 2. **Pass B** ([ExposureGlProgram]) applies RAW `BaseLook` compensation, the D65-anchored
  *    Bradford white balance, linear exposure / brightness / highlight trims, the soft-shoulder
  *    roll-off, display-domain blacks / contrast / glow, and canvas pan/zoom.
@@ -61,9 +62,9 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
     private val exposureProgram = ExposureGlProgram()
     private val geometryProgram = GeometryCaGlProgram()
     private val geometryTarget = PassAFrameBuffer()
+    private val textures = EditorSourceTextures()
+    private val warpTexture = LiquifyWarpTexture()
 
-    private var proxyTextureId: Int = 0
-    private var fullTextureId: Int = 0
     private var viewportWidth: Int = 1
     private var viewportHeight: Int = 1
     private var geometryFallbackLogged: Boolean = false
@@ -84,12 +85,6 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
     private var stagedSource: EditorSource? = null
 
     @Volatile
-    private var needsFullUpload: Boolean = false
-
-    @Volatile
-    private var needsProxyUpload: Boolean = false
-
-    @Volatile
     var preferEs3: Boolean = true
 
     @Volatile
@@ -107,11 +102,9 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
         geometryTarget.release()
         geometryTarget.resetDisableFlag()
         geometryFallbackLogged = false
-        proxyTextureId = 0
-        fullTextureId = 0
+        warpTexture.invalidate()
+        textures.invalidateContext()
         val source = stagedSource
-        needsFullUpload = source != null
-        needsProxyUpload = source != null
         applySourceMetadata(source)
         if (preferEs3) {
             PassAFrameBuffer.cacheCapabilities()
@@ -126,16 +119,15 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
     }
 
     override fun onDrawFrame(gl: GL10?) {
-        uploadPendingTextures()
+        textures.uploadPending()
+        if (warpTexture.uploadIfNeeded()) {
+            frameState = frameState.copy(liquifyWarp = false)
+        }
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
 
         val state = frameState
         val viewport = canvasTransform
-        val activeTexture = if (state.useFastProxy && proxyTextureId != 0) {
-            proxyTextureId
-        } else {
-            fullTextureId
-        }
+        val activeTexture = textures.activeTexture(state.useFastProxy)
         if (activeTexture == 0) return
 
         if (compareOriginal) {
@@ -165,9 +157,8 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
      */
     fun setSource(source: EditorSource) {
         stagedSource = source
+        textures.stage(source)
         applySourceMetadata(source)
-        needsFullUpload = true
-        needsProxyUpload = true
     }
 
     /**
@@ -175,8 +166,15 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
      */
     fun releaseSource() {
         stagedSource = null
-        needsFullUpload = false
-        needsProxyUpload = false
+        textures.clear()
+    }
+
+    /**
+     * Stages the liquify displacement grid for the next frame.
+     */
+    fun setLiquifyMesh(mesh: LiquifyMesh?) {
+        warpTexture.stage(mesh)
+        frameState = frameState.copy(liquifyWarp = warpTexture.isWarpActive)
     }
 
     /**
@@ -191,7 +189,8 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
         val aspect = sourceAspect()
         val geometry = graph.geometry
         val aberration = graph.effects.ca
-        val geometryActive = !geometry.isIdentity() || !aberration.isIdentity()
+        val liquifyWarp = warpTexture.isWarpActive
+        val geometryActive = !geometry.isIdentity() || !aberration.isIdentity() || liquifyWarp
         val outputAspect = if (geometryActive) {
             GeometryMath.outputAspect(geometry, aspect)
         } else {
@@ -210,7 +209,8 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
             geometryInverseMatrix = inverseMatrix,
             lateralCaRedK = GeometryMath.lateralCaKFromSlider(aberration.redCyan),
             lateralCaBlueK = GeometryMath.lateralCaKFromSlider(aberration.blueYellow),
-            outputAspectRatio = outputAspect
+            outputAspectRatio = outputAspect,
+            liquifyWarp = liquifyWarp
         )
     }
 
@@ -227,7 +227,8 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
         state: RenderFrameState,
         viewport: CanvasViewportTransform
     ): Boolean {
-        if (!state.geometryActive || !geometryProgram.isReady) return false
+        if (!state.geometryActive && !state.liquifyWarp) return false
+        if (!geometryProgram.isReady) return false
         val srcAspect = sourceAspect()
         val aspect = state.outputAspectRatio.takeIf { it.isFinite() && it > 0.0f } ?: srcAspect
         val (scaleX, scaleY) = computeLetterboxScale(aspect, viewport.scale)
@@ -247,12 +248,17 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
         geometryTarget.bind()
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
         geometryProgram.draw(
-            textureId = sourceTexture,
-            columnMajorInverseMatrix = state.geometryInverseMatrix,
-            caRedK = state.lateralCaRedK,
-            caBlueK = state.lateralCaBlueK,
-            srcAspect = srcAspect,
-            encodeSrgbWithDither = encodeSrgbInPassA
+            GeometryDrawParams(
+                sourceTextureId = sourceTexture,
+                columnMajorInverseMatrix = state.geometryInverseMatrix,
+                caRedK = state.lateralCaRedK,
+                caBlueK = state.lateralCaBlueK,
+                srcAspect = srcAspect,
+                encodeSrgbWithDither = encodeSrgbInPassA,
+                warpTextureId = if (state.liquifyWarp) warpTexture.textureId else 0,
+                warpDecodeScale = warpTexture.decodeScale,
+                warpDecodeOffset = warpTexture.decodeOffset
+            )
         )
         geometryTarget.unbind()
         GLES20.glViewport(0, 0, viewportWidth, viewportHeight)
@@ -296,38 +302,6 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
         if (geometryFallbackLogged) return
         geometryFallbackLogged = true
         Timber.w("Pass A target unavailable; preview falls back to the un-warped source")
-    }
-
-    private fun uploadPendingTextures() {
-        val source = stagedSource ?: return
-        if (needsFullUpload) {
-            needsFullUpload = false
-            fullTextureId = upload(source, fullFrame = true)
-        }
-        if (needsProxyUpload) {
-            needsProxyUpload = false
-            proxyTextureId = upload(source, fullFrame = false)
-        }
-    }
-
-    private fun upload(source: EditorSource, fullFrame: Boolean): Int {
-        val existing = if (fullFrame) fullTextureId else proxyTextureId
-        return when (source) {
-            is EditorSource.BitmapSource -> {
-                val bitmap = if (fullFrame) source.full else source.proxy
-                EditorTextureUploader.uploadBitmap(bitmap, existing)
-            }
-            is EditorSource.LinearRawSource -> {
-                val buffer = if (fullFrame) source.full else source.proxy
-                uploadLinear(buffer, existing)
-            }
-        }
-    }
-
-    private fun uploadLinear(buffer: LinearRawBuffer, existing: Int): Int {
-        val halfFloatTexture = EditorTextureUploader.uploadLinearHalfFloat(buffer, existing)
-        if (halfFloatTexture != 0) return halfFloatTexture
-        return EditorTextureUploader.uploadLinearAsBytes(buffer, existingTextureId = 0)
     }
 
     private fun computeLetterboxScale(imageAspect: Float, rawZoom: Float): Pair<Float, Float> {

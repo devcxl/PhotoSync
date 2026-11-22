@@ -11,6 +11,7 @@ import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.ExposureShaderMath
 import cn.devcxl.photosync.editor.domain.GeometryMath
 import cn.devcxl.photosync.editor.domain.LinearRawPreviewRenderer
+import cn.devcxl.photosync.editor.domain.LiquifyMesh
 import cn.devcxl.photosync.editor.domain.ToneShaderMath
 import cn.devcxl.photosync.editor.domain.ToneShaderParams
 import cn.devcxl.photosync.wrapper.LinearRawBuffer
@@ -19,10 +20,9 @@ import cn.devcxl.photosync.wrapper.LinearRawBuffer
  * Renders the screen-sized JPEG preview cache under `cacheDir/edits/<photoId>/` for the main
  * gallery and filmstrip.
  *
- * Applies the full Pass A (crop, rotate, straighten, perspective, lateral CA) + Pass B
+ * Applies the full Pass A (crop, rotate, straighten, perspective, liquify, lateral CA) + Pass B
  * (`BaseLook`, D65-anchored white balance, linear tone, display tone) contract so the cached
- * thumbnail matches the GL canvas. The tone math is shared with the shader through
- * [ToneShaderMath]; the bitmap path only skips `BaseLook` because 8-bit sources already carry it.
+ * thumbnail matches the GL canvas.
  */
 internal object PreviewCacheWriter {
 
@@ -39,9 +39,10 @@ internal object PreviewCacheWriter {
         source: Bitmap,
         graph: EditGraph,
         cacheDir: File,
-        photoId: Long
+        photoId: Long,
+        liquifyMesh: LiquifyMesh? = null
     ): String? {
-        val rendered = renderBitmapFrame(source, graph) ?: return null
+        val rendered = renderBitmapFrame(source, graph, liquifyMesh) ?: return null
         return compressAndWrite(rendered, cacheDir, photoId)
     }
 
@@ -52,12 +53,15 @@ internal object PreviewCacheWriter {
         source: LinearRawBuffer,
         graph: EditGraph,
         cacheDir: File,
-        photoId: Long
+        photoId: Long,
+        liquifyMesh: LiquifyMesh? = null
     ): String? {
         val sourceAspect = source.width.toFloat() / source.height.toFloat()
         val outputAspect = GeometryMath.outputAspect(graph.geometry, sourceAspect)
         val (outW, outH) = previewSize(outputAspect)
-        val geometryActive = !graph.geometry.isIdentity() || !graph.effects.ca.isIdentity()
+        val geometryActive = !graph.geometry.isIdentity() ||
+            !graph.effects.ca.isIdentity() ||
+            liquifyMesh != null
         val linearFrame = if (geometryActive) {
             val ca = graph.effects.ca
             GeometryCpuResampler.resampleLinear(
@@ -66,7 +70,8 @@ internal object PreviewCacheWriter {
                 outputWidth = outW,
                 outputHeight = outH,
                 caRedK = GeometryMath.lateralCaKFromSlider(ca.redCyan),
-                caBlueK = GeometryMath.lateralCaKFromSlider(ca.blueYellow)
+                caBlueK = GeometryMath.lateralCaKFromSlider(ca.blueYellow),
+                liquifyMesh = liquifyMesh
             )
         } else {
             source.downscaledTo(PREVIEW_MAX_EDGE_PX)
@@ -81,7 +86,11 @@ internal object PreviewCacheWriter {
         return compressAndWrite(outBitmap, cacheDir, photoId)
     }
 
-    private fun renderBitmapFrame(source: Bitmap, graph: EditGraph): Bitmap? {
+    private fun renderBitmapFrame(
+        source: Bitmap,
+        graph: EditGraph,
+        liquifyMesh: LiquifyMesh?
+    ): Bitmap? {
         val sourceAspect = source.width.toFloat() / source.height.toFloat()
         val outputAspect = GeometryMath.outputAspect(graph.geometry, sourceAspect)
         val (width, height) = previewSize(outputAspect)
@@ -93,16 +102,13 @@ internal object PreviewCacheWriter {
             outputWidth = width,
             outputHeight = height,
             caRedK = GeometryMath.lateralCaKFromSlider(ca.redCyan),
-            caBlueK = GeometryMath.lateralCaKFromSlider(ca.blueYellow)
+            caBlueK = GeometryMath.lateralCaKFromSlider(ca.blueYellow),
+            liquifyMesh = liquifyMesh
         )
         applyToneToDisplayPixels(resampled, ToneShaderParams.from(graph))
         return resampled
     }
 
-    /**
-     * Runs the Pass B upper half over an already display-encoded bitmap, matching the shader path
-     * for 8-bit sources (decode sRGB, tone, re-encode).
-     */
     private fun applyToneToDisplayPixels(bitmap: Bitmap, params: ToneShaderParams) {
         if (params.isIdentity) return
         val width = bitmap.width

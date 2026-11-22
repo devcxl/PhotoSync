@@ -6,6 +6,7 @@ import kotlin.math.roundToInt
 import android.graphics.Bitmap
 
 import cn.devcxl.photosync.editor.domain.GeometryMath
+import cn.devcxl.photosync.editor.domain.LiquifyMesh
 import cn.devcxl.photosync.editor.domain.Mat3
 import cn.devcxl.photosync.editor.domain.Uv
 import cn.devcxl.photosync.wrapper.LinearRawBuffer
@@ -13,7 +14,7 @@ import cn.devcxl.photosync.wrapper.LinearRawBuffer
 /**
  * CPU reference implementation of Pass A, used when the editor writes its preview cache.
  *
- * Evaluates the exact same inverse homography and lateral-CA radial scaling as
+ * Evaluates the exact same inverse homography, liquify warp and lateral-CA radial scaling as
  * [GeometryCaGlProgram] on both 8-bit sRGB [Bitmap]s and 16-bit linear [LinearRawBuffer]s.
  */
 internal object GeometryCpuResampler {
@@ -23,6 +24,9 @@ internal object GeometryCpuResampler {
     /**
      * Renders the cropped, rotated, straightened and perspective-corrected frame of an 8-bit
      * [source] bitmap.
+     *
+     * @param liquifyMesh Displacement grid applied in pre-crop space before the CA lookups, or
+     *   `null` when the photo has no liquify edit.
      */
     fun resample(
         source: Bitmap,
@@ -30,7 +34,8 @@ internal object GeometryCpuResampler {
         outputWidth: Int,
         outputHeight: Int,
         caRedK: Float,
-        caBlueK: Float
+        caBlueK: Float,
+        liquifyMesh: LiquifyMesh? = null
     ): Bitmap {
         val width = outputWidth.coerceAtLeast(1)
         val height = outputHeight.coerceAtLeast(1)
@@ -54,7 +59,8 @@ internal object GeometryCpuResampler {
                     outputU = u,
                     outputV = v,
                     caRedK = caRedK,
-                    caBlueK = caBlueK
+                    caBlueK = caBlueK,
+                    liquifyMesh = liquifyMesh
                 )
             }
         }
@@ -62,8 +68,12 @@ internal object GeometryCpuResampler {
     }
 
     /**
-     * Renders the cropped, rotated, straightened, perspective-corrected and CA-corrected frame
-     * of a 16-bit linear [LinearRawBuffer], preserving scene-linear float values above `1.0`.
+     * Renders the cropped, rotated, straightened, liquify-warped, perspective-corrected and
+     * CA-corrected frame of a 16-bit linear [LinearRawBuffer], preserving scene-linear float values
+     * above `1.0`.
+     *
+     * @param liquifyMesh Displacement grid applied in pre-crop space before the CA lookups, or
+     *   `null` when the photo has no liquify edit.
      */
     fun resampleLinear(
         source: LinearRawBuffer,
@@ -71,7 +81,8 @@ internal object GeometryCpuResampler {
         outputWidth: Int,
         outputHeight: Int,
         caRedK: Float,
-        caBlueK: Float
+        caBlueK: Float,
+        liquifyMesh: LiquifyMesh? = null
     ): LinearRawBuffer {
         val width = outputWidth.coerceAtLeast(1)
         val height = outputHeight.coerceAtLeast(1)
@@ -86,7 +97,7 @@ internal object GeometryCpuResampler {
             val v = (row + 0.5f) / height
             for (column in 0 until width) {
                 val u = (column + 0.5f) / width
-                val preCrop = inverseMatrix.map(u, v)
+                val preCrop = applyLiquifyWarp(inverseMatrix.map(u, v), liquifyMesh)
                 val ca = GeometryMath.applyLateralCaSampleUv(preCrop, caRedK, caBlueK, srcAspect)
                 samples[outIndex++] = sampleLinearChannel(source, ca.red, 0, p00, p10, p01, p11)
                 samples[outIndex++] = sampleLinearChannel(source, ca.green, 1, p00, p10, p01, p11)
@@ -140,14 +151,25 @@ internal object GeometryCpuResampler {
         outputU: Float,
         outputV: Float,
         caRedK: Float,
-        caBlueK: Float
+        caBlueK: Float,
+        liquifyMesh: LiquifyMesh?
     ): Int {
-        val preCrop = inverseMatrix.map(outputU, outputV)
+        val preCrop = applyLiquifyWarp(inverseMatrix.map(outputU, outputV), liquifyMesh)
         val ca = GeometryMath.applyLateralCaSampleUv(preCrop, caRedK, caBlueK, sourceAspect)
         val red = sampleBitmapChannel(sourcePixels, sourceWidth, sourceHeight, ca.red, RED_SHIFT)
         val green = sampleBitmapChannel(sourcePixels, sourceWidth, sourceHeight, ca.green, GREEN_SHIFT)
         val blue = sampleBitmapChannel(sourcePixels, sourceWidth, sourceHeight, ca.blue, BLUE_SHIFT)
         return OPAQUE_ALPHA or (red shl 16) or (green shl 8) or blue
+    }
+
+    /**
+     * Adds the liquify displacement of the pre-crop coordinate, matching the `uWarpTex` lookup the
+     * Pass A shader performs before its lateral-CA sampling.
+     */
+    private fun applyLiquifyWarp(preCropUv: Uv, liquifyMesh: LiquifyMesh?): Uv {
+        if (liquifyMesh == null) return preCropUv
+        val warp = liquifyMesh.displacementAt(preCropUv.u, preCropUv.v)
+        return Uv(preCropUv.u + warp.u, preCropUv.v + warp.v)
     }
 
     private fun sampleBitmapChannel(

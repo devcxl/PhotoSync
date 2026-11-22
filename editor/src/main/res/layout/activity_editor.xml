@@ -29,6 +29,17 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
+    <!-- Liquify brush overlay: dashed brush ring and displacement strokes -->
+    <cn.devcxl.photosync.editor.ui.widgets.LiquifyBrushOverlayView
+        android:id="@+id/liquifyBrushOverlayView"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone"
+        app:layout_constraintBottom_toTopOf="@id/bottomPanel"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
     <!-- Compare-original status pill -->
     <TextView
         android:id="@+id/compareStatusPill"
@@ -213,6 +224,88 @@
                 android:layout_height="wrap_content"
                 android:orientation="horizontal" />
         </HorizontalScrollView>
+
+        <!-- Tier 1b: liquify brush controls (mode, size, strength, reset) -->
+        <LinearLayout
+            android:id="@+id/liquifyPanel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:id="@+id/liquifyModeChipContainer"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal" />
+
+                <Space
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:layout_weight="1" />
+
+                <Button
+                    android:id="@+id/liquifyResetButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="@dimen/editor_liquify_reset_button_height"
+                    android:backgroundTint="@color/editor_surface_elevated"
+                    android:minWidth="0dp"
+                    android:text="@string/editor_liquify_reset"
+                    android:textAllCaps="false"
+                    android:textColor="@color/editor_text_secondary"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/editor_liquify_size_label"
+                    android:textColor="@color/editor_text_secondary"
+                    android:textSize="11sp" />
+
+                <cn.devcxl.photosync.editor.ui.widgets.DialSeekBar
+                    android:id="@+id/liquifySizeSeekBar"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_marginStart="6dp"
+                    android:layout_weight="1" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/editor_liquify_strength_label"
+                    android:textColor="@color/editor_text_secondary"
+                    android:textSize="11sp" />
+
+                <cn.devcxl.photosync.editor.ui.widgets.DialSeekBar
+                    android:id="@+id/liquifyStrengthSeekBar"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_marginStart="6dp"
+                    android:layout_weight="1" />
+            </LinearLayout>
+        </LinearLayout>
 
         <!-- Tier 3: 6 fixed category tabs -->
         <LinearLayout

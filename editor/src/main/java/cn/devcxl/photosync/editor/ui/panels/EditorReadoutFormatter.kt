@@ -45,6 +45,13 @@ internal class EditorReadoutFormatter(private val context: Context) {
             )
             EditorTool.FLIP_HORIZONTAL -> onOff(graph.geometry.flipH)
             EditorTool.FLIP_VERTICAL -> onOff(graph.geometry.flipV)
+            EditorTool.LIQUIFY -> context.getString(
+                if (graph.geometry.liquify != null) {
+                    R.string.editor_value_liquify_modified
+                } else {
+                    R.string.editor_value_liquify_none
+                }
+            )
             else -> ""
         }
     }
