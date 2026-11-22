@@ -15,6 +15,8 @@ import cn.devcxl.photosync.editor.domain.GeometryMath
 import cn.devcxl.photosync.editor.domain.LinearRawPreviewRenderer
 import cn.devcxl.photosync.editor.domain.LiquifyMesh
 import cn.devcxl.photosync.editor.domain.PassBColorMath
+import cn.devcxl.photosync.editor.domain.PreviewDetailPass
+import cn.devcxl.photosync.editor.domain.SpatialDetailParams
 import cn.devcxl.photosync.editor.domain.Srgb8Packer
 import cn.devcxl.photosync.editor.domain.ToneShaderMath
 import cn.devcxl.photosync.editor.domain.ToneShaderParams
@@ -25,8 +27,8 @@ import cn.devcxl.photosync.wrapper.LinearRawBuffer
  * gallery and filmstrip.
  *
  * Applies the full Pass A (crop, rotate, straighten, perspective, liquify, lateral CA) + Pass B
- * (`BaseLook`, D65-anchored white balance, linear tone, display tone) contract so the cached
- * thumbnail matches the GL canvas.
+ * (`BaseLook`, D65-anchored white balance, linear tone, display tone) + Pass C (noise reduction,
+ * dehaze, clarity/texture, sharpening) contract so the cached thumbnail matches the GL canvas.
  */
 internal object PreviewCacheWriter {
 
@@ -77,8 +79,15 @@ internal object PreviewCacheWriter {
             source.downscaledTo(PREVIEW_MAX_EDGE_PX)
         }
         val pixels = LinearRawPreviewRenderer.renderArgb(linearFrame, graph)
-        val outBitmap = Bitmap.createBitmap(
+        val detailed = PreviewDetailPass.apply(
             pixels,
+            linearFrame.width,
+            linearFrame.height,
+            graph,
+            fullResolutionShortEdge = minOf(source.width, source.height)
+        )
+        val outBitmap = Bitmap.createBitmap(
+            detailed,
             linearFrame.width,
             linearFrame.height,
             Bitmap.Config.ARGB_8888
@@ -106,7 +115,28 @@ internal object PreviewCacheWriter {
             liquifyMesh = liquifyMesh
         )
         applyPassBToDisplayPixels(resampled, graph)
+        applyPassC(resampled, graph, minOf(source.width, source.height))
         return resampled
+    }
+
+    /**
+     * Runs the Pass C spatial-detail chain so the cached preview carries the same clarity, dehaze,
+     * noise reduction and sharpening as the GL canvas.
+     */
+    private fun applyPassC(bitmap: Bitmap, graph: EditGraph, fullResolutionShortEdge: Int) {
+        if (SpatialDetailParams.from(graph).isZeroDrawCallShortCircuit) return
+        val width = bitmap.width
+        val height = bitmap.height
+        val pixels = IntArray(width * height)
+        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+        val detailed = PreviewDetailPass.apply(
+            pixels,
+            width,
+            height,
+            graph,
+            fullResolutionShortEdge = fullResolutionShortEdge
+        )
+        bitmap.setPixels(detailed, 0, width, 0, 0, width, height)
     }
 
     private fun applyPassBToDisplayPixels(bitmap: Bitmap, graph: EditGraph) {

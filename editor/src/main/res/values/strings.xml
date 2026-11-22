@@ -105,6 +105,25 @@
     <string name="editor_value_split_none">—</string>
 
     <!-- Detail sub-tools -->
+    <string name="editor_tool_clarity">清晰度</string>
+    <string name="editor_tool_clarity_modified">清晰度 •</string>
+    <string name="editor_tool_texture">纹理</string>
+    <string name="editor_tool_texture_modified">纹理 •</string>
+    <string name="editor_tool_dehaze">去雾</string>
+    <string name="editor_tool_dehaze_modified">去雾 •</string>
+    <string name="editor_tool_sharpen">锐化</string>
+    <string name="editor_tool_sharpen_modified">锐化 •</string>
+    <string name="editor_tool_noise_reduction">降噪</string>
+    <string name="editor_tool_noise_reduction_modified">降噪 •</string>
+    <string name="editor_sharpen_amount">数量</string>
+    <string name="editor_sharpen_radius">半径</string>
+    <string name="editor_sharpen_threshold">阈值</string>
+    <string name="editor_sharpen_masking">蒙版</string>
+    <string name="editor_nr_luma">明亮度</string>
+    <string name="editor_nr_chroma">颜色</string>
+    <string name="editor_nr_detail">细节</string>
+    <string name="editor_value_sharpen_modified">已锐化</string>
+    <string name="editor_value_nr_modified">已降噪</string>
     <string name="editor_tool_ca_red_cyan">色散 R/C</string>
     <string name="editor_tool_ca_red_cyan_modified">色散 R/C •</string>
     <string name="editor_tool_ca_blue_yellow">色散 B/Y</string>
@@ -129,6 +148,8 @@
     <string name="editor_value_signed_fmt">%1$+.0f</string>
     <string name="editor_value_unsigned_fmt">%1$.0f</string>
     <string name="editor_value_aspect_fmt">%1$.2f : 1</string>
+    <string name="editor_value_radius_fmt">%1$.1f px</string>
+    <string name="editor_value_scalar_none">—</string>
     <string name="editor_value_on">开</string>
     <string name="editor_value_off">关</string>
 

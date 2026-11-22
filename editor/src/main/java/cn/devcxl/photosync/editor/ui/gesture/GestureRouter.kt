@@ -40,6 +40,11 @@ enum class EditorTool {
     HSL,
     SPLIT_TONING,
     FADE,
+    CLARITY,
+    TEXTURE,
+    DEHAZE,
+    SHARPEN,
+    NOISE_REDUCTION,
     DISPERSION_RED_CYAN,
     DISPERSION_BLUE_YELLOW,
     DEFRINGE

@@ -1,14 +1,14 @@
 package cn.devcxl.photosync.editor.render
 
 import kotlin.math.abs
-import kotlin.math.roundToInt
 
 import android.opengl.GLES20
 import android.opengl.GLES30
 import timber.log.Timber
 
 /**
- * Offscreen colour target for Pass A (geometry + lateral CA resampling).
+ * Offscreen colour target shared by `Pass A` (geometry + lateral CA resampling), the Pass C
+ * `Pass B` feed and the Pass C ping-pong stages.
  *
  * Picks the highest available tier from the 4-tier GPU fallback matrix:
  * - Tier 1: `GL_RGBA16F` when `EXT_color_buffer_half_float` is complete.
@@ -166,15 +166,9 @@ internal class PassAFrameBuffer {
             scaleX: Float,
             scaleY: Float,
             maxEdgePx: Int
-        ): Pair<Int, Int> {
-            val rawWidth = (viewportWidth * scaleX).roundToInt().coerceAtLeast(1)
-            val rawHeight = (viewportHeight * scaleY).roundToInt().coerceAtLeast(1)
-            val longEdge = maxOf(rawWidth, rawHeight)
-            if (longEdge <= maxEdgePx) return rawWidth to rawHeight
-            val shrink = maxEdgePx.toFloat() / longEdge.toFloat()
-            return ((rawWidth * shrink).roundToInt().coerceAtLeast(1)) to
-                ((rawHeight * shrink).roundToInt().coerceAtLeast(1))
-        }
+        ): Pair<Int, Int> = CanvasLetterbox.targetSize(
+            viewportWidth, viewportHeight, scaleX, scaleY, maxEdgePx
+        )
 
         private var cachedHalfFloatSupport: Boolean? = null
 

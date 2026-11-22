@@ -194,6 +194,10 @@
             android:id="@+id/colorPanels"
             layout="@layout/editor_color_panels" />
 
+        <include
+            android:id="@+id/detailPanels"
+            layout="@layout/editor_detail_panels" />
+
         <HorizontalScrollView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

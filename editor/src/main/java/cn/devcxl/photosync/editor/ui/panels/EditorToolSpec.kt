@@ -33,7 +33,13 @@ internal enum class EditorControlStyle {
     HSL,
 
     /** Cartesian OKLab split-toning panel. */
-    SPLIT_TONING
+    SPLIT_TONING,
+
+    /** Sharpening panel: amount, radius, threshold and masking rows. */
+    SHARPEN,
+
+    /** Noise reduction panel: luma, chroma and detail rows. */
+    NOISE_REDUCTION
 }
 
 /**
@@ -67,8 +73,8 @@ internal data class EditorToolSpec(
 )
 
 /**
- * Registry of the tools delivered so far: geometry (including liquify), tone, white balance and
- * lateral chromatic aberration.
+ * Registry of the tools delivered so far: geometry (including liquify), tone, white balance, display
+ * color, the Pass C spatial-detail group and lateral chromatic aberration.
  */
 internal object EditorToolCatalog {
 
@@ -80,6 +86,7 @@ internal object EditorToolCatalog {
                 flipAndPerspectiveSpecs() +
                 EditorToneDetailSpecs.toneSpecs() +
                 EditorColorSpecs.colourSpecs() +
+                EditorSpatialDetailSpecs.spatialDetailSpecs() +
                 EditorToneDetailSpecs.detailSpecs()
             )
             .associateBy { it.tool }
