@@ -242,4 +242,11 @@
 
     <!-- Tethered ingest pill -->
     <string name="editor_new_photos_pill">+%1$d 新照片</string>
+
+    <!-- Built-in preset display names -->
+    <string name="editor_preset_builtin_clean_portrait">干净人像</string>
+    <string name="editor_preset_builtin_film_chrome">富士胶片</string>
+    <string name="editor_preset_builtin_warm_sunset">暖阳日落</string>
+    <string name="editor_preset_builtin_cool_nordic">冷调北欧</string>
+    <string name="editor_preset_builtin_mono_silver">银盐黑白</string>
 </resources>

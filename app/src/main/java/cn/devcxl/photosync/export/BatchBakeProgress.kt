@@ -10,7 +10,7 @@ enum class BatchBakeState {
     /** Encoding runs, at least one photo pending. */
     RUNNING,
 
-    /** Every selected photo was processed. */
+    /** Every selected photo was processed (possibly with individual failures). */
     FINISHED,
 
     /** The queue stopped before finishing. */
@@ -26,17 +26,18 @@ enum class BatchBakeState {
 data class BatchBakeProgress(
     val done: Int,
     val total: Int,
+    val failed: Int = 0,
     val running: Boolean = true,
     val currentName: String? = null
 ) {
 
     /** Completion ratio in `0f..1f`, safe for a zero-length queue. */
     val ratio: Float
-        get() = if (total <= 0) 0.0f else (done.toFloat() / total.toFloat()).coerceIn(0.0f, 1.0f)
+        get() = if (total <= 0) 0.0f else ((done + failed).toFloat() / total.toFloat()).coerceIn(0.0f, 1.0f)
 
     /** True once every selected photo was processed. */
     val isFinished: Boolean
-        get() = !running && total > 0 && done >= total
+        get() = !running && total > 0 && (done + failed) >= total
 
     /** Phase the status card renders. */
     val state: BatchBakeState
@@ -51,18 +52,19 @@ data class BatchBakeProgress(
 
         /**
          * Builds the progress for a WorkManager `Progress`/`Output` payload.
-         *
-         * @param done Processed photo count.
-         * @param total Selected photo count.
-         * @param running True while the worker is still queued or running.
-         * @param currentName Name of the photo being encoded, when known.
          */
-        fun from(done: Int, total: Int, running: Boolean, currentName: String? = null) =
-            BatchBakeProgress(
-                done = done.coerceAtLeast(0),
-                total = total.coerceAtLeast(0),
-                running = running,
-                currentName = currentName
-            )
+        fun from(
+            done: Int,
+            total: Int,
+            failed: Int = 0,
+            running: Boolean,
+            currentName: String? = null
+        ) = BatchBakeProgress(
+            done = done.coerceAtLeast(0),
+            total = total.coerceAtLeast(0),
+            failed = failed.coerceAtLeast(0),
+            running = running,
+            currentName = currentName
+        )
     }
 }

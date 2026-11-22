@@ -588,7 +588,7 @@
             android:layout_marginTop="6dp"
             android:max="100"
             android:progress="0"
-            android:progressBackgroundTint="#26FFFFFF"
+            android:progressBackgroundTint="@color/darkroom_glass_border"
             android:progressTint="@color/accent_blue"/>
     </LinearLayout>
 

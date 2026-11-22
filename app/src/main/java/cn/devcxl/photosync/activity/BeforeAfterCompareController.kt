@@ -5,7 +5,9 @@ import android.util.LruCache
 import android.view.View
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 
 import cn.devcxl.photosync.adapter.PhotoPagerAdapter
@@ -16,9 +18,6 @@ import cn.devcxl.photosync.databinding.ActivityMainBinding
  *
  * While the user holds a page down, the pager is told to render the *original* pixels and the
  * `未编辑原图 (Before)` pill appears; releasing clears the override so the graded preview returns.
- *
- * The swap is instantaneous because the original is decoded once and cached: decoding on hold would
- * show the original a frame late, which is worse than not showing it at all.
  */
 internal class BeforeAfterCompareController(
     private val binding: ActivityMainBinding,
@@ -31,15 +30,8 @@ internal class BeforeAfterCompareController(
     /** The path currently shown as the unedited original, or `null` when not comparing. */
     private var comparingPath: String? = null
 
-    /** True while a page is being shown as the unedited original. */
-    val isComparing: Boolean
-        get() = comparingPath != null
-
     /**
      * Starts or ends the comparison for [path].
-     *
-     * A hold on a page without an original is ignored: the detector was never armed for it, and this
-     * guard keeps a stray callback harmless.
      */
     fun setComparing(path: String, comparing: Boolean) {
         if (comparing) {
@@ -49,11 +41,6 @@ internal class BeforeAfterCompareController(
         }
     }
 
-    /**
-     * Pushes the cached original of [path] into the pager as an override.
-     *
-     * Runs the decode off the UI thread the first time only; every later hold is a cache hit.
-     */
     private fun beginCompare(path: String) {
         if (comparingPath == path) return
         val cached = cache.get(path)
@@ -64,7 +51,7 @@ internal class BeforeAfterCompareController(
         comparingPath = path
         binding.compareStatusPill.visibility = View.VISIBLE
         scope.launch {
-            val original = decodeOriginal(path)
+            val original = withContext(Dispatchers.IO) { decodeOriginal(path) }
             if (original == null) {
                 Timber.w("Compare requested for a photo whose original could not be decoded")
                 onDecodeFailed(path)
@@ -81,7 +68,6 @@ internal class BeforeAfterCompareController(
 
     private fun onDecoded(path: String, original: Bitmap) {
         if (comparingPath != path) {
-            // The user released before the decode finished; do not leave the override armed.
             adapter.clearImageOverride()
         } else {
             showOriginal(path, original)
@@ -104,9 +90,6 @@ internal class BeforeAfterCompareController(
 
 /**
  * Bounded cache of decoded *unedited* previews used only while a page is compared.
- *
- * It is deliberately separate from the pager's caches: the pager holds the graded preview (what the
- * user normally sees), so reusing those entries would make `Before` identical to `After`.
  */
 internal class OriginalPreviewCache(divisor: Int = 12) {
 
@@ -131,9 +114,6 @@ internal class OriginalPreviewCache(divisor: Int = 12) {
     fun clear() {
         cache.evictAll()
     }
-
-    /** True when [path] still has a decoded original, i.e. comparing needs no decode. */
-    fun contains(path: String): Boolean = cache.get(path) != null
 
     private fun maxSizeKb(divisor: Int): Int {
         val maxMemKb = (Runtime.getRuntime().maxMemory() / 1024).toInt()

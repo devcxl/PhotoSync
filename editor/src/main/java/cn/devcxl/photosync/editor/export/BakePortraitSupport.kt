@@ -66,7 +66,11 @@ internal object BakePortraitSupport {
                 analysis.bodyWarp(graph.portrait.body)
             }
             val composedWarp = PortraitWarpComposer.compose(faceWarp, bodyWarp, liquifyMesh)
-            val skinMask = if (graph.portrait.skin.smooth != 0 || graph.detail.sharpen.amount != 0) {
+            val skinMask = if (
+                graph.portrait.skin.smooth != 0 ||
+                graph.portrait.skin.evenTone != 0 ||
+                graph.detail.sharpen.amount != 0
+            ) {
                 analysis.skinMask
             } else {
                 null

@@ -4,10 +4,10 @@
 
 **Blocked by:** 09: NDK libjpeg-turbo 三档源图驻留与列带流式分块烘焙导出切片（Bake Pipeline）
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] 支持将当前 `EditGraph` 保存到 `user_presets` 表、重命名与删除，并提供主界面底部「快捷预设与联机操作栏」与编辑器「预设」分组面板。
-- [ ] 打通 `LiveTetherPreset`：开启后持久化于 `SharedPreferences`，相机 `Sync` 新照片入库时自动为其创建绑定该预设的 `PhotoEditEntity` 并生成预览缓存，`AutoFollow` 切换过去时直接显示套好预设的画面。
-- [ ] 打通编辑态联机免打扰保护：当 `EditorActivity` 处于前台时，新照片后台静默入库并套用 `LiveTetherPreset`，不触发主界面焦点抢夺，仅在编辑器顶部更新 `+N 新照片` 胶囊。
-- [ ] 实现 `CopyMask` 复制/粘贴参数：短按「复制参数」默认排除 `{geometry.*, portrait.reshape, portrait.body}`，长按可勾选包含项；支持粘贴至当前照片或多选照片。
-- [ ] 实现主界面大图长按（`> 250ms`）实时对比未编辑原图（Before/After），以及基于 `WorkManager`（RAW 并发固定为 1）的后台批量 `Bake` 导出队列与右上角进度卡片。
+- [x] 支持将当前 `EditGraph` 保存到 `user_presets` 表、重命名与删除，并提供主界面底部「快捷预设与联机操作栏」与编辑器「预设」分组面板。
+- [x] 打通 `LiveTetherPreset`：开启后持久化于 `SharedPreferences`，相机 `Sync` 新照片入库时自动为其创建绑定该预设的 `PhotoEditEntity` 并生成预览缓存，`AutoFollow` 切换过去时直接显示套好预设的画面。
+- [x] 打通编辑态联机免打扰保护：当 `EditorActivity` 处于前台时，新照片后台静默入库并套用 `LiveTetherPreset`，不触发主界面焦点抢夺，仅在编辑器顶部更新 `+N 新照片` 胶囊。
+- [x] 实现 `CopyMask` 复制/粘贴参数：短按「复制参数」默认排除 `{geometry.*, portrait.reshape, portrait.body}`，长按可勾选包含项；支持粘贴至当前照片或多选照片。
+- [x] 实现主界面大图长按（`> 250ms`）实时对比未编辑原图（Before/After），以及基于 `WorkManager`（RAW 并发固定为 1）的后台批量 `Bake` 导出队列与右上角进度卡片。

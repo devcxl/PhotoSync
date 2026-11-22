@@ -14,30 +14,40 @@ import cn.devcxl.photosync.editor.contract.EditorCachePaths
  * Room-backed [TetheredPhotoCommitter]: one transaction inserts the photo, publishes the staged
  * `LiveTetherPreset` preview under `cacheDir/edits/<photoId>/` and inserts the edit row.
  *
- * The preview move happens *inside* the transaction because the destination directory is named after
- * the auto-generated photo id, which only exists once the insert returned. Doing it afterwards would
- * leave a window where `MainActivity` observes the photo without the preview.
+ * The staging directory lives under [cacheDir] on the same filesystem, so `renameTo` is an O(1)
+ * rename; if the Room transaction rolls back after the rename, the moved preview file is deleted in
+ * the catch block so no orphaned preview remains.
  */
 class RoomTetheredPhotoCommitter(
     private val database: AppDatabase,
     private val cacheDir: File
 ) : TetheredPhotoCommitter {
 
-    override suspend fun commit(photo: PhotoEntity, stagedPreview: File?, graphJson: String?): Long =
-        database.withTransaction {
-            val photoId = database.photoDao().insert(photo)
-            if (photoId <= 0L) {
-                photoId
-            } else {
-                if (graphJson != null) {
-                    publishEdit(photoId, stagedPreview, graphJson)
+    override suspend fun commit(photo: PhotoEntity, stagedPreview: File?, graphJson: String?): Long {
+        var publishedFile: File? = null
+        return try {
+            database.withTransaction {
+                val photoId = database.photoDao().insert(photo)
+                if (photoId <= 0L) {
+                    photoId
+                } else {
+                    if (graphJson != null && stagedPreview != null && stagedPreview.isFile) {
+                        publishedFile = publishPreview(photoId, stagedPreview)
+                        val target = publishedFile
+                        if (target != null) {
+                            insertEditRow(photoId, target.absolutePath, graphJson)
+                        }
+                    }
+                    photoId
                 }
-                photoId
             }
+        } catch (error: RuntimeException) {
+            publishedFile?.delete()
+            throw error
         }
+    }
 
-    private suspend fun publishEdit(photoId: Long, stagedPreview: File?, graphJson: String) {
-        val previewPath = publishPreview(photoId, stagedPreview)
+    private suspend fun insertEditRow(photoId: Long, previewPath: String, graphJson: String) {
         database.photoEditDao().upsertByPhotoId(
             PhotoEditEntity(
                 id = 0L,
@@ -50,13 +60,7 @@ class RoomTetheredPhotoCommitter(
         )
     }
 
-    /**
-     * Moves the staged JPEG into the edit cache directory of [photoId].
-     *
-     * @return The final absolute path, or `null` when no staged file exists or the move failed.
-     */
-    private fun publishPreview(photoId: Long, stagedPreview: File?): String? {
-        if (stagedPreview == null || !stagedPreview.isFile) return null
+    private fun publishPreview(photoId: Long, stagedPreview: File): File? {
         val editDir = File(cacheDir, EditorCachePaths.photoEditDirName(photoId))
         if (!editDir.exists() && !editDir.mkdirs()) {
             Timber.e("LiveTetherPreset preview directory could not be created")
@@ -64,12 +68,11 @@ class RoomTetheredPhotoCommitter(
             return null
         }
         val target = File(editDir, stagedPreview.name)
-        if (stagedPreview.renameTo(target)) return target.absolutePath
-        // A rename can fail across mount points; fall back to a copy so the preview is not lost.
+        if (stagedPreview.renameTo(target)) return target
         return try {
             stagedPreview.copyTo(target, overwrite = true)
             stagedPreview.delete()
-            target.absolutePath
+            target
         } catch (io: IOException) {
             Timber.e(io, "LiveTetherPreset preview could not be published")
             stagedPreview.delete()

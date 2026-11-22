@@ -90,9 +90,7 @@ internal class LiquifyMeshStore(private val filesDir: File) {
         file.parentFile?.takeIf { it.listFiles().isNullOrEmpty() }?.delete()
     }
 
-    /**
-     * Resolves [relativePath] inside [filesDir], refusing anything that escapes it.
-     */
+    /** Resolves [relativePath] inside [filesDir], refusing anything that escapes it. */
     private fun resolve(relativePath: String): File? {
         if (relativePath.isBlank()) return null
         return try {
@@ -103,5 +101,24 @@ internal class LiquifyMeshStore(private val filesDir: File) {
             Timber.e(io, "Liquify mesh path could not be resolved")
             null
         }
+    }
+}
+
+/**
+ * Copies a persisted liquify mesh into another photo's private edit directory when cross-photo
+ * paste opts into `includeLiquify`.
+ */
+object LiquifyMeshCopier {
+
+    /**
+     * Clones [graph]'s liquify payload to [targetPhotoId]'s directory if present, returning an
+     * updated [EditGraph] pointing at the cloned file (or clearing `liquify` if cloning failed).
+     */
+    fun cloneForTarget(filesDir: File, targetPhotoId: Long, graph: EditGraph): EditGraph {
+        val ref = graph.geometry.liquify ?: return graph
+        val store = LiquifyMeshStore(filesDir)
+        val mesh = store.read(ref) ?: return graph.copy(geometry = graph.geometry.copy(liquify = null))
+        val clonedRef = store.write(targetPhotoId, mesh)
+        return graph.copy(geometry = graph.geometry.copy(liquify = clonedRef))
     }
 }

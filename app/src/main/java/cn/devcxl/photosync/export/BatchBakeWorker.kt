@@ -1,5 +1,7 @@
 package cn.devcxl.photosync.export
 
+import java.io.IOException
+
 import android.content.Context
 
 import androidx.work.CoroutineWorker
@@ -24,9 +26,6 @@ import cn.devcxl.photosync.utils.ExtensionUtils
  * One worker processes the whole selection sequentially: RAW concurrency is fixed at 1 by
  * [cn.devcxl.photosync.editor.export.BakeConcurrencyGate], and keeping the loop inside a single
  * worker means the progress data always describes one uniform job instead of N competing ones.
- *
- * Work is unique (`photosync_batch_bake`) and appended or replaced, so tapping `批量导出` twice while a
- * queue drains extends that queue instead of starting a second one.
  */
 class BatchBakeWorker(
     appContext: Context,
@@ -47,17 +46,16 @@ class BatchBakeWorker(
 
         var completed = 0
         var failed = 0
-        publishProgress(completed, entities.size, currentName = null)
         for (entity in entities) {
             if (isStopped) {
                 Timber.i("Batch bake cancelled after %d of %d", completed, entities.size)
                 return Result.failure(workDataOf(KEY_ERROR to "cancelled"))
             }
-            publishProgress(completed, entities.size, entity.name)
+            publishProgress(completed, entities.size, failed, entity.name)
             val ok = bakeEntity(database, entity)
             if (ok) completed++ else failed++
-            publishProgress(completed, entities.size, entity.name)
         }
+        publishProgress(completed, entities.size, failed, currentName = null)
         Timber.i("Batch bake finished: %d exported, %d failed", completed, failed)
         return Result.success(
             workDataOf(
@@ -69,8 +67,10 @@ class BatchBakeWorker(
     }
 
     private suspend fun bakeEntity(database: AppDatabase, entity: PhotoEntity): Boolean {
-        val sink = EditorHostRegistry.gallerySink
-        if (sink == null) return false
+        val sink = EditorHostRegistry.gallerySink ?: run {
+            Timber.e("GallerySink unavailable during batch bake for photoId=%d", entity.id)
+            return false
+        }
         val graph = resolveGraph(database, entity.id)
         val result = BakeExporter(applicationContext, sink, applicationContext.filesDir).bake(
             BakeRequest(
@@ -85,8 +85,10 @@ class BatchBakeWorker(
                 result.uri?.let { uri ->
                     try {
                         database.photoDao().updateUriString(entity.id, uri.toString())
-                    } catch (io: java.io.IOException) {
+                    } catch (io: IOException) {
                         Timber.w(io, "Failed to persist the baked uri for photoId=%d", entity.id)
+                    } catch (error: RuntimeException) {
+                        Timber.w(error, "Database failure persisting baked uri for photoId=%d", entity.id)
                     }
                 }
                 true
@@ -99,8 +101,16 @@ class BatchBakeWorker(
     }
 
     private suspend fun resolveGraph(database: AppDatabase, photoId: Long): EditGraph {
-        val json = database.photoEditDao().getByPhotoId(photoId)?.graphJson ?: return EditGraph()
-        return EditGraphJsonCodec.decode(json) ?: EditGraph()
+        val json = try {
+            database.photoEditDao().getByPhotoId(photoId)?.graphJson
+        } catch (error: RuntimeException) {
+            Timber.w(error, "Failed to read edit graph for batch bake photoId=%d", photoId)
+            null
+        } ?: return EditGraph()
+        return EditGraphJsonCodec.decode(json) ?: run {
+            Timber.w("Corrupt edit graph JSON for batch bake photoId=%d; baking neutral", photoId)
+            EditGraph()
+        }
     }
 
     private fun displayName(entity: PhotoEntity): String {
@@ -108,11 +118,17 @@ class BatchBakeWorker(
         return "${base ?: "IMG_${entity.id}"}_edited.jpg"
     }
 
-    private suspend fun publishProgress(done: Int, total: Int, currentName: String?) {
+    private suspend fun publishProgress(
+        done: Int,
+        total: Int,
+        failed: Int,
+        currentName: String?
+    ) {
         setProgress(
             workDataOf(
                 KEY_DONE to done,
                 KEY_TOTAL to total,
+                KEY_FAILED to failed,
                 KEY_CURRENT_NAME to currentName
             )
         )

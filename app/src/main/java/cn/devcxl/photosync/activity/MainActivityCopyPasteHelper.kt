@@ -11,38 +11,57 @@ import cn.devcxl.photosync.editor.domain.EditGraph
 /**
  * The cross-photo `复制参数` / `粘贴参数` clipboard of the main gallery.
  *
- * A short copy uses the default [CopyMask] (look axes only), a long copy opens the checklist dialog so a
- * burst shot can also carry its crop, liquify or face/body warp when the user really wants that.
- *
- * The clipboard is kept in memory, not on disk: it is a transient hand-off between two photos of the
- * same shoot, and persisting it would raise "which frame is this crop from?" questions forever.
+ * Stores both the masked parameter graph and the exact [CopyMask] chosen during copy so long-press
+ * opt-ins (crop, liquify, face/body warp) are faithfully applied at paste time.
  */
 object EditClipboard {
 
-    /** The last copied parameter subset, or `null` when nothing was copied yet. */
+    /** Captured copy snapshot paired with the [CopyMask] and originating photo id. */
+    data class Entry(
+        val source: EditGraph,
+        val mask: CopyMask,
+        val sourcePhotoId: Long? = null
+    )
+
     @Volatile
-    var pending: EditGraph? = null
+    private var entry: Entry? = null
+
+    /** The last copied parameter subset, or `null` when nothing was copied yet. */
+    val pending: EditGraph?
+        get() = entry?.source
+
+    /** The mask used when [pending] was copied. */
+    val pendingMask: CopyMask
+        get() = entry?.mask ?: CopyMask()
+
+    /** Photo id of the copy source when known, used to avoid self-cloning liquify files. */
+    val sourcePhotoId: Long?
+        get() = entry?.sourcePhotoId
 
     /** True when [paste] has something to paste. */
     val hasContent: Boolean
-        get() = pending != null
+        get() = entry != null
 
-    /** Copies the masked axes of [source] into the clipboard. */
-    fun copy(source: EditGraph, mask: CopyMask = CopyMask()): EditGraph {
+    /** Copies the masked axes of [source] into the clipboard alongside [mask]. */
+    fun copy(
+        source: EditGraph,
+        mask: CopyMask = CopyMask(),
+        sourcePhotoId: Long? = null
+    ): EditGraph {
         val extracted = mask.extract(source)
-        pending = extracted
+        entry = Entry(source = extracted, mask = mask, sourcePhotoId = sourcePhotoId)
         return extracted
     }
 
-    /** Applies the clipboard onto [target]; returns [target] unchanged when the clipboard is empty. */
-    fun paste(target: EditGraph, mask: CopyMask = CopyMask()): EditGraph {
-        val source = pending ?: return target
-        return mask.apply(source, target)
+    /** Applies the clipboard onto [target] using [mask] (defaulting to the copied mask). */
+    fun paste(target: EditGraph, mask: CopyMask? = null): EditGraph {
+        val current = entry ?: return target
+        return (mask ?: current.mask).apply(current.source, target)
     }
 
     /** Drops the clipboard contents. */
     fun clear() {
-        pending = null
+        entry = null
     }
 }
 
@@ -53,20 +72,21 @@ internal class MainActivityCopyPasteHelper(private val context: Context) {
 
     /**
      * Copies [sourceGraph] into [EditClipboard].
-     *
-     * @param includeChecklist True for the long-press path, which lets the user opt into the
-     *   single-frame axes (crop/rotate, liquify, face/body warp).
-     * @param onCopied Called with the mask that was actually used; ignored when nothing was copied.
      */
-    fun copy(sourceGraph: EditGraph?, includeChecklist: Boolean, onCopied: (CopyMask) -> Unit) {
+    fun copy(
+        sourceGraph: EditGraph?,
+        sourcePhotoId: Long?,
+        includeChecklist: Boolean,
+        onCopied: (CopyMask) -> Unit
+    ) {
         if (sourceGraph == null) return
         if (!includeChecklist) {
-            EditClipboard.copy(sourceGraph)
+            EditClipboard.copy(sourceGraph, CopyMask(), sourcePhotoId)
             onCopied(CopyMask())
             return
         }
         CopyMaskDialog.show(context) { mask ->
-            EditClipboard.copy(sourceGraph, mask)
+            EditClipboard.copy(sourceGraph, mask, sourcePhotoId)
             onCopied(mask)
         }
     }
@@ -74,16 +94,22 @@ internal class MainActivityCopyPasteHelper(private val context: Context) {
     /**
      * Applies the clipboard onto every graph in [targets].
      *
-     * @param onPasted Called for each photo whose graph actually changed.
+     * @param onPasted Called for each photo whose graph actually changed, receiving the target
+     *   photo id, pasted graph, originating photo id, and active [CopyMask].
      * @return The number of photos the paste changed.
      */
-    fun paste(targets: Map<Long, EditGraph>, onPasted: (Long, EditGraph) -> Unit): Int {
+    fun paste(
+        targets: Map<Long, EditGraph>,
+        onPasted: (Long, EditGraph, Long?, CopyMask) -> Unit
+    ): Int {
         if (!EditClipboard.hasContent) return 0
+        val mask = EditClipboard.pendingMask
+        val originPhotoId = EditClipboard.sourcePhotoId
         var changed = 0
         for ((photoId, graph) in targets) {
-            val pasted = EditClipboard.paste(graph)
+            val pasted = EditClipboard.paste(graph, mask)
             if (pasted != graph) {
-                onPasted(photoId, pasted)
+                onPasted(photoId, pasted, originPhotoId, mask)
                 changed++
             }
         }
@@ -96,12 +122,7 @@ internal class MainActivityCopyPasteHelper(private val context: Context) {
  */
 internal object CopyMaskDialog {
 
-    /**
-     * Shows the mask checklist and calls [onConfirm] with the chosen mask.
-     *
-     * Every single-frame axis defaults to off, mirroring [CopyMask]'s defaults, so the dialog starts in
-     * exactly the state a short tap produces and the user only opts into what they need.
-     */
+    /** Shows the mask checklist and calls [onConfirm] with the chosen mask. */
     fun show(context: Context, onConfirm: (CopyMask) -> Unit) {
         val labels = arrayOf(
             R.string.copy_mask_base_look,
@@ -127,6 +148,5 @@ internal object CopyMaskDialog {
             .show()
     }
 
-    /** How many leading checkboxes the default mask includes. */
     private const val DEFAULT_INCLUDED_OPTIONS = 6
 }

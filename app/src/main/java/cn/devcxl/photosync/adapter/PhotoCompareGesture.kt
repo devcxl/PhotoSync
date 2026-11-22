@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.view.MotionEvent
+import android.widget.FrameLayout
 
 /**
  * Pure state machine behind the main gallery's press-and-hold `Before` comparison.
@@ -176,7 +177,7 @@ fun canComparePhoto(
  * own matrix. Not overriding `onTouchEvent` also keeps the view free of click handling, so it needs no
  * `performClick`.
  */
-internal class CompareAwareFrameLayout(context: Context) : android.widget.FrameLayout(context) {
+internal class CompareAwareFrameLayout(context: Context) : FrameLayout(context) {
 
     /** The detector currently observing touches, or `null` when comparing is unavailable. */
     var detector: PressAndHoldDetector? = null

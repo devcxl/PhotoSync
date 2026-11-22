@@ -19,9 +19,8 @@ import timber.log.Timber
 /**
  * Owns the background batch `Bake` queue and exposes what the status card renders.
  *
- * WorkManager is the source of truth: the controller only translates
- * [BatchBakeWorker.UNIQUE_WORK_NAME]'s [WorkInfo] into [BatchBakeProgress], so the card survives a
- * configuration change or a process restart and can be cancelled from the UI.
+ * WorkManager is the source of truth: the controller starts observing immediately so a running or
+ * recently completed queue survives configuration changes and Activity recreates.
  */
 class BatchBakeController(
     private val context: Context,
@@ -30,10 +29,12 @@ class BatchBakeController(
 
     private val _progress = MutableStateFlow<BatchBakeProgress?>(null)
 
-    /** Null when no queue was ever started in this process. */
+    /** Null when no queue is active or awaiting dismissal. */
     val progress: StateFlow<BatchBakeProgress?> = _progress.asStateFlow()
 
-    private var observing = false
+    init {
+        observeWork()
+    }
 
     /**
      * Enqueues [photoIds] for sequential full-resolution export.
@@ -56,19 +57,26 @@ class BatchBakeController(
             ExistingWorkPolicy.APPEND_OR_REPLACE,
             request
         )
-        _progress.value = BatchBakeProgress.from(done = 0, total = ids.size, running = true)
-        observeWork()
+        if (_progress.value?.running != true) {
+            _progress.value = BatchBakeProgress.from(done = 0, total = ids.size, running = true)
+        }
     }
 
     /** Cancels the queue; the worker observes `isStopped` between photos. */
     fun cancel() {
         WorkManager.getInstance(context).cancelUniqueWork(BatchBakeWorker.UNIQUE_WORK_NAME)
-        _progress.value = null
+        _progress.value = BatchBakeProgress.from(done = 0, total = 0, running = false)
+    }
+
+    /** Clears a finished or cancelled progress card once the auto-dismiss timer fires. */
+    fun dismissTerminal() {
+        val current = _progress.value ?: return
+        if (!current.running) {
+            _progress.value = null
+        }
     }
 
     private fun observeWork() {
-        if (observing) return
-        observing = true
         owner.lifecycleScope.launch {
             owner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 WorkManager.getInstance(context)
@@ -81,30 +89,36 @@ class BatchBakeController(
     /**
      * Folds the queue's [WorkInfo]s into one progress row.
      *
-     * APPEND_OR_REPLACE chains several requests for one unique name, so the row a user must see is the
-     * active one (running or enqueued); once none is active the last finished job reports the totals.
+     * Always prefers the currently `RUNNING` job over `ENQUEUED` jobs appended behind it so adding
+     * another batch never makes the card regress to "preparing".
      */
     internal fun resolveProgress(infos: List<WorkInfo>): BatchBakeProgress? {
         if (infos.isEmpty()) return null
-        val active = infos.lastOrNull { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
+        val active = infos.firstOrNull { it.state == WorkInfo.State.RUNNING }
+            ?: infos.firstOrNull { it.state == WorkInfo.State.ENQUEUED }
         if (active != null) {
             val total = active.progress.getInt(BatchBakeWorker.KEY_TOTAL, 0)
             val done = active.progress.getInt(BatchBakeWorker.KEY_DONE, 0)
+            val failed = active.progress.getInt(BatchBakeWorker.KEY_FAILED, 0)
             return BatchBakeProgress.from(
                 done = done,
                 total = total,
+                failed = failed,
                 running = true,
                 currentName = active.progress.getString(BatchBakeWorker.KEY_CURRENT_NAME)
             )
         }
         val finished = infos.lastOrNull { it.state.isFinished } ?: return null
-        if (finished.state == WorkInfo.State.CANCELLED || finished.state == WorkInfo.State.FAILED) {
-            return null
+        return when (finished.state) {
+            WorkInfo.State.CANCELLED -> BatchBakeProgress.from(done = 0, total = 0, running = false)
+            WorkInfo.State.FAILED -> null
+            WorkInfo.State.SUCCEEDED -> BatchBakeProgress.from(
+                done = finished.outputData.getInt(BatchBakeWorker.KEY_COMPLETED, 0),
+                total = finished.outputData.getInt(BatchBakeWorker.KEY_TOTAL, 0),
+                failed = finished.outputData.getInt(BatchBakeWorker.KEY_FAILED, 0),
+                running = false
+            )
+            else -> null
         }
-        return BatchBakeProgress.from(
-            done = finished.outputData.getInt(BatchBakeWorker.KEY_COMPLETED, 0),
-            total = finished.outputData.getInt(BatchBakeWorker.KEY_TOTAL, 0),
-            running = false
-        )
     }
 }

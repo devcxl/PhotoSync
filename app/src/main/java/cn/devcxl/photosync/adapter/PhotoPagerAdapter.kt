@@ -219,6 +219,7 @@ class PhotoPagerAdapter(
         container.addView(loadingOverlay)
         return VH(container, photoView, jpegDetailView, loadingOverlay, loadingTextView)
     }
+
     private fun createLoadingOverlay(context: Context, labelView: TextView): LinearLayout {
         val density = context.resources.displayMetrics.density
         val dp = { value: Int -> (value * density).toInt() }
@@ -248,54 +249,42 @@ class PhotoPagerAdapter(
 
     override fun onBindViewHolder(holder: VH, position: Int) {
         val entity = items[position]
-        val isCurrentPage = isCurrentPageProvider(position)
+        bindHolder(holder, entity, position)
+        onBindRequest(entity.path, position)
+    }
+
+    override fun onBindViewHolder(holder: VH, position: Int, payloads: MutableList<Any>) {
+        if (payloads.contains(PAYLOAD_IMAGE_STATE) || payloads.contains(PAYLOAD_VIEWER_MODE)) {
+            bindHolder(holder, items[position], position)
+            return
+        }
+        super.onBindViewHolder(holder, position, payloads)
+    }
+
+    override fun onViewRecycled(holder: VH) {
+        holder.releaseCompareGesture()
+        super.onViewRecycled(holder)
+    }
+
+    private fun bindHolder(holder: VH, entity: PhotoEntity, position: Int) {
+        val override = overrideFor(entity.path)
+        val viewerMode = if (override != null) {
+            PhotoViewerMode.PHOTO_VIEW
+        } else {
+            resolvePhotoViewerMode(isJpeg = isJpegProvider(entity.path))
+        }
         holder.bind(
             path = entity.path,
-            renderState = resolveRenderState(entity.path),
-            viewerMode = resolvePhotoViewerMode(
-                isJpeg = isJpegProvider(entity.path)
-            ),
-            isCurrentPage = isCurrentPage,
+            renderState = renderStateProvider(entity.path),
+            overrideBitmap = override,
+            viewerMode = viewerMode,
+            isCurrentPage = isCurrentPageProvider(position),
             jpegSourceInfo = jpegSourceInfoProvider(entity.path),
             onPhotoScaleChanged = onPhotoScaleChanged,
             onPhotoTap = onPhotoTap,
             canCompare = canCompareProvider(entity.path),
             onCompareChanged = onCompareChanged
         )
-        onBindRequest(entity.path, position)
-    }
-
-    override fun onBindViewHolder(holder: VH, position: Int, payloads: MutableList<Any>) {
-        if (payloads.contains(PAYLOAD_IMAGE_STATE) || payloads.contains(PAYLOAD_VIEWER_MODE)) {
-            val entity = items[position]
-            val isCurrentPage = isCurrentPageProvider(position)
-            holder.bind(
-                path = entity.path,
-                renderState = resolveRenderState(entity.path),
-                viewerMode = resolvePhotoViewerMode(
-                    isJpeg = isJpegProvider(entity.path)
-                ),
-                isCurrentPage = isCurrentPage,
-                jpegSourceInfo = jpegSourceInfoProvider(entity.path),
-                onPhotoScaleChanged = onPhotoScaleChanged,
-                onPhotoTap = onPhotoTap,
-                canCompare = canCompareProvider(entity.path),
-                onCompareChanged = onCompareChanged
-            )
-            return
-        }
-        super.onBindViewHolder(holder, position, payloads)
-    }
-
-    /**
-     * Returns the render state to bind for [path].
-     *
-     * An armed compare override replaces both stages so the page shows the original — including a JPEG
-     * page that would otherwise fall back to the tiled viewer.
-     */
-    private fun resolveRenderState(path: String): PhotoRenderState {
-        val original = overrideFor(path) ?: return renderStateProvider(path)
-        return PhotoRenderState(thumbnail = original, full = original)
     }
 
     fun updateItems(newItems: List<PhotoEntity>) {
@@ -375,10 +364,14 @@ class PhotoPagerAdapter(
         private var currentViewerMode: PhotoViewerMode = PhotoViewerMode.PHOTO_VIEW
         private var currentJpegPreviewStage: PhotoRenderStage = PhotoRenderStage.EMPTY
         private var currentJpegSourceMode: JpegTiledSourceMode? = null
+        private var compareBoundPath: String? = null
+        private var compareBoundEnabled: Boolean = false
+        private var showingOverride: Boolean = false
 
         fun bind(
             path: String,
             renderState: PhotoRenderState,
+            overrideBitmap: Bitmap?,
             viewerMode: PhotoViewerMode,
             isCurrentPage: Boolean,
             jpegSourceInfo: JpegSourceInfo?,
@@ -389,6 +382,7 @@ class PhotoPagerAdapter(
         ) {
             bindCompareGesture(path, canCompare, onCompareChanged)
             if (viewerMode == PhotoViewerMode.JPEG_TILED) {
+                showingOverride = false
                 bindJpegTiled(
                     path = path,
                     renderState = renderState,
@@ -399,23 +393,28 @@ class PhotoPagerAdapter(
                 )
                 return
             }
-            bindPhotoView(path, renderState, onPhotoScaleChanged, onPhotoTap)
+            bindPhotoView(path, renderState, overrideBitmap, onPhotoScaleChanged, onPhotoTap)
         }
 
-        /**
-         * Arms the press-and-hold `Before` comparison for this page.
-         *
-         * The detector lives on the container so it sees the stream before `PhotoView` starts panning;
-         * an unedited page gets `null` and therefore never shows a `Before` it cannot produce.
-         */
+        fun releaseCompareGesture() {
+            val container = itemView as? CompareAwareFrameLayout ?: return
+            container.detector?.release()
+            container.detector = null
+            compareBoundPath = null
+            compareBoundEnabled = false
+        }
+
         private fun bindCompareGesture(
             path: String,
             canCompare: Boolean,
             onCompareChanged: (String, Boolean) -> Unit
         ) {
+            if (compareBoundPath == path && compareBoundEnabled == canCompare) return
             val container = itemView as? CompareAwareFrameLayout ?: return
+            container.detector?.release()
+            compareBoundPath = path
+            compareBoundEnabled = canCompare
             if (!canCompare) {
-                container.detector?.release()
                 container.detector = null
                 return
             }
@@ -430,6 +429,7 @@ class PhotoPagerAdapter(
         private fun bindPhotoView(
             path: String,
             renderState: PhotoRenderState,
+            overrideBitmap: Bitmap?,
             onPhotoScaleChanged: (String, Int, Float, Float) -> Unit,
             onPhotoTap: () -> Unit
         ) {
@@ -450,6 +450,14 @@ class PhotoPagerAdapter(
                     onPhotoScaleChanged(path, position, photoView.scale, photoView.minimumScale)
                 }
             }
+            if (overrideBitmap != null) {
+                showingOverride = true
+                photoView.setImageBitmap(overrideBitmap)
+                updateLoadingOverlay(PhotoRenderStage.FULL, isJpeg = false)
+                return
+            }
+            val wasComparing = showingOverride
+            showingOverride = false
             val decision = resolvePhotoRenderDecision(
                 currentPath = currentPath,
                 currentStage = currentStage,
@@ -465,6 +473,10 @@ class PhotoPagerAdapter(
             }
 
             if (!decision.shouldApplyImmediately) {
+                if (wasComparing) {
+                    val restore = renderState.full ?: renderState.thumbnail
+                    if (restore != null) photoView.setImageBitmap(restore)
+                }
                 if (decision.stage == PhotoRenderStage.FULL &&
                     renderState.full != null &&
                     currentPath == path

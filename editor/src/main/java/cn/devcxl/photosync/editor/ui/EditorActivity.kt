@@ -88,7 +88,7 @@ class EditorActivity : AppCompatActivity(),
         preferLinearSource = canvas.configureSurfaceView()
         canvas.attachOverlays()
         topBar = EditorTopBarBinder(binding, historyCoordinator, this).also { it.bind() }
-        panel = EditorPanelController(this, binding, undoController, this, lutStore, lifecycleScope)
+        panel = EditorPanelController(this, binding, undoController, this, lutStore, this)
         overlaySync = EditorOverlaySync(
             binding = binding,
             panel = panel,
@@ -228,6 +228,7 @@ class EditorActivity : AppCompatActivity(),
         val liquifyActive = panel.currentGroup == EditorGroup.GEOMETRY && tool == EditorTool.LIQUIFY
         binding.cropOverlayView.visibility = if (liquifyActive) View.GONE else View.VISIBLE
         binding.liquifyBrushOverlayView.visibility = if (liquifyActive) View.VISIBLE else View.GONE
+        overlaySync.sync(undoController.currentGraph)
         portraitHost.onToolChanged()
         renderCoordinator.renderCurrentGraph(useProxy = false)
         renderCoordinator.updateHistoryButtons()

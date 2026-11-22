@@ -224,4 +224,17 @@ class CopyMaskTest {
         assertEquals(14, merged.portrait.reshape.face)
         assertFalse(merged.isIdentity())
     }
+
+    @Test
+    fun shouldMatchPresetByLookAxesOnly_whenTargetHasDifferentGeometry() {
+        val specs = BuiltinPresets.specs().map { it.id to it.graphSubsetJson }
+        val filmGraph = PresetGraphMerger.applyPreset(
+            checkNotNull(BuiltinPresets.graphFor(BuiltinPresets.FILM_CHROME_ID)),
+            EditGraph(geometry = GeometryOps(rotate90 = 1))
+        )
+
+        val matched = PresetGraphMerger.matchingPresetId(filmGraph, specs)
+
+        assertEquals(BuiltinPresets.FILM_CHROME_ID, matched)
+    }
 }

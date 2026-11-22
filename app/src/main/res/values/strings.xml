@@ -118,12 +118,17 @@
     <string name="quick_strip_select_done">完成</string>
     <string name="quick_strip_copied">已复制参数</string>
     <string name="quick_strip_copied_masked">已复制参数（自定义范围）</string>
+    <string name="quick_strip_copy_unedited">当前照片未编辑，无可复制参数</string>
     <string name="quick_strip_pasted">已粘贴参数到 %1$d 张照片</string>
     <string name="quick_strip_paste_empty">剪贴板为空，请先复制参数</string>
+    <string name="quick_strip_paste_unchanged">目标照片参数已一致，无需更改</string>
     <string name="quick_strip_live_tether_on">已开启联机套用：新照片自动套用预设</string>
     <string name="quick_strip_live_tether_off">已关闭联机套用</string>
-    <string name="quick_strip_live_tether_needs_preset">请先长按预设选择「设为联机预设」</string>
-    <string name="quick_strip_preset_applied">已套用预设</string>
+    <string name="quick_strip_live_tether_needs_preset">请先选择一个预设开启联机套用</string>
+    <string name="quick_strip_live_picker_title">选择联机自动套用预设</string>
+    <string name="quick_strip_menu_set_live">设为联机预设</string>
+    <string name="quick_strip_menu_clear_live">取消联机预设</string>
+    <string name="quick_strip_live_badge" translatable="false">⚡ %1$s</string>
     <string name="quick_strip_selected_count">已选 %1$d 张</string>
 
     <string name="compare_original_pill">未编辑原图 (Before)</string>
@@ -131,6 +136,7 @@
     <string name="batch_bake_preparing">正在准备导出…</string>
     <string name="batch_bake_running">正在导出 %1$d/%2$d…</string>
     <string name="batch_bake_finished">已导出 %1$d/%2$d</string>
+    <string name="batch_bake_finished_with_failures">已导出 %1$d/%2$d（失败 %3$d 张）</string>
     <string name="batch_bake_cancelled">已取消批量导出</string>
     <string name="batch_bake_title">批量烘焙导出</string>
     <string name="batch_bake_cancel">取消</string>

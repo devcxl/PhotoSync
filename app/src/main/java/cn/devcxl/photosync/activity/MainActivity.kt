@@ -78,8 +78,6 @@ import cn.devcxl.photosync.editor.export.BakeRequest
 import cn.devcxl.photosync.editor.export.BakeResult
 import cn.devcxl.photosync.editor.export.ExifCopier
 import cn.devcxl.photosync.editor.ui.EditorActivity
-import cn.devcxl.photosync.export.BatchBakeController
-import cn.devcxl.photosync.export.BatchBakeProgress
 import cn.devcxl.photosync.export.MediaStoreGallerySink
 import cn.devcxl.photosync.ptp.manager.UsbPtpConnectionState
 import cn.devcxl.photosync.ptp.manager.cameraDeleteBlockedBy
@@ -124,7 +122,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
 
     private lateinit var dao: PhotoDao
-    private var pendingRevealPath: String? = null
+    private val knownPhotoIds = mutableSetOf<Long>()
+    private var photoListInitialized: Boolean = false
 
     private var connectionState: UsbPtpConnectionState = UsbPtpConnectionState.Idle
     private var cameraPresent: Boolean = false
@@ -206,20 +205,19 @@ class MainActivity : AppCompatActivity() {
             currentIndex = { binding.viewPager.currentItem },
             editedMap = { editedPhotoMap },
             decodeOriginal = ::decodeOriginalPreview,
-            onPhotoRevealed = { path -> pendingRevealPath = path },
             onEditPersisted = ::onEditPersisted,
             onFeedback = { message -> showInlineFeedback(message) }
         ).also { it.bind() }
-        darkroom.observeSyncedPhotos()
+        darkroom.observeTransferState()
     }
 
-    /** Re-reads the edited record of [photoId] and repaints the pager and filmstrip. */
+    /** Re-reads the edited record of [photoId] and repaints the pager, filmstrip and strip. */
     private fun onEditPersisted(photoId: Long) {
         val path = findPathByPhotoId(photoId)
         if (path != null) {
             invalidateCachedBitmapsForPath(path)
         }
-        renderPhotoChrome()
+        darkroom.refreshQuickStrip()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -363,7 +361,10 @@ class MainActivity : AppCompatActivity() {
             onPhotoTap = {
                 onPhotoCanvasTap()
             },
-            canCompareProvider = { path -> canComparePhoto(path, true, resolvePreviewOverridePath(path)) },
+            canCompareProvider = { path ->
+                val preview = resolvePreviewOverridePath(path)
+                canComparePhoto(path, preview != null, preview)
+            },
             onCompareChanged = { path, comparing ->
                 darkroom.setComparing(path, comparing)
             }
@@ -581,17 +582,24 @@ class MainActivity : AppCompatActivity() {
                     adapter.updateItems(itemsCopy)
                     filmstripAdapter.updateItems(itemsCopy)
                     evictCachesForRemovedItems(list)
-                    pendingRevealPath?.let { target ->
-                        val idx = list.indexOfFirst { it.path == target }
-                        if (idx >= 0) {
-                            val wasLatest = isViewingLatestPhoto(previousIndex, previousCount)
-                            if (shouldAutoAdvanceOnNewPhoto(autoFollowEnabled, currentPageZoomed, wasLatest)) {
-                                binding.viewPager.setCurrentItem(idx, previousCount > 0)
-                                pendingNewPhotoCount = 0
-                            } else {
-                                pendingNewPhotoCount++
-                            }
-                            pendingRevealPath = null
+                    val newlyAdded = if (!photoListInitialized) {
+                        knownPhotoIds.addAll(list.map { it.id })
+                        photoListInitialized = true
+                        emptyList()
+                    } else {
+                        val added = list.filter { it.id !in knownPhotoIds }
+                        knownPhotoIds.clear()
+                        knownPhotoIds.addAll(list.map { it.id })
+                        added
+                    }
+                    if (newlyAdded.isNotEmpty()) {
+                        val targetIdx = list.indexOfLast { it.id == newlyAdded.last().id }
+                        val wasLatest = isViewingLatestPhoto(previousIndex, previousCount)
+                        if (targetIdx >= 0 && shouldAutoAdvanceOnNewPhoto(autoFollowEnabled, currentPageZoomed, wasLatest)) {
+                            binding.viewPager.setCurrentItem(targetIdx, previousCount > 0)
+                            pendingNewPhotoCount = 0
+                        } else {
+                            pendingNewPhotoCount += newlyAdded.size
                         }
                     }
                     if (list.isNotEmpty()) {
@@ -628,6 +636,9 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                     renderPhotoChrome()
+                    if (adapter.itemCount > 0) {
+                        darkroom.refreshQuickStrip(darkroomGraphFor(binding.viewPager.currentItem))
+                    }
                 }
             }
         }
@@ -949,6 +960,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun configureConnectionController() {
         connectionController.setFileTransferListener { _, totalByteLength, transterByteLength ->
+            (application as App).notifyTransferStarted()
             val progressPercent = resolveTransferPercent(transterByteLength, totalByteLength)
             lifecycleScope.launch(Dispatchers.Main) {
                 if (binding.transferStatusCard.visibility != View.VISIBLE) {
@@ -960,7 +972,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         // The download sink belongs to `App`: an import that finishes while the editor is in front must
-        // still be committed with its `LiveTetherPreset`. This activity only reacts to the ids.
+        // still be committed with its `LiveTetherPreset`.
     }
 
     /**
@@ -980,6 +992,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             is UsbPtpConnectionState.Disconnected -> {
+                (application as App).clearTransferActive()
                 binding.transferStatusCard.visibility = View.GONE
                 if (state.reason == "no_device" && previousState !is UsbPtpConnectionState.Disconnected) {
                     showInlineFeedback(getString(R.string.toast_no_usb_device))
@@ -990,6 +1003,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             is UsbPtpConnectionState.Error -> {
+                (application as App).clearTransferActive()
                 binding.transferStatusCard.visibility = View.GONE
                 if (state.reason == "permission_denied") {
                     showInlineFeedback(getString(R.string.usb_permission_denied))
@@ -1022,7 +1036,10 @@ class MainActivity : AppCompatActivity() {
      */
     private fun evictCachesForRemovedItems(currentItems: List<PhotoEntity>) {
         val livePaths = currentItems.mapTo(mutableSetOf()) { it.path }
+        val removed = jpegSourceInfoCache.keys.filter { it !in livePaths }
+        removed.forEach { originalPreviewCache.remove(it) }
         jpegSourceInfoCache.keys.retainAll(livePaths)
+        if (currentItems.isEmpty()) originalPreviewCache.clear()
     }
 
     private fun ensurePhotoForPosition(path: String, position: Int) {
@@ -1195,6 +1212,7 @@ class MainActivity : AppCompatActivity() {
     private fun invalidateCachedBitmapsForPath(path: String) {
         thumbnailCache.remove(path)
         fullBitmapCache.remove(path)
+        originalPreviewCache.remove(path)
         inFlightThumbnailPaths.remove(path)
         inFlightFullPaths.remove(path)
         jpegSourceInfoCache.remove(path)
@@ -1259,9 +1277,8 @@ class MainActivity : AppCompatActivity() {
             return
         }
         val index = binding.viewPager.currentItem.coerceIn(0, adapter.itemCount - 1)
-        // Short press: an edited photo bakes the full-resolution look, an unedited one keeps the
-        // zero-copy JPEG / legacy RAW export path.
-        requestExport(index, bakeEdited = editedGraphFor(index) != null)
+        val hasRealEdit = editedGraphFor(index)?.let { !it.isIdentity() } == true
+        requestExport(index, bakeEdited = hasRealEdit)
     }
 
     private fun showExportMenu() {
@@ -1270,8 +1287,9 @@ class MainActivity : AppCompatActivity() {
             return
         }
         val index = binding.viewPager.currentItem.coerceIn(0, adapter.itemCount - 1)
+        val hasRealEdit = editedGraphFor(index)?.let { !it.isIdentity() } == true
         val menu = PopupMenu(this, binding.exportButton)
-        menu.menu.add(0, MENU_EXPORT_BAKED, 0, R.string.export_menu_edited)
+        menu.menu.add(0, MENU_EXPORT_BAKED, 0, R.string.export_menu_edited).isEnabled = hasRealEdit
         menu.menu.add(0, MENU_EXPORT_ORIGINAL, 1, R.string.export_menu_original)
         menu.menu.add(0, MENU_EXPORT_BATCH, 2, R.string.export_menu_batch)
         menu.setOnMenuItemClickListener { item ->

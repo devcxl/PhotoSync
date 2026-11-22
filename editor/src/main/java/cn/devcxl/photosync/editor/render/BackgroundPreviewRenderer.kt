@@ -1,44 +1,41 @@
 package cn.devcxl.photosync.editor.render
 
 import java.io.File
+import java.io.IOException
 
 import android.content.Context
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 
+import cn.devcxl.photosync.editor.contract.EditorCachePaths
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.LiquifyMesh
 import cn.devcxl.photosync.editor.domain.LiquifyMeshStore
 import cn.devcxl.photosync.editor.domain.LiquifyRef
 import cn.devcxl.photosync.editor.domain.Lut3dSamples
+import cn.devcxl.photosync.editor.export.BakeConcurrencyGate
 import cn.devcxl.photosync.editor.export.BakePortraitSupport
 import cn.devcxl.photosync.editor.lut.CubeLutStore
 
 /**
- * Renders the screen-sized preview JPEG of a graph that no editor session ever opened — the
- * `LiveTetherPreset` path, where a photo arrives from the camera and must already look graded on its
- * very first `AutoFollow` emission.
+ * Renders the screen-sized preview JPEG of a graph that no editor session ever opened — used both
+ * by `LiveTetherPreset` ingest and by quick-preset / paste actions from the main gallery.
  *
- * The whole point is ordering: [renderToDir] writes into a staging directory *before* the caller
- * inserts the Room row, so a crash can never leave a photo pointing at a preview that does not exist
- * yet, and a failed render simply yields `null` instead of a half-bound edit.
+ * RAW renders wait on [BakeConcurrencyGate.rawBakeMutex] so parallel syncs or gallery pastes never
+ * decode multiple full RAW buffers concurrently. Every failure is logged and yields `null` so a
+ * half-bound edit row is never written.
  */
 object BackgroundPreviewRenderer {
 
     /**
-     * Renders [graph] applied to the photo at [sourcePath] and returns the written JPEG.
+     * Renders [graph] applied to the photo at [sourcePath] into `cacheDir/edits/<photoId>/`.
      *
-     * @param context Application context; the portrait pipeline is only spun up when the graph
-     *   actually carries portrait adjustments.
-     * @param filesDir Private files directory holding the liquify mesh and LUT caches.
-     * @param cacheDir Cache root the preview lands under, i.e. `cacheDir/edits/<photoId>/`.
-     * @param photoId Photo id the cache directory is named after.
-     * @param sourcePath Absolute path of the original JPEG or RAW file.
-     * @param isRaw True when [sourcePath] decodes through `:libraw`.
-     * @param graph The edited parameters to bake into the preview.
      * @return The absolute path of the written JPEG, or `null` when nothing could be rendered.
      */
-    fun render(
+    suspend fun render(
         context: Context,
         filesDir: File,
         cacheDir: File,
@@ -48,15 +45,13 @@ object BackgroundPreviewRenderer {
         graph: EditGraph
     ): String? {
         if (photoId <= 0L || sourcePath.isBlank() || graph.isIdentity()) return null
-        return try {
-            renderGraph(context, filesDir, cacheDir, photoId, sourcePath, isRaw, graph)
-        } catch (oom: OutOfMemoryError) {
-            Timber.e(oom, "OOM while rendering the background preview for photoId=%d", photoId)
-            null
-        } catch (io: java.io.IOException) {
-            Timber.e(io, "I/O failed while rendering the background preview for photoId=%d", photoId)
-            null
+        val editDir = File(cacheDir, EditorCachePaths.photoEditDirName(photoId))
+        if (!editDir.exists() && !editDir.mkdirs()) {
+            Timber.e("Preview cache directory could not be created for photoId=%d", photoId)
+            return null
         }
+        editDir.listFiles()?.forEach { it.delete() }
+        return renderToDir(context, filesDir, editDir, sourcePath, isRaw, graph)?.absolutePath
     }
 
     /**
@@ -65,7 +60,7 @@ object BackgroundPreviewRenderer {
      *
      * @return The staged JPEG, or `null` when the source cannot be decoded or written.
      */
-    fun renderToDir(
+    suspend fun renderToDir(
         context: Context,
         filesDir: File,
         outDir: File,
@@ -73,98 +68,84 @@ object BackgroundPreviewRenderer {
         isRaw: Boolean,
         graph: EditGraph
     ): File? {
-        if (sourcePath.isBlank()) return null
+        if (sourcePath.isBlank() || graph.isIdentity()) return null
         if (!outDir.isDirectory && !outDir.mkdirs()) {
             Timber.e("Background preview staging directory could not be created")
             return null
         }
-        if (graph.isIdentity()) return null
-        val source = loadSource(sourcePath, isRaw, preferLinear = true)
-        if (source == null) {
-            Timber.w("Background preview source could not be decoded")
-            return null
-        }
-        return try {
-            val portrait = resolvePortrait(context, filesDir, sourcePath, isRaw, graph)
-            val lut = loadLut(filesDir, graph)
-            val skinMask = portrait.skinMask
-            val warpField = portrait.warpField
-            val written = when (source) {
-                is EditorSource.LinearRawSource -> PreviewCacheWriter.writeLinearPreviewTo(
-                    source = source.full,
-                    graph = graph,
-                    outDir = outDir,
-                    warpField = warpField,
-                    lut = lut,
-                    skinMask = skinMask
-                )
-                is EditorSource.BitmapSource -> PreviewCacheWriter.writeBitmapPreviewTo(
-                    source = source.full,
-                    graph = graph,
-                    outDir = outDir,
-                    warpField = warpField,
-                    lut = lut,
-                    skinMask = skinMask
-                )
+        return withContext(Dispatchers.IO) {
+            if (isRaw) {
+                BakeConcurrencyGate.rawBakeMutex.withLock {
+                    renderUnsafe(context, filesDir, outDir, sourcePath, isRaw = true, graph = graph)
+                }
+            } else {
+                renderUnsafe(context, filesDir, outDir, sourcePath, isRaw = false, graph = graph)
             }
-            written?.let { File(it) }
-        } finally {
-            source.release()
         }
     }
 
-    private fun renderGraph(
+    private fun renderUnsafe(
         context: Context,
         filesDir: File,
-        cacheDir: File,
-        photoId: Long,
+        outDir: File,
         sourcePath: String,
         isRaw: Boolean,
         graph: EditGraph
-    ): String? {
-        val source = loadSource(sourcePath, isRaw, preferLinear = true)
+    ): File? = try {
+        val source = EditorSourceLoader.load(sourcePath, isRaw, preferLinear = true)
         if (source == null) {
-            Timber.w("Background preview source could not be decoded for photoId=%d", photoId)
-            return null
-        }
-        return try {
-            val portrait = resolvePortrait(context, filesDir, sourcePath, isRaw, graph)
-            val lut = loadLut(filesDir, graph)
-            val skinMask = portrait.skinMask
-            val warpField = portrait.warpField
-            when (source) {
-                is EditorSource.LinearRawSource -> PreviewCacheWriter.writePreviewCache(
-                    source = source.full,
-                    graph = graph,
-                    cacheDir = cacheDir,
-                    photoId = photoId,
-                    warpField = warpField,
-                    lut = lut,
-                    skinMask = skinMask
-                )
-                is EditorSource.BitmapSource -> PreviewCacheWriter.writePreviewCache(
-                    source = source.full,
-                    graph = graph,
-                    cacheDir = cacheDir,
-                    photoId = photoId,
-                    warpField = warpField,
-                    lut = lut,
-                    skinMask = skinMask
-                )
+            Timber.w("Background preview source could not be decoded")
+            null
+        } else {
+            try {
+                writeFromSource(context, filesDir, outDir, sourcePath, isRaw, graph, source)
+            } finally {
+                source.release()
             }
-        } finally {
-            source.release()
         }
+    } catch (oom: OutOfMemoryError) {
+        Timber.e(oom, "OOM while rendering background preview")
+        null
+    } catch (io: IOException) {
+        Timber.e(io, "I/O failed while rendering background preview")
+        null
+    } catch (error: RuntimeException) {
+        Timber.e(error, "Background preview render failed")
+        null
     }
 
-    private fun loadSource(sourcePath: String, isRaw: Boolean, preferLinear: Boolean): EditorSource? =
-        EditorSourceLoader.load(sourcePath, isRaw, preferLinear)
+    private fun writeFromSource(
+        context: Context,
+        filesDir: File,
+        outDir: File,
+        sourcePath: String,
+        isRaw: Boolean,
+        graph: EditGraph,
+        source: EditorSource
+    ): File? {
+        val portrait = resolvePortrait(context, filesDir, sourcePath, isRaw, graph)
+        val lut = loadLut(filesDir, graph)
+        val written = when (source) {
+            is EditorSource.LinearRawSource -> PreviewCacheWriter.writeLinearPreviewTo(
+                source = source.full,
+                graph = graph,
+                outDir = outDir,
+                warpField = portrait.warpField,
+                lut = lut,
+                skinMask = portrait.skinMask
+            )
+            is EditorSource.BitmapSource -> PreviewCacheWriter.writeBitmapPreviewTo(
+                source = source.full,
+                graph = graph,
+                outDir = outDir,
+                warpField = portrait.warpField,
+                lut = lut,
+                skinMask = portrait.skinMask
+            )
+        }
+        return written?.let(::File)
+    }
 
-    /**
-     * Resolves the warp and skin mask. The portrait pipeline is only touched when the graph carries
-     * portrait adjustments, because spinning up MediaPipe for a pure tone/colour preset would cost
-     * hundreds of milliseconds per arriving photo.
-     */
     private fun resolvePortrait(
         context: Context,
         filesDir: File,
@@ -173,8 +154,7 @@ object BackgroundPreviewRenderer {
         graph: EditGraph
     ): BakePortraitSupport.ResolvedPortrait {
         val liquifyMesh = loadLiquifyMesh(filesDir, graph.geometry.liquify)
-        val needsPortrait = !graph.portrait.isIdentity()
-        if (!needsPortrait) {
+        if (graph.portrait.isIdentity()) {
             return BakePortraitSupport.ResolvedPortrait(warpField = liquifyMesh, skinMask = null)
         }
         return BakePortraitSupport.resolve(
@@ -187,16 +167,15 @@ object BackgroundPreviewRenderer {
         )
     }
 
-    private fun loadLiquifyMesh(
-        filesDir: File,
-        reference: LiquifyRef?
-    ): LiquifyMesh? {
-        if (reference == null) return null
-        return LiquifyMeshStore(filesDir).read(reference)
-    }
+    private fun loadLiquifyMesh(filesDir: File, reference: LiquifyRef?): LiquifyMesh? =
+        reference?.let { LiquifyMeshStore(filesDir).read(it) }
 
     private fun loadLut(filesDir: File, graph: EditGraph): Lut3dSamples? {
         val reference = graph.color.lut ?: return null
-        return CubeLutStore(filesDir).loadSamples(reference.id).getOrNull()
+        val loaded = CubeLutStore(filesDir).loadSamples(reference.id)
+        if (loaded.isFailure) {
+            Timber.w(loaded.exceptionOrNull(), "3D LUT %s unavailable for background preview", reference.id)
+        }
+        return loaded.getOrNull()
     }
 }

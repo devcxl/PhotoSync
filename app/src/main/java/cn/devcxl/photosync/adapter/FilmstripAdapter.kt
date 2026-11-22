@@ -58,9 +58,9 @@ class FilmstripAdapter(
 
     private val checkedPhotoIds = linkedSetOf<Long>()
 
-    /** Selected photo ids; only meaningful while [selectionMode] is true. */
+    /** Selected photo ids; returns an immutable snapshot so mutations never race callers. */
     val selectedPhotoIds: Set<Long>
-        get() = checkedPhotoIds
+        get() = checkedPhotoIds.toSet()
 
     init {
         setHasStableIds(true)
@@ -95,9 +95,13 @@ class FilmstripAdapter(
             isSelected = !selectionMode && position == selectedPosition,
             isChecked = selectionMode && entity.id in checkedPhotoIds
         )
-        holder.itemView.setOnClickListener { onRowTapped(position) }
+        holder.itemView.setOnClickListener {
+            val adapterPos = holder.bindingAdapterPosition
+            if (adapterPos != RecyclerView.NO_POSITION) onRowTapped(adapterPos)
+        }
         holder.itemView.setOnLongClickListener {
-            enterSelectionMode(position)
+            val adapterPos = holder.bindingAdapterPosition
+            if (adapterPos != RecyclerView.NO_POSITION) enterSelectionMode(adapterPos)
             true
         }
     }

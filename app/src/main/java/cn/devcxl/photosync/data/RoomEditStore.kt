@@ -34,7 +34,8 @@ class RoomEditStore(
     private val photoEditDao: PhotoEditDao,
     private val userPresetDao: UserPresetDao,
     private val liveTetherPrefs: SharedPreferences,
-    private val onClearPhotoEditCache: (Long) -> Unit
+    private val onClearPhotoEditCache: (Long) -> Unit,
+    private val builtinNameResolver: (String) -> String = { it }
 ) : EditStore {
 
     private val liveTetherPresetId = MutableStateFlow(readLiveTetherPresetId())
@@ -90,7 +91,11 @@ class RoomEditStore(
             Timber.w("Refusing to save a preset without an id or a name")
             return
         }
-        userPresetDao.upsert(preset.copy(name = name).toEntity())
+        if (preset.isBuiltin || userPresetDao.getById(preset.id)?.isBuiltin == true) {
+            Timber.w("Refusing to overwrite a built-in preset")
+            return
+        }
+        userPresetDao.upsertUserPreset(preset.copy(name = name).toEntity())
     }
 
     override suspend fun renamePreset(id: String, newName: String) {
@@ -138,27 +143,33 @@ class RoomEditStore(
     override fun observeLiveTetherPresetId(): Flow<String?> = liveTetherPresetId.asStateFlow()
 
     /**
-     * Seeds the curated [BuiltinPresets] library.
-     *
-     * Idempotent by construction: the ids are deterministic and the insert ignores conflicts, so a
-     * user who renamed nothing and deleted nothing sees exactly the same five rows on every start.
+     * Seeds the curated [BuiltinPresets] library and refreshes localized names on existing rows.
      */
     suspend fun seedBuiltinPresets() {
-        userPresetDao.insertAllIgnore(BuiltinPresets.all().map { it.toEntity() })
+        val entities = BuiltinPresets.specs().map { spec ->
+            UserPresetEntity(
+                id = spec.id,
+                name = builtinNameResolver(spec.id),
+                graphSubsetJson = spec.graphSubsetJson,
+                lutFilePath = null,
+                isBuiltin = true,
+                createdAt = spec.createdAt
+            )
+        }
+        userPresetDao.insertAllIgnore(entities)
+        entities.forEach { userPresetDao.updateBuiltinName(it.id, it.name) }
     }
 
     private fun readLiveTetherPresetId(): String? =
         liveTetherPrefs.getString(PREF_LIVE_TETHER_PRESET_ID, null)?.takeIf { it.isNotBlank() }
 
-    private fun PhotoEditEntity.toRecord(): PhotoEditRecord {
-        return PhotoEditRecord(
-            photoId = photoId,
-            schemaVersion = schemaVersion,
-            graphJson = graphJson,
-            previewCachePath = previewCachePath,
-            updatedAt = updatedAt
-        )
-    }
+    private fun PhotoEditEntity.toRecord(): PhotoEditRecord = PhotoEditRecord(
+        photoId = photoId,
+        schemaVersion = schemaVersion,
+        graphJson = graphJson,
+        previewCachePath = previewCachePath,
+        updatedAt = updatedAt
+    )
 
     private fun UserPresetEntity.toRecord(): UserPresetRecord = UserPresetRecord(
         id = id,
@@ -178,8 +189,8 @@ class RoomEditStore(
         createdAt = createdAt
     )
 
-    /** Key the active `LiveTetherPreset` id is stored under. */
     companion object {
+        /** `SharedPreferences` key for the active `LiveTetherPreset` id (`String?`). */
         const val PREF_LIVE_TETHER_PRESET_ID = "pref_live_tether_preset_id"
     }
 }

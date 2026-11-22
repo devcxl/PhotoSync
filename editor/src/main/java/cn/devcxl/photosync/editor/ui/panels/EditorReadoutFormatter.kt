@@ -91,11 +91,6 @@ internal class EditorReadoutFormatter(private val context: Context) {
             context.getString(R.string.editor_value_signed_fmt),
             graph.effects.vignette.amount.toFloat()
         )
-        EditorTool.PRESET -> statusText(
-            !PresetGraphMerger.hasNeutralPresetAxes(graph),
-            R.string.editor_value_preset_modified,
-            R.string.editor_value_scalar_none
-        )
         else -> ""
     }
 
@@ -126,7 +121,8 @@ internal class EditorReadoutFormatter(private val context: Context) {
             EditorTool.NOISE_REDUCTION to R.string.editor_value_nr_modified,
             EditorTool.SKIN_SMOOTH to R.string.editor_value_skin_modified,
             EditorTool.FACE_RESHAPE to R.string.editor_value_reshape_modified,
-            EditorTool.BODY_RESHAPE to R.string.editor_value_body_modified
+            EditorTool.BODY_RESHAPE to R.string.editor_value_body_modified,
+            EditorTool.PRESET to R.string.editor_value_preset_modified
         )
 
         /** Key of the free-aspect crop preset. */

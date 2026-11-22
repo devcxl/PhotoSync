@@ -1,6 +1,7 @@
 package cn.devcxl.photosync.activity
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.view.View
 
 import androidx.lifecycle.Lifecycle
@@ -8,10 +9,11 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
+import cn.devcxl.photosync.App
 import cn.devcxl.photosync.R
 import cn.devcxl.photosync.adapter.FilmstripAdapter
 import cn.devcxl.photosync.adapter.PhotoPagerAdapter
@@ -26,10 +28,7 @@ import cn.devcxl.photosync.export.BatchBakeState
 
 /**
  * Wires the whole tethered darkroom floor of the main gallery: the quick preset strip, the batch bake
- * status card, the press-and-hold `Before` comparison and the sync announcements from `App`.
- *
- * Extracted from `MainActivity` so the activity stays view plumbing plus lifecycle. Everything here is
- * a one-line delegation or a pure render, so the class has no domain logic of its own.
+ * status card and the press-and-hold `Before` comparison.
  */
 internal class TetheredDarkroomCoordinator(
     private val context: Context,
@@ -42,8 +41,7 @@ internal class TetheredDarkroomCoordinator(
     private val originalPreviewCache: OriginalPreviewCache,
     private val currentIndex: () -> Int,
     private val editedMap: () -> Map<Long, PhotoEditRecord>,
-    private val decodeOriginal: (String) -> android.graphics.Bitmap?,
-    private val onPhotoRevealed: (String) -> Unit,
+    private val decodeOriginal: (String) -> Bitmap?,
     private val onEditPersisted: (Long) -> Unit,
     private val onFeedback: (String) -> Unit
 ) {
@@ -53,16 +51,10 @@ internal class TetheredDarkroomCoordinator(
     private lateinit var batchBake: BatchBakeController
     private lateinit var compare: BeforeAfterCompareController
     private lateinit var copyPaste: MainActivityCopyPasteHelper
-
-    /** The quick strip, so the activity can re-render it when the current page changes. */
-    val quickStripController: TetheredQuickStripController
-        get() = quickStrip
+    private var autoDismissJob: Job? = null
 
     /**
      * Builds every controller and subscribes the WorkManager queue.
-     *
-     * Must run after the adapters exist: the strip reads the pager's current graph and the compare
-     * controller pushes bitmaps back into the pager.
      */
     fun bind() {
         copyPaste = MainActivityCopyPasteHelper(context)
@@ -98,28 +90,22 @@ internal class TetheredDarkroomCoordinator(
     /** Starts or ends the `Before` comparison for [path]. */
     fun setComparing(path: String, comparing: Boolean) = compare.setComparing(path, comparing)
 
-    /** Repaints the strip for a new page. */
+    /** Repaints the strip for the current page. */
+    fun refreshQuickStrip() = quickStrip.refresh(darkroom.currentGraph())
+
+    /** Repaints the strip for a caller-supplied [graph]. */
     fun refreshQuickStrip(graph: EditGraph) = quickStrip.refresh(graph)
 
-    /**
-     * Subscribes to the sync events `App` publishes.
-     *
-     * The download sink itself lives in `App` so a sync that finishes while the editor is in front is
-     * still committed with its `LiveTetherPreset`; the gallery only reacts by revealing the photo.
-     */
-    fun observeSyncedPhotos() {
-        val app = context.applicationContext as? cn.devcxl.photosync.App ?: return
+    /** Keeps the USB transfer card consistent when transfers complete while the editor was open. */
+    fun observeTransferState() {
+        val app = context.applicationContext as? App ?: return
         owner.lifecycleScope.launch {
             owner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                app.syncedPhotoEvents.collect { photoId -> revealSyncedPhoto(photoId) }
+                app.transferActive.collect { active ->
+                    if (!active) binding.transferStatusCard.visibility = View.GONE
+                }
             }
         }
-    }
-
-    private suspend fun revealSyncedPhoto(photoId: Long) {
-        binding.transferStatusCard.visibility = View.GONE
-        val entity = withContext(Dispatchers.IO) { dao.getById(photoId) }
-        if (entity != null) onPhotoRevealed(entity.path)
     }
 
     private fun observeBatchBake(controller: BatchBakeController) {
@@ -131,33 +117,43 @@ internal class TetheredDarkroomCoordinator(
         binding.batchBakeCancelButton.setOnClickListener { controller.cancel() }
     }
 
-    /**
-     * Paints the top-right batch card.
-     *
-     * Hidden when no queue exists, visible while one runs, and dismissed by the controller once the
-     * last photo is published so it does not cover the gallery forever.
-     */
     private fun renderBatchBake(progress: BatchBakeProgress?) {
+        autoDismissJob?.cancel()
         if (progress == null) {
             binding.batchBakeStatusCard.visibility = View.GONE
             return
         }
         binding.batchBakeStatusCard.visibility = View.VISIBLE
-        binding.batchBakeProgressText.text = context.getString(
-            captionRes(progress.state),
-            progress.done,
-            progress.total
-        )
+        binding.batchBakeProgressText.text = formatBatchCaption(progress)
         binding.batchBakeProgressBar.progress = (progress.ratio * MAX_PROGRESS).toInt()
         binding.batchBakeCancelButton.visibility =
             if (progress.running) View.VISIBLE else View.GONE
+        if (!progress.running) {
+            autoDismissJob = owner.lifecycleScope.launch {
+                delay(TERMINAL_CARD_DISMISS_MS)
+                batchBake.dismissTerminal()
+            }
+        }
     }
 
-    private fun captionRes(state: BatchBakeState): Int = when (state) {
-        BatchBakeState.PREPARING -> R.string.batch_bake_preparing
-        BatchBakeState.RUNNING -> R.string.batch_bake_running
-        BatchBakeState.FINISHED -> R.string.batch_bake_finished
-        BatchBakeState.CANCELLED -> R.string.batch_bake_cancelled
+    private fun formatBatchCaption(progress: BatchBakeProgress): String = when (progress.state) {
+        BatchBakeState.PREPARING -> context.getString(R.string.batch_bake_preparing)
+        BatchBakeState.RUNNING -> context.getString(
+            R.string.batch_bake_running,
+            progress.done,
+            progress.total
+        )
+        BatchBakeState.FINISHED -> if (progress.failed > 0) {
+            context.getString(
+                R.string.batch_bake_finished_with_failures,
+                progress.done,
+                progress.total,
+                progress.failed
+            )
+        } else {
+            context.getString(R.string.batch_bake_finished, progress.done, progress.total)
+        }
+        BatchBakeState.CANCELLED -> context.getString(R.string.batch_bake_cancelled)
     }
 
     private fun setLiveTetherPreset(presetId: String?) {
@@ -175,7 +171,8 @@ internal class TetheredDarkroomCoordinator(
         onFeedback(context.getString(messageRes))
     }
 
-    private fun onFilmstripSelectionChanged(selection: Set<Long>) {
+    /** Public entry for the filmstrip's selection callback. */
+    fun handleSelectionChanged(selection: Set<Long>) {
         if (selection.isEmpty() && !filmstripAdapter.selectionMode) {
             quickStrip.renderSelectionMode(false)
         } else {
@@ -203,10 +200,8 @@ internal class TetheredDarkroomCoordinator(
         override fun currentPhotoId(): Long? = darkroom.currentPhotoId()
     }
 
-    /** Public entry for the filmstrip's selection callback. */
-    fun handleSelectionChanged(selection: Set<Long>) = onFilmstripSelectionChanged(selection)
-
     private companion object {
         const val MAX_PROGRESS = 100
+        const val TERMINAL_CARD_DISMISS_MS = 2500L
     }
 }

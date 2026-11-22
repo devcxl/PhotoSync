@@ -1,5 +1,8 @@
 package cn.devcxl.photosync.editor.ui.panels
 
+import java.io.IOException
+import java.util.UUID
+
 import android.content.Context
 import android.view.View
 import android.widget.EditText
@@ -7,8 +10,10 @@ import android.widget.PopupMenu
 import android.widget.Toast
 
 import androidx.appcompat.app.AlertDialog
-
-import kotlinx.coroutines.CoroutineScope
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
@@ -36,7 +41,7 @@ internal class PresetPanelBinder(
     private val context: Context,
     private val binding: ActivityEditorBinding,
     private val undoController: EditorUndoController,
-    private val scope: CoroutineScope,
+    private val owner: LifecycleOwner,
     private val host: Host
 ) {
 
@@ -51,6 +56,8 @@ internal class PresetPanelBinder(
 
     private val store: EditStore?
         get() = EditorHostRegistry.editStore
+
+    private var cachedPresets: List<UserPresetRecord> = emptyList()
 
     private val panel = PresetPanelView(
         context = context,
@@ -68,9 +75,13 @@ internal class PresetPanelBinder(
     /** Shows the panel only for the `预设` group. */
     fun setVisible(visible: Boolean) = panel.setVisible(visible)
 
-    /** Re-highlights the active chip and marks the row neutral on an identity graph. */
+    /** Re-highlights whichever preset matches [graph], or `无预设` on a neutral graph. */
     fun refresh(graph: EditGraph) {
-        panel.select(if (PresetGraphMerger.hasNeutralPresetAxes(graph)) null else store?.getLiveTetherPresetId())
+        val matched = PresetGraphMerger.matchingPresetId(
+            graph,
+            cachedPresets.map { it.id to it.graphSubsetJson }
+        )
+        panel.select(matched)
     }
 
     private fun observePresetLibrary() {
@@ -79,9 +90,21 @@ internal class PresetPanelBinder(
             Timber.w("Preset library unavailable: the host never installed an EditStore")
             return
         }
-        scope.launch {
-            currentStore.observePresets().collect { presets ->
-                panel.render(presets, currentStore.getLiveTetherPresetId())
+        owner.lifecycleScope.launch {
+            owner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch {
+                    currentStore.observePresets().collect { presets ->
+                        cachedPresets = presets
+                        panel.render(presets, currentStore.getLiveTetherPresetId())
+                        refresh(undoController.currentGraph)
+                    }
+                }
+                launch {
+                    currentStore.observeLiveTetherPresetId().collect { liveId ->
+                        panel.render(cachedPresets, liveId)
+                        refresh(undoController.currentGraph)
+                    }
+                }
             }
         }
     }
@@ -92,12 +115,6 @@ internal class PresetPanelBinder(
         Toast.makeText(context, R.string.editor_preset_cleared, Toast.LENGTH_SHORT).show()
     }
 
-    /**
-     * Applies [preset] onto the live graph, preloading its LUT through the render host.
-     *
-     * A preset row whose JSON does not decode is reported and skipped: applying half a look would be
-     * worse than not applying one.
-     */
     private fun applyPreset(preset: UserPresetRecord) {
         val target = EditGraphJsonCodec.decode(preset.graphSubsetJson)
         if (target == null) {
@@ -134,11 +151,11 @@ internal class PresetPanelBinder(
     private fun persistPreset(name: String, graphJson: String) {
         val currentStore = store ?: return
         val preset = UserPresetRecord(
-            id = "user_${System.currentTimeMillis()}",
+            id = "user_${UUID.randomUUID()}",
             name = name,
             graphSubsetJson = graphJson
         )
-        scope.launch {
+        owner.lifecycleScope.launch {
             try {
                 currentStore.savePreset(preset)
                 Toast.makeText(
@@ -146,8 +163,11 @@ internal class PresetPanelBinder(
                     context.getString(R.string.editor_preset_saved, name),
                     Toast.LENGTH_SHORT
                 ).show()
-            } catch (io: java.io.IOException) {
+            } catch (io: IOException) {
                 Timber.e(io, "Failed to persist a user preset")
+                Toast.makeText(context, R.string.editor_preset_save_failed, Toast.LENGTH_SHORT).show()
+            } catch (error: RuntimeException) {
+                Timber.e(error, "Database failure persisting a user preset")
                 Toast.makeText(context, R.string.editor_preset_save_failed, Toast.LENGTH_SHORT).show()
             }
         }
@@ -191,9 +211,6 @@ internal class PresetPanelBinder(
             R.string.editor_preset_live_on
         }
         Toast.makeText(context, messageRes, Toast.LENGTH_SHORT).show()
-        scope.launch {
-            panel.render(currentStore.listPresets(), next)
-        }
     }
 
     private fun showRenamePrompt(preset: UserPresetRecord) {
@@ -203,13 +220,14 @@ internal class PresetPanelBinder(
     }
 
     private fun renamePreset(presetId: String, name: String) {
-        val currentStore = store
-        if (currentStore == null) return
-        scope.launch {
+        val currentStore = store ?: return
+        owner.lifecycleScope.launch {
             try {
                 currentStore.renamePreset(presetId, name)
-            } catch (io: java.io.IOException) {
+            } catch (io: IOException) {
                 Timber.e(io, "Failed to rename a user preset")
+            } catch (error: RuntimeException) {
+                Timber.e(error, "Database failure renaming a user preset")
             }
         }
     }
@@ -224,19 +242,17 @@ internal class PresetPanelBinder(
 
     private fun deletePreset(presetId: String) {
         val currentStore = store ?: return
-        scope.launch {
+        owner.lifecycleScope.launch {
             try {
                 currentStore.deletePreset(presetId)
-            } catch (io: java.io.IOException) {
+            } catch (io: IOException) {
                 Timber.e(io, "Failed to delete a user preset")
+            } catch (error: RuntimeException) {
+                Timber.e(error, "Database failure deleting a user preset")
             }
         }
     }
 
-    /**
-     * Shows a single-line name prompt prefilled with [initial] and calls [onName] with the trimmed,
-     * non-blank result. A blank name simply closes the dialog.
-     */
     private fun showNamePrompt(titleRes: Int, initial: String?, onName: (String) -> Unit) {
         val input = EditText(context).apply {
             setSingleLine(true)

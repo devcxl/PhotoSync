@@ -15,9 +15,9 @@ class BuiltinPresetsTest {
 
     @Test
     fun shouldShipExactlyFiveDeterministicBuiltins_whenReadingTheLibrary() {
-        val presets = BuiltinPresets.all()
+        val specs = BuiltinPresets.specs()
 
-        assertEquals(5, presets.size)
+        assertEquals(5, specs.size)
         assertEquals(
             listOf(
                 "builtin_clean_portrait",
@@ -26,23 +26,21 @@ class BuiltinPresetsTest {
                 "builtin_cool_nordic",
                 "builtin_mono_silver"
             ),
-            presets.map { it.id }
+            specs.map { it.id }
         )
-        assertTrue(presets.all { it.isBuiltin })
-        assertTrue(presets.all { it.lutFilePath == null })
-        assertEquals(presets.size, presets.map { it.id }.toSet().size)
+        assertEquals(specs.size, specs.map { it.id }.toSet().size)
     }
 
     @Test
     fun shouldRoundTripEveryBuiltinThroughTheJsonCodec_whenDecodingItsSubset() {
-        for (preset in BuiltinPresets.all()) {
-            val decoded = EditGraphJsonCodec.decode(preset.graphSubsetJson)
+        for (spec in BuiltinPresets.specs()) {
+            val decoded = EditGraphJsonCodec.decode(spec.graphSubsetJson)
 
-            assertNotNull("${preset.id} must decode", decoded)
+            assertNotNull("${spec.id} must decode", decoded)
             val graph = checkNotNull(decoded)
             assertEquals(
-                "${preset.id} must re-encode identically",
-                preset.graphSubsetJson,
+                "${spec.id} must re-encode identically",
+                spec.graphSubsetJson,
                 EditGraphJsonCodec.encode(graph)
             )
         }
@@ -50,31 +48,31 @@ class BuiltinPresetsTest {
 
     @Test
     fun shouldNeverBeIdentity_whenReadingEveryBuiltin() {
-        for (preset in BuiltinPresets.all()) {
-            val graph = checkNotNull(EditGraphJsonCodec.decode(preset.graphSubsetJson))
+        for (spec in BuiltinPresets.specs()) {
+            val graph = checkNotNull(EditGraphJsonCodec.decode(spec.graphSubsetJson))
 
-            assertFalse("${preset.id} must change the picture", graph.isIdentity())
+            assertFalse("${spec.id} must change the picture", graph.isIdentity())
         }
     }
 
     @Test
     fun shouldCarryNoComposition_whenReadingEveryBuiltin() {
-        for (preset in BuiltinPresets.all()) {
-            val graph = checkNotNull(EditGraphJsonCodec.decode(preset.graphSubsetJson))
+        for (spec in BuiltinPresets.specs()) {
+            val graph = checkNotNull(EditGraphJsonCodec.decode(spec.graphSubsetJson))
 
-            assertTrue("${preset.id} crop", graph.geometry.isIdentity())
-            assertNull("${preset.id} liquify", graph.geometry.liquify)
-            assertTrue("${preset.id} reshape", graph.portrait.reshape.isIdentity())
-            assertTrue("${preset.id} body", graph.portrait.body.isIdentity())
+            assertTrue("${spec.id} crop", graph.geometry.isIdentity())
+            assertNull("${spec.id} liquify", graph.geometry.liquify)
+            assertTrue("${spec.id} reshape", graph.portrait.reshape.isIdentity())
+            assertTrue("${spec.id} body", graph.portrait.body.isIdentity())
         }
     }
 
     @Test
     fun shouldSurviveSanitizeWithoutChanging_whenApplyingTheValidator() {
-        for (preset in BuiltinPresets.all()) {
-            val graph = checkNotNull(EditGraphJsonCodec.decode(preset.graphSubsetJson))
+        for (spec in BuiltinPresets.specs()) {
+            val graph = checkNotNull(EditGraphJsonCodec.decode(spec.graphSubsetJson))
 
-            assertEquals("${preset.id} must already be in range", graph, EditValidator.sanitize(graph))
+            assertEquals("${spec.id} must already be in range", graph, EditValidator.sanitize(graph))
         }
     }
 
@@ -86,7 +84,7 @@ class BuiltinPresetsTest {
 
     @Test
     fun shouldKeepTheGraphsDistinct_whenComparingEveryBuiltin() {
-        val graphs = BuiltinPresets.all().map { EditGraphJsonCodec.decode(it.graphSubsetJson) }
+        val graphs = BuiltinPresets.specs().map { EditGraphJsonCodec.decode(it.graphSubsetJson) }
 
         assertEquals(graphs.size, graphs.toSet().size)
     }

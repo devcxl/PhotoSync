@@ -129,4 +129,22 @@ object PresetGraphMerger {
             graph.detail.isIdentity() &&
             graph.effects.isIdentity() &&
             graph.portrait.skin.isIdentity()
+
+    /**
+     * Returns the id of the first entry in [candidates] whose preset-owned axes match [graph], or
+     * `null` when [graph] is neutral on preset axes or matches none.
+     */
+    fun matchingPresetId(
+        graph: EditGraph,
+        candidates: Iterable<Pair<String, String>>
+    ): String? {
+        if (hasNeutralPresetAxes(graph)) return null
+        val targetEncoded = EditGraphJsonCodec.encode(CopyMask().extract(graph))
+        for ((id, subsetJson) in candidates) {
+            val decoded = EditGraphJsonCodec.decode(subsetJson) ?: continue
+            val normalized = EditGraphJsonCodec.encode(CopyMask().extract(decoded))
+            if (normalized == targetEncoded) return id
+        }
+        return null
+    }
 }

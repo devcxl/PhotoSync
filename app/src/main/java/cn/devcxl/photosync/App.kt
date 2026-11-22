@@ -12,8 +12,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
@@ -23,7 +26,9 @@ import cn.devcxl.photosync.data.RoomEditStore
 import cn.devcxl.photosync.data.RoomTetheredPhotoCommitter
 import cn.devcxl.photosync.data.TetheredIngestResult
 import cn.devcxl.photosync.data.TetheredPhotoIngestor
+import cn.devcxl.photosync.editor.R as EditorR
 import cn.devcxl.photosync.editor.contract.EditorHostRegistry
+import cn.devcxl.photosync.editor.domain.BuiltinPresets
 import cn.devcxl.photosync.editor.render.BackgroundPreviewRenderer
 import cn.devcxl.photosync.export.MediaStoreGallerySink
 import cn.devcxl.photosync.ptp.manager.UsbPtpConnectionController
@@ -71,7 +76,13 @@ class App : Application() {
     )
 
     /** The `LiveTetherPreset` ingest path, or `null` when the database is unavailable. */
+    @Volatile
     private var tetheredIngestor: TetheredPhotoIngestor? = null
+
+    private val _transferActive = MutableStateFlow(false)
+
+    /** True while the USB reader is between file-transfer progress ticks and completion. */
+    val transferActive: StateFlow<Boolean> = _transferActive.asStateFlow()
 
     val usbPtpConnectionController: UsbPtpConnectionController by lazy {
         UsbPtpConnectionController(this)
@@ -103,12 +114,16 @@ class App : Application() {
             photoEditDao = db.photoEditDao(),
             userPresetDao = db.userPresetDao(),
             liveTetherPrefs = getSharedPreferences(EDITOR_PREFS_NAME, MODE_PRIVATE),
-            onClearPhotoEditCache = { photoId -> clearPhotoEditCacheDir(cacheDir, photoId) }
+            onClearPhotoEditCache = { photoId -> clearPhotoEditCacheDir(cacheDir, photoId) },
+            builtinNameResolver = ::resolveBuiltinPresetName
         )
         EditorHostRegistry.editStore = editStore
         EditorHostRegistry.gallerySink = MediaStoreGallerySink(contentResolver)
         EditorHostRegistry.tetheredPhotoEvents = syncedPhotoEvents
-        applicationScope.launch { seedPresets(editStore) }
+        applicationScope.launch {
+            File(cacheDir, TetheredPhotoIngestor.STAGING_DIR_NAME).deleteRecursively()
+            seedPresets(editStore)
+        }
         tetheredIngestor = createIngestor(editStore)
 
         try {
@@ -136,8 +151,12 @@ class App : Application() {
      * gallery activity being alive.
      */
     private fun configureTetheredSync() {
-        usbPtpConnectionController.setFileDownloadPath(externalCacheDir?.absolutePath)
+        val downloadDir = externalCacheDir ?: cacheDir.also {
+            Timber.w("externalCacheDir unavailable; falling back to internal cacheDir for sync")
+        }
+        usbPtpConnectionController.setFileDownloadPath(downloadDir.absolutePath)
         usbPtpConnectionController.setFileDownloadedListener { fileHandle, file, _ ->
+            _transferActive.value = false
             val ingestor = tetheredIngestor
             if (ingestor == null) {
                 Timber.w("Tethered ingest pipeline is unavailable; the photo was not imported")
@@ -145,6 +164,28 @@ class App : Application() {
                 ingestInBackground(ingestor, file, fileHandle)
             }
         }
+    }
+
+    /** Marks that a USB file transfer is currently active so UI cards can reflect live state. */
+    fun notifyTransferStarted() {
+        _transferActive.value = true
+    }
+
+    /** Clears the active USB transfer flag when a session disconnects or errors out. */
+    fun clearTransferActive() {
+        _transferActive.value = false
+    }
+
+    private fun resolveBuiltinPresetName(id: String): String {
+        val resId = when (id) {
+            BuiltinPresets.CLEAN_PORTRAIT_ID -> EditorR.string.editor_preset_builtin_clean_portrait
+            BuiltinPresets.FILM_CHROME_ID -> EditorR.string.editor_preset_builtin_film_chrome
+            BuiltinPresets.WARM_SUNSET_ID -> EditorR.string.editor_preset_builtin_warm_sunset
+            BuiltinPresets.COOL_NORDIC_ID -> EditorR.string.editor_preset_builtin_cool_nordic
+            BuiltinPresets.MONO_SILVER_ID -> EditorR.string.editor_preset_builtin_mono_silver
+            else -> return id
+        }
+        return getString(resId)
     }
 
     private fun ingestInBackground(ingestor: TetheredPhotoIngestor, file: File, objectHandle: Int) {
@@ -184,7 +225,7 @@ class App : Application() {
     private suspend fun seedPresets(editStore: RoomEditStore) {
         try {
             editStore.seedBuiltinPresets()
-        } catch (e: IllegalStateException) {
+        } catch (e: RuntimeException) {
             Timber.e(e, "Failed to seed the built-in preset library")
         }
     }

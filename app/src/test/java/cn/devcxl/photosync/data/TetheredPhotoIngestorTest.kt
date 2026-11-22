@@ -102,7 +102,7 @@ class TetheredPhotoIngestorTest {
     private fun ingestor(
         editStore: EditStore,
         committer: TetheredPhotoCommitter,
-        renderPreview: (String, Boolean, EditGraph, File) -> File? = { _, _, _, _ -> null }
+        renderPreview: suspend (String, Boolean, EditGraph, File) -> File? = { _, _, _, _ -> null }
     ): TetheredPhotoIngestor = TetheredPhotoIngestor(
         editStore = editStore,
         committer = committer,
@@ -230,9 +230,10 @@ class TetheredPhotoIngestorTest {
         val result = ingestor.onFileDownloaded(sourceFile(), objectHandle = CAMERA_HANDLE, isRaw = true, isJpeg = false)
 
         val ingested = result as TetheredIngestResult.Ingested
-        assertEquals("p1", ingested.presetId)
+        assertNull(ingested.presetId)
         assertTrue("no preview means no bound edit", !ingested.hasEdit)
         assertNull(committer.commits.single().stagedPreview)
+        assertNull(committer.commits.single().graphJson)
     }
 
     @Test
@@ -265,7 +266,14 @@ class TetheredPhotoIngestorTest {
 
     @Test
     fun shouldBuildValidPresetJson_whenApplyingABuiltin() = runBlocking {
-        val builtin = BuiltinPresets.all().first { it.id == BuiltinPresets.FILM_CHROME_ID }
+        val spec = BuiltinPresets.specs().first { it.id == BuiltinPresets.FILM_CHROME_ID }
+        val builtin = UserPresetRecord(
+            id = spec.id,
+            name = spec.id,
+            graphSubsetJson = spec.graphSubsetJson,
+            isBuiltin = true,
+            createdAt = spec.createdAt
+        )
         val store = FakeEditStore(
             presets = mapOf(builtin.id to builtin),
             activePresetId = builtin.id

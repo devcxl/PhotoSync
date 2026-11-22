@@ -60,6 +60,15 @@ class BatchBakeProgressTest {
     }
 
     @Test
+    fun shouldReportFinished_whenSomePhotosFailedButAllProcessed() {
+        val progress = BatchBakeProgress.from(done = 3, total = 5, failed = 2, running = false)
+
+        assertEquals(BatchBakeState.FINISHED, progress.state)
+        assertTrue(progress.isFinished)
+        assertEquals(1.0f, progress.ratio, 1e-6f)
+    }
+
+    @Test
     fun shouldCarryCurrentPhotoName_whenEncodingOnePhoto() {
         val progress = BatchBakeProgress.from(
             done = 1,

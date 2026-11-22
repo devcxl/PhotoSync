@@ -6,8 +6,8 @@ import android.view.View
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.ContextCompat
-
-import kotlinx.coroutines.CoroutineScope
+import androidx.lifecycle.LifecycleOwner
+import timber.log.Timber
 
 import cn.devcxl.photosync.editor.R
 import cn.devcxl.photosync.editor.databinding.ActivityEditorBinding
@@ -33,7 +33,7 @@ internal class EditorPanelController(
     private val undoController: EditorUndoController,
     private val host: Host,
     lutStore: CubeLutStore,
-    private val scope: CoroutineScope
+    owner: LifecycleOwner
 ) {
 
     /** Host callbacks that keep the preview canvas in sync with the drawer. */
@@ -105,7 +105,7 @@ internal class EditorPanelController(
         context = context,
         binding = binding,
         undoController = undoController,
-        scope = scope,
+        owner = owner,
         host = object : PresetPanelBinder.Host {
             override fun onPresetApplied(graph: EditGraph) {
                 host.onGraphCommitted(graph, EditParameterKey.PRESET)

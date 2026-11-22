@@ -1,5 +1,7 @@
 package cn.devcxl.photosync.activity
 
+import java.io.IOException
+
 import android.content.Context
 
 import kotlinx.coroutines.CoroutineScope
@@ -8,23 +10,26 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 
+import cn.devcxl.photosync.R
 import cn.devcxl.photosync.adapter.FilmstripAdapter
 import cn.devcxl.photosync.adapter.PhotoPagerAdapter
 import cn.devcxl.photosync.data.PhotoDao
 import cn.devcxl.photosync.editor.contract.EditStore
 import cn.devcxl.photosync.editor.contract.EditorHostRegistry
 import cn.devcxl.photosync.editor.contract.PhotoEditRecord
+import cn.devcxl.photosync.editor.domain.CopyMask
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.EditGraphJsonCodec
+import cn.devcxl.photosync.editor.domain.LiquifyMeshCopier
+import cn.devcxl.photosync.editor.render.BackgroundPreviewRenderer
 import cn.devcxl.photosync.export.BatchBakeController
 import cn.devcxl.photosync.utils.ExtensionUtils
 
 /**
  * Implements the quick strip's actions for `MainActivity`.
  *
- * Everything the strip can do — apply a preset to the pager's current photo, toggle the
- * `LiveTetherPreset`, copy/paste parameters onto one or many photos, enter multi-select and enqueue a
- * batch bake — lives here, so the activity keeps only view plumbing and stays readable.
+ * Applies presets, pastes copied parameters (cloning liquify meshes when needed) with background
+ * preview generation, toggles multi-select and enqueues batch bakes.
  */
 internal class TetheredDarkroomHost(
     private val context: Context,
@@ -54,41 +59,27 @@ internal class TetheredDarkroomHost(
     fun currentPhotoId(): Long? = adapter.getItem(currentIndex())?.id
 
     /**
-     * Persists [graph] for [photoId] and refreshes the chrome.
-     *
-     * A preset applied from the gallery must be written straight away: the pager only renders the
-     * preview cache path the store knows about.
+     * Renders the preview cache and persists [graph] for [photoId].
      */
     fun applyPreset(photoId: Long, graph: EditGraph) {
-        val currentStore = store ?: return
-        scope.launch {
-            try {
-                currentStore.saveEditForPhoto(photoId, graph, previewCachePath = null)
-                withContext(Dispatchers.Main) { onGraphPersisted(photoId) }
-            } catch (io: java.io.IOException) {
-                Timber.e(io, "Failed to persist a quick preset for photoId=%d", photoId)
-            }
-        }
+        persistWithRenderedPreview(photoId, graph)
     }
 
     /**
-     * Copies the current photo's look.
-     *
-     * The gallery does not carry a full editor session, so the copy uses the persisted graph and the
-     * request is ignored when the photo was never edited.
+     * Copies the current photo's look, or reports when the photo was never edited.
      */
     fun copyCurrent(includeChecklist: Boolean) {
         val photoId = currentPhotoId()
         val graph = photoId?.let { graphOf(it) }
         if (graph == null) {
-            onFeedback(context.getString(cn.devcxl.photosync.R.string.quick_strip_paste_empty))
+            onFeedback(context.getString(R.string.quick_strip_copy_unedited))
             return
         }
-        copyPasteHelper.copy(graph, includeChecklist) { mask ->
-            val message = if (mask == cn.devcxl.photosync.editor.domain.CopyMask()) {
-                cn.devcxl.photosync.R.string.quick_strip_copied
+        copyPasteHelper.copy(graph, photoId, includeChecklist) { mask ->
+            val message = if (mask == CopyMask()) {
+                R.string.quick_strip_copied
             } else {
-                cn.devcxl.photosync.R.string.quick_strip_copied_masked
+                R.string.quick_strip_copied_masked
             }
             onFeedback(context.getString(message))
             quickStrip.onClipboardChanged()
@@ -99,28 +90,33 @@ internal class TetheredDarkroomHost(
      * Pastes the clipboard onto the current photo, or onto every selected photo in multi-select.
      */
     fun paste() {
-        val targets = pasteTargets()
-        if (targets.isEmpty()) {
-            onFeedback(context.getString(cn.devcxl.photosync.R.string.quick_strip_paste_empty))
+        if (!EditClipboard.hasContent) {
+            onFeedback(context.getString(R.string.quick_strip_paste_empty))
             return
         }
-        val changed = copyPasteHelper.paste(targets) { photoId, graph -> persistPasted(photoId, graph) }
-        val message = context.getString(cn.devcxl.photosync.R.string.quick_strip_pasted, changed)
-        onFeedback(if (changed > 0) message else context.getString(
-            cn.devcxl.photosync.R.string.quick_strip_paste_empty
-        ))
+        val targets = pasteTargets()
+        if (targets.isEmpty()) {
+            onFeedback(context.getString(R.string.batch_bake_no_selection))
+            return
+        }
+        val changed = copyPasteHelper.paste(targets) { photoId, graph, originId, mask ->
+            persistPasted(photoId, graph, originId, mask)
+        }
+        val msg = if (changed > 0) {
+            context.getString(R.string.quick_strip_pasted, changed)
+        } else {
+            context.getString(R.string.quick_strip_paste_unchanged)
+        }
+        onFeedback(msg)
         quickStrip.onClipboardChanged()
     }
 
     /** Toggles multi-select and reports the new mode so the filmstrip can paint it. */
     fun toggleMultiSelect() {
         if (filmstripAdapter.selectionMode) {
-            filmstripAdapter.exitSelectionMode()
-            quickStrip.renderSelectionMode(false)
+            leaveSelectionMode()
         } else {
-            // Entering from the strip selects the current photo so the batch is never empty on entry.
-            val index = currentIndex()
-            val entity = adapter.getItem(index)
+            val entity = adapter.getItem(currentIndex())
             if (entity != null) {
                 filmstripAdapter.enterSelectionModeFor(entity.id)
             }
@@ -134,49 +130,99 @@ internal class TetheredDarkroomHost(
             listOfNotNull(currentPhotoId())
         }
         if (ids.isEmpty()) {
-            onFeedback(context.getString(cn.devcxl.photosync.R.string.batch_bake_no_selection))
+            onFeedback(context.getString(R.string.batch_bake_no_selection))
             return
         }
         batchBake.enqueue(ids)
-        onFeedback(context.getString(cn.devcxl.photosync.R.string.batch_bake_queued, ids.size))
-        filmstripAdapter.clearSelection()
+        onFeedback(context.getString(R.string.batch_bake_queued, ids.size))
+        if (filmstripAdapter.selectionMode) {
+            leaveSelectionMode()
+        }
     }
 
-    /** Ends multi-select after a batch action so the strip returns to paging mode. */
-    fun leaveSelectionMode() {
+    private fun leaveSelectionMode() {
         filmstripAdapter.exitSelectionMode()
         quickStrip.renderSelectionMode(false)
     }
 
     private fun pasteTargets(): Map<Long, EditGraph> {
         if (filmstripAdapter.selectionMode) {
-            return filmstripAdapter.selectedPhotoIds.mapNotNull { id ->
-                graphOf(id)?.let { id to it }
-            }.toMap()
+            return filmstripAdapter.selectedPhotoIds.associateWith { id -> graphOf(id) ?: EditGraph() }
         }
         val entity = adapter.getItem(currentIndex()) ?: return emptyMap()
-        val graph = graphOf(entity.id) ?: EditGraph()
-        return mapOf(entity.id to graph)
+        return mapOf(entity.id to (graphOf(entity.id) ?: EditGraph()))
     }
 
-    private fun persistPasted(photoId: Long, graph: EditGraph) {
+    private fun persistPasted(
+        photoId: Long,
+        graph: EditGraph,
+        originPhotoId: Long?,
+        mask: CopyMask
+    ) {
+        val needsClone = mask.includeLiquify &&
+            graph.geometry.liquify != null &&
+            originPhotoId != photoId
+        persistWithRenderedPreview(photoId, graph, cloneLiquify = needsClone)
+    }
+
+    private fun persistWithRenderedPreview(
+        photoId: Long,
+        graph: EditGraph,
+        cloneLiquify: Boolean = false
+    ) {
         val currentStore = store ?: return
         scope.launch {
-            try {
-                currentStore.saveEditForPhoto(photoId, graph, previewCachePath = null)
-                withContext(Dispatchers.Main) { onGraphPersisted(photoId) }
-            } catch (io: java.io.IOException) {
-                Timber.e(io, "Failed to paste parameters onto photoId=%d", photoId)
+            val saved = saveOnIo(currentStore, photoId, graph, cloneLiquify)
+            withContext(Dispatchers.Main) {
+                if (saved) {
+                    onGraphPersisted(photoId)
+                } else {
+                    onFeedback(context.getString(R.string.toast_save_failed))
+                }
             }
         }
+    }
+
+    private suspend fun saveOnIo(
+        currentStore: EditStore,
+        photoId: Long,
+        rawGraph: EditGraph,
+        cloneLiquify: Boolean
+    ): Boolean = try {
+        val entity = withContext(Dispatchers.IO) { dao.getById(photoId) } ?: return false
+        val graph = if (cloneLiquify) {
+            withContext(Dispatchers.IO) { LiquifyMeshCopier.cloneForTarget(context.filesDir, photoId, rawGraph) }
+        } else {
+            rawGraph
+        }
+        val previewPath = if (graph.isIdentity()) {
+            null
+        } else {
+            val isRaw = ExtensionUtils.isRawExtension(ExtensionUtils.fileExtension(entity.path))
+            BackgroundPreviewRenderer.render(
+                context = context,
+                filesDir = context.filesDir,
+                cacheDir = context.cacheDir,
+                photoId = photoId,
+                sourcePath = entity.path,
+                isRaw = isRaw,
+                graph = graph
+            ) ?: return false
+        }
+        withContext(Dispatchers.IO) {
+            currentStore.saveEditForPhoto(photoId, graph, previewCachePath = previewPath)
+        }
+        true
+    } catch (io: IOException) {
+        Timber.e(io, "Failed to persist gallery edit for photoId=%d", photoId)
+        false
+    } catch (error: RuntimeException) {
+        Timber.e(error, "Database failure persisting gallery edit for photoId=%d", photoId)
+        false
     }
 
     private fun graphOf(photoId: Long): EditGraph? {
         val json = editedMap()[photoId]?.graphJson ?: return null
         return EditGraphJsonCodec.decode(json)
     }
-
-    /** True when [path] is a RAW file this pipeline can decode. */
-    fun isRaw(path: String): Boolean =
-        ExtensionUtils.isRawExtension(ExtensionUtils.fileExtension(path))
 }

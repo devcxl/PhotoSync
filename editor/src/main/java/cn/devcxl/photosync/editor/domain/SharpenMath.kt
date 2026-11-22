@@ -41,15 +41,24 @@ internal object SharpenMath {
         val luma = ImageFilters.luminance(srgb)
         val blurred = blur(luma, width, height, step)
         val masking = params.sharpenMasking.coerceIn(0.0f, 1.0f)
-        for (index in luma.indices) {
-            val detail = luma[index] - blurred[index]
-            val gate = thresholdGate(detail, params.sharpenThreshold)
-            if (gate <= 0.0f) continue
-            val weight = maskingWeight(luma, width, height, index, masking)
-            val skin = 1.0f - (skinMask?.get(index)?.coerceIn(0.0f, 1.0f) ?: 0.0f)
-            val delta = amount * detail * gate * weight * skin
-            if (delta == 0.0f) continue
-            addLumaDelta(srgb, index, delta)
+        val validMask = skinMask?.takeIf { it.size == SkinMaskMath.MASK_SIZE * SkinMaskMath.MASK_SIZE }
+        for (y in 0 until height) {
+            val v = (y + 0.5f) / height
+            val rowOffset = y * width
+            for (x in 0 until width) {
+                val index = rowOffset + x
+                val detail = luma[index] - blurred[index]
+                val gate = thresholdGate(detail, params.sharpenThreshold)
+                if (gate <= 0.0f) continue
+                val weight = maskingWeight(luma, width, height, index, masking)
+                val maskSample = validMask?.let {
+                    SkinMaskMath.sampleMask(it, SkinMaskMath.MASK_SIZE, (x + 0.5f) / width, v)
+                } ?: 0.0f
+                val skin = 1.0f - maskSample.coerceIn(0.0f, 1.0f)
+                val delta = amount * detail * gate * weight * skin
+                if (delta == 0.0f) continue
+                addLumaDelta(srgb, index, delta)
+            }
         }
     }
 
