@@ -67,7 +67,7 @@ _Avoid_: 修图历史、滤镜配置、图层文件
 _Avoid_: 滤镜包、样式模板
 
 **LiveTetherPreset（联机自动预设）**:
-在 USB 同步期间激活的一份参数预设；每张新照片从相机同步入库时自动绑定该预设并生成编辑预览，实现联机拍摄边拍边看成片观感。
+在 USB 同步期间激活的一份参数预设；每张新照片从相机同步入库时自动绑定该预设并生成编辑预览，实现联机拍摄边拍边看成片观感。激活状态持久化于 `SharedPreferences` 键 `pref_live_tether_preset_id`，`PhotoEntity` 与绑定后的 `PhotoEditEntity` 在同一 Room 事务内提交。
 _Avoid_: 默认滤镜、相机机内风格
 
 **BaseLook（RAW 基准观感）**:
@@ -77,6 +77,14 @@ _Avoid_: 相机配置文件、原始模式
 **Bake（烘焙导出）**:
 以原始照片文件和当前 EditGraph 为输入，经全分辨率分块渲染与拍摄 EXIF 写回，在系统相册中生成全新成片文件的过程。
 _Avoid_: 覆盖保存、另存为
+
+**CopyMask（复制参数掩码）**:
+跨照片搬运参数时的子集选择器；默认只携带观感轴（`baseLook`、影调、色彩、细节、效果、人像美肤）而排除单图构图（`geometry.*`、`portrait.reshape`、`portrait.body`），确保连拍逐张套色时不会连带套上别的画幅裁切与关键点位移。
+_Avoid_: 全量复制、参数模板
+
+**BatchBake（批量烘焙队列）**:
+把多选照片按顺序排入 `WorkManager` 唯一队列（`photosync_batch_bake`）逐张全分辨率导出的后台任务；RAW 烘焙在进程内以互斥锁串行，主界面右上角展示 `正在导出 X/Y…` 进度卡片。
+_Avoid_: 多线程导出、并行烘焙
 
 **Liquify（液化）**:
 在图像原始空间（pre-crop）上通过 128×128 归一化半精度浮点位移网格实现的局部推拉与恢复形变。

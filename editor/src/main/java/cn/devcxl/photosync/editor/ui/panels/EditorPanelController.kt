@@ -7,6 +7,8 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 
+import kotlinx.coroutines.CoroutineScope
+
 import cn.devcxl.photosync.editor.R
 import cn.devcxl.photosync.editor.databinding.ActivityEditorBinding
 import cn.devcxl.photosync.editor.domain.CropRect
@@ -30,7 +32,8 @@ internal class EditorPanelController(
     private val binding: ActivityEditorBinding,
     private val undoController: EditorUndoController,
     private val host: Host,
-    lutStore: CubeLutStore
+    lutStore: CubeLutStore,
+    private val scope: CoroutineScope
 ) {
 
     /** Host callbacks that keep the preview canvas in sync with the drawer. */
@@ -98,6 +101,20 @@ internal class EditorPanelController(
         onEdited = ::handleSubPanelEdited,
         onCommitted = ::handleSubPanelCommitted
     )
+    private val presetPanels = PresetPanelBinder(
+        context = context,
+        binding = binding,
+        undoController = undoController,
+        scope = scope,
+        host = object : PresetPanelBinder.Host {
+            override fun onPresetApplied(graph: EditGraph) {
+                host.onGraphCommitted(graph, EditParameterKey.PRESET)
+                refresh()
+            }
+
+            override fun onLiveTetherPresetChanged(presetId: String?) = Unit
+        }
+    )
     private val aspectRow = CropAspectChipRow(context, binding, ::applyAspectPreset)
     private val tabViews: Map<EditorGroup, TextView> = mapOf(
         EditorGroup.PRESET to binding.tabPreset,
@@ -126,6 +143,7 @@ internal class EditorPanelController(
         detailPanels.showFor(null)
         effectsPanels.showFor(null)
         portraitPanels.showFor(null)
+        presetPanels.setVisible(false)
         aspectRow.setVisible(false)
     }
 
@@ -140,6 +158,7 @@ internal class EditorPanelController(
         detailPanels.refresh(graph)
         effectsPanels.refresh(graph)
         portraitPanels.refresh(graph)
+        presetPanels.refresh(graph)
         refreshHeaderReadout(graph)
         aspectRow.setVisible(currentTool == EditorTool.CROP)
         aspectRow.refresh(lockedAspect, host.previewAspect())
@@ -214,6 +233,7 @@ internal class EditorPanelController(
         detailPanels.showFor(null)
         effectsPanels.showFor(null)
         portraitPanels.showFor(null)
+        presetPanels.setVisible(false)
         aspectRow.setVisible(false)
         binding.activeToolLabel.text = tabViews[group]?.text
         binding.activeValueText.setText(R.string.editor_tool_coming_soon)
@@ -255,6 +275,7 @@ internal class EditorPanelController(
         detailPanels.showFor(spec.controlStyle)
         effectsPanels.showFor(spec.controlStyle)
         portraitPanels.showFor(spec.controlStyle)
+        presetPanels.setVisible(spec.controlStyle == EditorControlStyle.PRESET)
         val dial = spec.dial
         dialTool = if (dial == null) null else spec.tool
         if (dial == null) {

@@ -57,7 +57,10 @@ internal enum class EditorControlStyle {
     FACE_RESHAPE,
 
     /** Portrait body reshaping panel: waist and legs. */
-    BODY_RESHAPE
+    BODY_RESHAPE,
+
+    /** Preset library panel: save the current look, apply a preset, clear preset axes. */
+    PRESET
 }
 
 /**
@@ -101,7 +104,8 @@ internal object EditorToolCatalog {
 
     private val specs: Map<EditorTool, EditorToolSpec> =
         (
-            cropAndStraightenSpecs() +
+            EditorPresetSpecs.presetSpecs() +
+                cropAndStraightenSpecs() +
                 flipAndPerspectiveSpecs() +
                 EditorToneDetailSpecs.toneSpecs() +
                 EditorColorSpecs.colourSpecs() +

@@ -169,7 +169,9 @@ class PhotoPagerAdapter(
     private val isCurrentPageProvider: (Int) -> Boolean,
     private val isJpegProvider: (String) -> Boolean,
     private val onPhotoScaleChanged: (String, Int, Float, Float) -> Unit,
-    private val onPhotoTap: () -> Unit = {}
+    private val onPhotoTap: () -> Unit = {},
+    private val canCompareProvider: (String) -> Boolean = { false },
+    private val onCompareChanged: (String, Boolean) -> Unit = { _, _ -> }
 ) : RecyclerView.Adapter<PhotoPagerAdapter.VH>() {
     companion object {
         private val PAYLOAD_IMAGE_STATE = Any()
@@ -180,8 +182,12 @@ class PhotoPagerAdapter(
     private var currentPrimaryPosition: Int = RecyclerView.NO_POSITION
     private val handler = Handler(Looper.getMainLooper())
 
+    /** Path and bitmap of the unedited original currently shown by a press-and-hold compare. */
+    private var overridePath: String? = null
+    private var overrideBitmap: Bitmap? = null
+
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
-        val container = FrameLayout(parent.context).apply {
+        val container = CompareAwareFrameLayout(parent.context).apply {
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
@@ -213,7 +219,6 @@ class PhotoPagerAdapter(
         container.addView(loadingOverlay)
         return VH(container, photoView, jpegDetailView, loadingOverlay, loadingTextView)
     }
-
     private fun createLoadingOverlay(context: Context, labelView: TextView): LinearLayout {
         val density = context.resources.displayMetrics.density
         val dp = { value: Int -> (value * density).toInt() }
@@ -246,14 +251,16 @@ class PhotoPagerAdapter(
         val isCurrentPage = isCurrentPageProvider(position)
         holder.bind(
             path = entity.path,
-            renderState = renderStateProvider(entity.path),
+            renderState = resolveRenderState(entity.path),
             viewerMode = resolvePhotoViewerMode(
                 isJpeg = isJpegProvider(entity.path)
             ),
             isCurrentPage = isCurrentPage,
             jpegSourceInfo = jpegSourceInfoProvider(entity.path),
             onPhotoScaleChanged = onPhotoScaleChanged,
-            onPhotoTap = onPhotoTap
+            onPhotoTap = onPhotoTap,
+            canCompare = canCompareProvider(entity.path),
+            onCompareChanged = onCompareChanged
         )
         onBindRequest(entity.path, position)
     }
@@ -264,18 +271,31 @@ class PhotoPagerAdapter(
             val isCurrentPage = isCurrentPageProvider(position)
             holder.bind(
                 path = entity.path,
-                renderState = renderStateProvider(entity.path),
+                renderState = resolveRenderState(entity.path),
                 viewerMode = resolvePhotoViewerMode(
                     isJpeg = isJpegProvider(entity.path)
                 ),
                 isCurrentPage = isCurrentPage,
                 jpegSourceInfo = jpegSourceInfoProvider(entity.path),
                 onPhotoScaleChanged = onPhotoScaleChanged,
-                onPhotoTap = onPhotoTap
+                onPhotoTap = onPhotoTap,
+                canCompare = canCompareProvider(entity.path),
+                onCompareChanged = onCompareChanged
             )
             return
         }
         super.onBindViewHolder(holder, position, payloads)
+    }
+
+    /**
+     * Returns the render state to bind for [path].
+     *
+     * An armed compare override replaces both stages so the page shows the original — including a JPEG
+     * page that would otherwise fall back to the tiled viewer.
+     */
+    private fun resolveRenderState(path: String): PhotoRenderState {
+        val original = overrideFor(path) ?: return renderStateProvider(path)
+        return PhotoRenderState(thumbnail = original, full = original)
     }
 
     fun updateItems(newItems: List<PhotoEntity>) {
@@ -317,6 +337,30 @@ class PhotoPagerAdapter(
         }
     }
 
+    /**
+     * Shows the unedited [bitmap] for [path] until [clearImageOverride] is called.
+     *
+     * Used by the press-and-hold `Before` comparison. The override is intentionally not part of the
+     * render state: it must survive a bind that happens to run mid-hold.
+     */
+    fun showImageOverride(path: String, bitmap: Bitmap) {
+        overridePath = path
+        overrideBitmap = bitmap
+        notifyPathChanged(path)
+    }
+
+    /** Ends an override, restoring the graded preview. */
+    fun clearImageOverride() {
+        val path = overridePath
+        overridePath = null
+        overrideBitmap = null
+        if (path != null) notifyPathChanged(path)
+    }
+
+    /** Returns the original to render for [path], or `null` when no override is armed. */
+    internal fun overrideFor(path: String): Bitmap? =
+        if (path == overridePath) overrideBitmap else null
+
     class VH(
         container: FrameLayout,
         private val photoView: PhotoView,
@@ -339,8 +383,11 @@ class PhotoPagerAdapter(
             isCurrentPage: Boolean,
             jpegSourceInfo: JpegSourceInfo?,
             onPhotoScaleChanged: (String, Int, Float, Float) -> Unit,
-            onPhotoTap: () -> Unit
+            onPhotoTap: () -> Unit,
+            canCompare: Boolean,
+            onCompareChanged: (String, Boolean) -> Unit
         ) {
+            bindCompareGesture(path, canCompare, onCompareChanged)
             if (viewerMode == PhotoViewerMode.JPEG_TILED) {
                 bindJpegTiled(
                     path = path,
@@ -353,6 +400,31 @@ class PhotoPagerAdapter(
                 return
             }
             bindPhotoView(path, renderState, onPhotoScaleChanged, onPhotoTap)
+        }
+
+        /**
+         * Arms the press-and-hold `Before` comparison for this page.
+         *
+         * The detector lives on the container so it sees the stream before `PhotoView` starts panning;
+         * an unedited page gets `null` and therefore never shows a `Before` it cannot produce.
+         */
+        private fun bindCompareGesture(
+            path: String,
+            canCompare: Boolean,
+            onCompareChanged: (String, Boolean) -> Unit
+        ) {
+            val container = itemView as? CompareAwareFrameLayout ?: return
+            if (!canCompare) {
+                container.detector?.release()
+                container.detector = null
+                return
+            }
+            val slop = itemView.resources.displayMetrics.density * COMPARE_TOUCH_SLOP_DP
+            container.detector = PressAndHoldDetector(
+                touchSlopPx = slop,
+                onHoldStarted = { onCompareChanged(path, true) },
+                onHoldEnded = { onCompareChanged(path, false) }
+            )
         }
 
         private fun bindPhotoView(
@@ -560,6 +632,9 @@ class PhotoPagerAdapter(
         }
 
         companion object {
+            /** Movement beyond which a press-and-hold becomes a pan and is cancelled. */
+            const val COMPARE_TOUCH_SLOP_DP = 8.0f
+
             fun testIsZoomed(scale: Float, minScale: Float): Boolean {
                 return minScale > 0f && scale > minScale * 1.02f
             }

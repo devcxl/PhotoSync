@@ -7,6 +7,7 @@ import android.content.Context
 
 import cn.devcxl.photosync.editor.R
 import cn.devcxl.photosync.editor.domain.EditGraph
+import cn.devcxl.photosync.editor.domain.PresetGraphMerger
 import cn.devcxl.photosync.editor.ui.gesture.CropHandleMath
 import cn.devcxl.photosync.editor.ui.gesture.EditorTool
 
@@ -89,6 +90,11 @@ internal class EditorReadoutFormatter(private val context: Context) {
             Locale.US,
             context.getString(R.string.editor_value_signed_fmt),
             graph.effects.vignette.amount.toFloat()
+        )
+        EditorTool.PRESET -> statusText(
+            !PresetGraphMerger.hasNeutralPresetAxes(graph),
+            R.string.editor_value_preset_modified,
+            R.string.editor_value_scalar_none
         )
         else -> ""
     }

@@ -1,11 +1,20 @@
 package cn.devcxl.photosync.data
 
+import android.content.SharedPreferences
+
+import androidx.core.content.edit
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
+import timber.log.Timber
 
 import cn.devcxl.photosync.data.entity.PhotoEditEntity
+import cn.devcxl.photosync.data.entity.UserPresetEntity
 import cn.devcxl.photosync.editor.contract.EditStore
 import cn.devcxl.photosync.editor.contract.PhotoEditRecord
+import cn.devcxl.photosync.editor.contract.UserPresetRecord
+import cn.devcxl.photosync.editor.domain.BuiltinPresets
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.EditGraphJsonCodec
 import cn.devcxl.photosync.editor.domain.EditValidator
@@ -16,11 +25,19 @@ import cn.devcxl.photosync.editor.domain.EditValidator
  * When a saved [EditGraph] is identity (all sliders at neutral defaults), any existing row
  * for that photo is deleted and [onClearPhotoEditCache] is invoked so no identity rows or
  * stale preview files remain.
+ *
+ * The active `LiveTetherPreset` lives in [liveTetherPrefs] rather than a table: it is a single
+ * process-wide choice, and reading it must be synchronous because the USB download callback decides
+ * whether to render a preview before it commits a row.
  */
 class RoomEditStore(
     private val photoEditDao: PhotoEditDao,
+    private val userPresetDao: UserPresetDao,
+    private val liveTetherPrefs: SharedPreferences,
     private val onClearPhotoEditCache: (Long) -> Unit
 ) : EditStore {
+
+    private val liveTetherPresetId = MutableStateFlow(readLiveTetherPresetId())
 
     override suspend fun getEditForPhoto(photoId: Long): PhotoEditRecord? {
         return photoEditDao.getByPhotoId(photoId)?.toRecord()
@@ -58,6 +75,81 @@ class RoomEditStore(
         }
     }
 
+    override fun observePresets(): Flow<List<UserPresetRecord>> =
+        userPresetDao.observeAllFlow().map { list -> list.map { it.toRecord() } }
+
+    override suspend fun listPresets(): List<UserPresetRecord> =
+        userPresetDao.getAll().map { it.toRecord() }
+
+    override suspend fun getPreset(id: String): UserPresetRecord? =
+        userPresetDao.getById(id)?.toRecord()
+
+    override suspend fun savePreset(preset: UserPresetRecord) {
+        val name = preset.name.trim()
+        if (preset.id.isBlank() || name.isEmpty()) {
+            Timber.w("Refusing to save a preset without an id or a name")
+            return
+        }
+        userPresetDao.upsert(preset.copy(name = name).toEntity())
+    }
+
+    override suspend fun renamePreset(id: String, newName: String) {
+        val name = newName.trim()
+        if (name.isEmpty()) {
+            Timber.w("Refusing to rename a preset to a blank name")
+            return
+        }
+        val existing = userPresetDao.getById(id)
+        if (existing == null) {
+            Timber.w("Preset rename skipped: unknown preset")
+            return
+        }
+        if (existing.isBuiltin) {
+            Timber.w("Preset rename skipped: built-in presets are read-only")
+            return
+        }
+        userPresetDao.rename(id, name)
+    }
+
+    override suspend fun deletePreset(id: String) {
+        val existing = userPresetDao.getById(id)
+        if (existing == null) {
+            Timber.w("Preset delete skipped: unknown preset")
+            return
+        }
+        if (existing.isBuiltin) {
+            Timber.w("Preset delete skipped: built-in presets are read-only")
+            return
+        }
+        userPresetDao.deleteById(id)
+        if (liveTetherPresetId.value == id) {
+            setLiveTetherPresetId(null)
+        }
+    }
+
+    override fun getLiveTetherPresetId(): String? = liveTetherPresetId.value
+
+    override fun setLiveTetherPresetId(presetId: String?) {
+        val sanitized = presetId?.takeIf { it.isNotBlank() }
+        liveTetherPrefs.edit { putString(PREF_LIVE_TETHER_PRESET_ID, sanitized) }
+        liveTetherPresetId.value = sanitized
+    }
+
+    override fun observeLiveTetherPresetId(): Flow<String?> = liveTetherPresetId.asStateFlow()
+
+    /**
+     * Seeds the curated [BuiltinPresets] library.
+     *
+     * Idempotent by construction: the ids are deterministic and the insert ignores conflicts, so a
+     * user who renamed nothing and deleted nothing sees exactly the same five rows on every start.
+     */
+    suspend fun seedBuiltinPresets() {
+        userPresetDao.insertAllIgnore(BuiltinPresets.all().map { it.toEntity() })
+    }
+
+    private fun readLiveTetherPresetId(): String? =
+        liveTetherPrefs.getString(PREF_LIVE_TETHER_PRESET_ID, null)?.takeIf { it.isNotBlank() }
+
     private fun PhotoEditEntity.toRecord(): PhotoEditRecord {
         return PhotoEditRecord(
             photoId = photoId,
@@ -66,5 +158,28 @@ class RoomEditStore(
             previewCachePath = previewCachePath,
             updatedAt = updatedAt
         )
+    }
+
+    private fun UserPresetEntity.toRecord(): UserPresetRecord = UserPresetRecord(
+        id = id,
+        name = name,
+        graphSubsetJson = graphSubsetJson,
+        lutFilePath = lutFilePath,
+        isBuiltin = isBuiltin,
+        createdAt = createdAt
+    )
+
+    private fun UserPresetRecord.toEntity(): UserPresetEntity = UserPresetEntity(
+        id = id,
+        name = name,
+        graphSubsetJson = graphSubsetJson,
+        lutFilePath = lutFilePath,
+        isBuiltin = isBuiltin,
+        createdAt = createdAt
+    )
+
+    /** Key the active `LiveTetherPreset` id is stored under. */
+    companion object {
+        const val PREF_LIVE_TETHER_PRESET_ID = "pref_live_tether_preset_id"
     }
 }

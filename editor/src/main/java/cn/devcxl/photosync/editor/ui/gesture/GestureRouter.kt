@@ -53,7 +53,8 @@ enum class EditorTool {
     VIGNETTE,
     SKIN_SMOOTH,
     FACE_RESHAPE,
-    BODY_RESHAPE
+    BODY_RESHAPE,
+    PRESET
 }
 
 /**

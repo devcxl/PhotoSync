@@ -1,20 +1,35 @@
 package cn.devcxl.photosync
 
+import java.io.File
+
 import android.app.Application
 import android.content.Context
 import android.content.IntentFilter
 import android.hardware.usb.UsbManager
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.launch
 import timber.log.Timber
 
 import cn.devcxl.photosync.activity.clearPhotoEditCacheDir
 import cn.devcxl.photosync.data.AppDatabase
 import cn.devcxl.photosync.data.RoomEditStore
+import cn.devcxl.photosync.data.RoomTetheredPhotoCommitter
+import cn.devcxl.photosync.data.TetheredIngestResult
+import cn.devcxl.photosync.data.TetheredPhotoIngestor
 import cn.devcxl.photosync.editor.contract.EditorHostRegistry
+import cn.devcxl.photosync.editor.render.BackgroundPreviewRenderer
 import cn.devcxl.photosync.export.MediaStoreGallerySink
 import cn.devcxl.photosync.ptp.manager.UsbPtpConnectionController
 import cn.devcxl.photosync.receiver.UsbPermissionReceiver
 import cn.devcxl.photosync.receiver.UsbReceiver
+import cn.devcxl.photosync.utils.ExtensionUtils
 import cn.devcxl.photosync.wrapper.RawWrapper
 
 /**
@@ -23,6 +38,7 @@ import cn.devcxl.photosync.wrapper.RawWrapper
  * Responsibilities:
  * - Initialize global SDKs (native Raw wrapper) and logging.
  * - Register USB broadcast receivers for device attach/detach and permission results.
+ * - Wire the `:editor` host contracts and the tethered darkroom ingest pipeline.
  *
  * This class is intentionally lightweight; platform- or DI-based initialization can be
  * introduced later if needed.
@@ -40,13 +56,38 @@ class App : Application() {
         addAction(ACTION_USB_PERMISSION)
     }
 
+    /** Long-lived scope for work that must survive an activity recreate. */
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * Photo ids committed by the tethered ingestor, replayed to `:editor` and `MainActivity`.
+     *
+     * `DROP_OLDEST` with a small buffer keeps a burst of syncs from suspending the USB reader when
+     * nobody is collecting (app in background).
+     */
+    private val tetheredPhotoEvents = MutableSharedFlow<Long>(
+        extraBufferCapacity = TETHERED_EVENT_BUFFER,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
+    )
+
+    /** The `LiveTetherPreset` ingest path, or `null` when the database is unavailable. */
+    private var tetheredIngestor: TetheredPhotoIngestor? = null
+
     val usbPtpConnectionController: UsbPtpConnectionController by lazy {
         UsbPtpConnectionController(this)
     }
 
+    /** Photo ids that arrived from the camera while the app was already running. */
+    val syncedPhotoEvents: SharedFlow<Long> = tetheredPhotoEvents.asSharedFlow()
+
     companion object {
         private var instance: App? = null
         const val ACTION_USB_PERMISSION = "cn.devcxl.photosync.USB_PERMISSION"
+        private const val TETHERED_EVENT_BUFFER = 16
+
+        /** Preferences file the editor's `LiveTetherPreset` lives in. */
+        const val EDITOR_PREFS_NAME = "photosync_editor_prefs"
+
         fun get(): App {
             return instance!!
         }
@@ -58,11 +99,17 @@ class App : Application() {
         Timber.plant(Timber.DebugTree())
 
         val db = AppDatabase.getInstance(this)
-        EditorHostRegistry.editStore = RoomEditStore(
+        val editStore = RoomEditStore(
             photoEditDao = db.photoEditDao(),
+            userPresetDao = db.userPresetDao(),
+            liveTetherPrefs = getSharedPreferences(EDITOR_PREFS_NAME, MODE_PRIVATE),
             onClearPhotoEditCache = { photoId -> clearPhotoEditCacheDir(cacheDir, photoId) }
         )
+        EditorHostRegistry.editStore = editStore
         EditorHostRegistry.gallerySink = MediaStoreGallerySink(contentResolver)
+        EditorHostRegistry.tetheredPhotoEvents = syncedPhotoEvents
+        applicationScope.launch { seedPresets(editStore) }
+        tetheredIngestor = createIngestor(editStore)
 
         try {
             val ver = RawWrapper.version()
@@ -78,6 +125,68 @@ class App : Application() {
             registerReceiver(usbReceiver, usbEventFilter)
             registerReceiver(usbPermissionReceiver, usbPermissionFilter)
         }
+        configureTetheredSync()
+    }
+
+    /**
+     * Wires the process-wide download sink.
+     *
+     * The path and the listener live here, not in `MainActivity`: a sync that finishes while the
+     * editor is in the foreground must still be committed, so the pipeline cannot depend on the
+     * gallery activity being alive.
+     */
+    private fun configureTetheredSync() {
+        usbPtpConnectionController.setFileDownloadPath(externalCacheDir?.absolutePath)
+        usbPtpConnectionController.setFileDownloadedListener { fileHandle, file, _ ->
+            val ingestor = tetheredIngestor
+            if (ingestor == null) {
+                Timber.w("Tethered ingest pipeline is unavailable; the photo was not imported")
+            } else {
+                ingestInBackground(ingestor, file, fileHandle)
+            }
+        }
+    }
+
+    private fun ingestInBackground(ingestor: TetheredPhotoIngestor, file: File, objectHandle: Int) {
+        val ext = ExtensionUtils.fileExtension(file.name)
+        val isRaw = ExtensionUtils.isRawExtension(ext)
+        val isJpeg = ExtensionUtils.isJpegExtension(ext)
+        applicationScope.launch {
+            val result = ingestor.onFileDownloaded(
+                file = file,
+                objectHandle = objectHandle,
+                isRaw = isRaw,
+                isJpeg = isJpeg
+            )
+            if (result is TetheredIngestResult.Ingested) {
+                tetheredPhotoEvents.tryEmit(result.photoId)
+            }
+        }
+    }
+
+    private fun createIngestor(editStore: RoomEditStore): TetheredPhotoIngestor =
+        TetheredPhotoIngestor(
+            editStore = editStore,
+            committer = RoomTetheredPhotoCommitter(AppDatabase.getInstance(this), cacheDir),
+            stagingDir = cacheDir,
+            renderPreview = { sourcePath, isRaw, graph, outDir ->
+                BackgroundPreviewRenderer.renderToDir(
+                    context = this,
+                    filesDir = filesDir,
+                    outDir = outDir,
+                    sourcePath = sourcePath,
+                    isRaw = isRaw,
+                    graph = graph
+                )
+            }
+        )
+
+    private suspend fun seedPresets(editStore: RoomEditStore) {
+        try {
+            editStore.seedBuiltinPresets()
+        } catch (e: IllegalStateException) {
+            Timber.e(e, "Failed to seed the built-in preset library")
+        }
     }
 
     override fun onTerminate() {
@@ -85,5 +194,4 @@ class App : Application() {
         unregisterReceiver(usbReceiver)
         unregisterReceiver(usbPermissionReceiver)
     }
-
 }

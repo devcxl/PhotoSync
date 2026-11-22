@@ -62,6 +62,7 @@ import cn.devcxl.photosync.adapter.FilmstripAdapter
 import cn.devcxl.photosync.adapter.JpegSourceInfo
 import cn.devcxl.photosync.adapter.PhotoPagerAdapter
 import cn.devcxl.photosync.adapter.PhotoRenderState
+import cn.devcxl.photosync.adapter.canComparePhoto
 import cn.devcxl.photosync.data.AppDatabase
 import cn.devcxl.photosync.data.PhotoDao
 import cn.devcxl.photosync.data.entity.PhotoEntity
@@ -77,6 +78,8 @@ import cn.devcxl.photosync.editor.export.BakeRequest
 import cn.devcxl.photosync.editor.export.BakeResult
 import cn.devcxl.photosync.editor.export.ExifCopier
 import cn.devcxl.photosync.editor.ui.EditorActivity
+import cn.devcxl.photosync.export.BatchBakeController
+import cn.devcxl.photosync.export.BatchBakeProgress
 import cn.devcxl.photosync.export.MediaStoreGallerySink
 import cn.devcxl.photosync.ptp.manager.UsbPtpConnectionState
 import cn.devcxl.photosync.ptp.manager.cameraDeleteBlockedBy
@@ -105,6 +108,7 @@ class MainActivity : AppCompatActivity() {
         private const val PREF_DELETE_ON_CAMERA = "delete_on_camera"
         private const val MENU_EXPORT_BAKED = 1
         private const val MENU_EXPORT_ORIGINAL = 2
+        private const val MENU_EXPORT_BATCH = 3
         private val exportDateFormat = ThreadLocal.withInitial {
             SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
         }
@@ -112,6 +116,8 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var adapter: PhotoPagerAdapter
     private lateinit var filmstripAdapter: FilmstripAdapter
+    private lateinit var darkroom: TetheredDarkroomCoordinator
+    private val originalPreviewCache = OriginalPreviewCache()
     private var pendingExportIndex: Int? = null
     private var pendingExportBake: Boolean = false
 
@@ -172,12 +178,48 @@ class MainActivity : AppCompatActivity() {
         setupAdapter()
         setupViewPager()
         setupFilmstrip()
+        setupTetheredDarkroom()
         observeDatabase()
         observeConnectionState()
         setupButtons()
         configureConnectionController()
         applySystemBarVisibility(showOverlays = true)
         connectionController.refreshAvailableCameras()
+    }
+
+    /**
+     * Wires the quick preset strip, the batch bake card and the press-and-hold compare.
+     *
+     * Must run after the adapters exist: the strip's callbacks read the pager's current graph, and the
+     * compare controller pushes bitmaps into the pager.
+     */
+    private fun setupTetheredDarkroom() {
+        darkroom = TetheredDarkroomCoordinator(
+            context = this,
+            binding = binding,
+            owner = this,
+            scope = lifecycleScope,
+            dao = dao,
+            adapter = adapter,
+            filmstripAdapter = filmstripAdapter,
+            originalPreviewCache = originalPreviewCache,
+            currentIndex = { binding.viewPager.currentItem },
+            editedMap = { editedPhotoMap },
+            decodeOriginal = ::decodeOriginalPreview,
+            onPhotoRevealed = { path -> pendingRevealPath = path },
+            onEditPersisted = ::onEditPersisted,
+            onFeedback = { message -> showInlineFeedback(message) }
+        ).also { it.bind() }
+        darkroom.observeSyncedPhotos()
+    }
+
+    /** Re-reads the edited record of [photoId] and repaints the pager and filmstrip. */
+    private fun onEditPersisted(photoId: Long) {
+        val path = findPathByPhotoId(photoId)
+        if (path != null) {
+            invalidateCachedBitmapsForPath(path)
+        }
+        renderPhotoChrome()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -320,6 +362,10 @@ class MainActivity : AppCompatActivity() {
             },
             onPhotoTap = {
                 onPhotoCanvasTap()
+            },
+            canCompareProvider = { path -> canComparePhoto(path, true, resolvePreviewOverridePath(path)) },
+            onCompareChanged = { path, comparing ->
+                darkroom.setComparing(path, comparing)
             }
         )
     }
@@ -346,8 +392,21 @@ class MainActivity : AppCompatActivity() {
                 renderPhotoChrome()
                 renderNewPhotoBanner()
                 updateOverlaysVisibility()
+                darkroom.refreshQuickStrip(darkroomGraphFor(position))
             }
         })
+    }
+
+    /**
+     * Graph of the page at [position], as the quick strip needs it.
+     *
+     * Reading through the edited map keeps the strip in sync with the pager without a second store
+     * query per swipe.
+     */
+    private fun darkroomGraphFor(position: Int): EditGraph {
+        val entity = adapter.getItem(position) ?: return EditGraph()
+        val json = editedPhotoMap[entity.id]?.graphJson ?: return EditGraph()
+        return EditGraphJsonCodec.decode(json) ?: EditGraph()
     }
 
     private fun setupFilmstrip() {
@@ -359,7 +418,8 @@ class MainActivity : AppCompatActivity() {
                     binding.viewPager.setCurrentItem(position, true)
                 }
             },
-            hasEditPreviewProvider = { photoId -> editedPhotoMap.containsKey(photoId) }
+            hasEditPreviewProvider = { photoId -> editedPhotoMap.containsKey(photoId) },
+            onSelectionChanged = { selection -> darkroom.handleSelectionChanged(selection) }
         )
         binding.filmstripRecyclerView.apply {
             layoutManager = LinearLayoutManager(this@MainActivity, RecyclerView.HORIZONTAL, false)
@@ -876,7 +936,8 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         mainHandler.removeCallbacks(hideFeedbackRunnable)
         connectionController.setFileTransferListener(null)
-        connectionController.setFileDownloadedListener(null)
+        // The download sink belongs to `App`, not to this activity: clearing it here would stop the
+        // tethered ingest pipeline as soon as the gallery is recreated.
         // The session belongs to the process, not to this activity (docs/adr/0001):
         // a system-driven recreate must not tear down a healthy session, so only a real
         // exit releases the camera.
@@ -887,7 +948,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun configureConnectionController() {
-        connectionController.setFileDownloadPath(externalCacheDir?.absolutePath)
         connectionController.setFileTransferListener { _, totalByteLength, transterByteLength ->
             val progressPercent = resolveTransferPercent(transterByteLength, totalByteLength)
             lifecycleScope.launch(Dispatchers.Main) {
@@ -899,23 +959,16 @@ class MainActivity : AppCompatActivity() {
                 binding.progressBar.progress = progressPercent
             }
         }
-        connectionController.setFileDownloadedListener { fileHandle, localFile, timeduring ->
-            Timber.v("file downloaded at %s, time: %sms", localFile.absolutePath, timeduring)
-            lifecycleScope.launch(Dispatchers.Main) {
-                binding.transferStatusCard.visibility = View.GONE
-            }
-
-            val ext = localFile.extension.lowercase(Locale.ROOT)
-            val isRaw = ExtensionUtils.isRawExtension(ext)
-            val isJpeg = ExtensionUtils.isJpegExtension(ext)
-            Timber.d("file downloaded: %s ext=%s raw=%b jpeg=%b",
-                localFile.name, ext, isRaw, isJpeg)
-            if (isRaw || isJpeg) {
-                insertItemAndReveal(localFile, fileHandle)
-            }
-        }
+        // The download sink belongs to `App`: an import that finishes while the editor is in front must
+        // still be committed with its `LiveTetherPreset`. This activity only reacts to the ids.
     }
 
+    /**
+     * Reacts to photos `App` committed: dismisses the transfer card and reveals the newest one.
+     *
+     * Subscribing instead of installing a second `FileDownloadedListener` is what keeps the tethered
+     * ingest single-owner — the listener had to move to `App` so a background sync still lands.
+     */
     private fun renderUsbConnectionState(
         state: UsbPtpConnectionState,
         previousState: UsbPtpConnectionState?
@@ -949,23 +1002,6 @@ class MainActivity : AppCompatActivity() {
             is UsbPtpConnectionState.Connecting,
             is UsbPtpConnectionState.Disconnecting,
             UsbPtpConnectionState.Idle -> Unit
-        }
-    }
-
-    private fun insertItemAndReveal(localFile: File, objectHandle: Int) {
-        val entity = PhotoEntity(
-            path = localFile.absolutePath,
-            name = localFile.name,
-            uriString = null,
-            objectHandle = objectHandle
-        )
-        pendingRevealPath = entity.path
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                dao.insert(entity)
-            } catch (e: Exception) {
-                Timber.e(e, "DB insert failed")
-            }
         }
     }
 
@@ -1192,6 +1228,31 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Decodes the *original* pixels a press-and-hold compare shows.
+     *
+     * The pager normally displays the graded preview, so this deliberately bypasses
+     * [resolvePreviewOverridePath] and reads the source file at the same preview resolution. Blocking:
+     * called from an IO coroutine by [BeforeAfterCompareController].
+     */
+    private fun decodeOriginalPreview(path: String): Bitmap? {
+        val ext = ExtensionUtils.fileExtension(path)
+        return try {
+            when {
+                ExtensionUtils.isRawExtension(ext) -> RawWrapper.decodeThumbnailBitmap(path)
+                ExtensionUtils.isJpegExtension(ext) -> {
+                    val targetEdge = (previewLongEdgePx * FULL_PREVIEW_SCALE_FACTOR)
+                        .coerceAtMost(FULL_PREVIEW_MAX_EDGE_PX)
+                    decodeSampledBitmap(path, targetEdge)
+                }
+                else -> null
+            }
+        } catch (oom: OutOfMemoryError) {
+            Timber.w(oom, "decodeOriginalPreview OOM for path=%s", path)
+            null
+        }
+    }
+
     private fun exportCurrent() {
         if (adapter.itemCount == 0) {
             showInlineFeedback(getString(R.string.toast_no_exportable_photos))
@@ -1212,10 +1273,12 @@ class MainActivity : AppCompatActivity() {
         val menu = PopupMenu(this, binding.exportButton)
         menu.menu.add(0, MENU_EXPORT_BAKED, 0, R.string.export_menu_edited)
         menu.menu.add(0, MENU_EXPORT_ORIGINAL, 1, R.string.export_menu_original)
+        menu.menu.add(0, MENU_EXPORT_BATCH, 2, R.string.export_menu_batch)
         menu.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 MENU_EXPORT_BAKED -> requestExport(index, bakeEdited = true)
                 MENU_EXPORT_ORIGINAL -> requestExport(index, bakeEdited = false)
+                MENU_EXPORT_BATCH -> darkroom.enqueueBatchBake()
             }
             true
         }

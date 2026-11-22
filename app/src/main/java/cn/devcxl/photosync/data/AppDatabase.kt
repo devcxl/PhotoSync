@@ -33,6 +33,8 @@ abstract class AppDatabase : RoomDatabase() {
 
     abstract fun photoEditDao(): PhotoEditDao
 
+    abstract fun userPresetDao(): UserPresetDao
+
     companion object {
         @Volatile
         private var INSTANCE: AppDatabase? = null
