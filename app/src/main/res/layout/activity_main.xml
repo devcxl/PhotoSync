@@ -275,39 +275,19 @@
         </LinearLayout>
 
         <!-- Info drawer toggle -->
-        <LinearLayout
+        <ImageButton
             android:id="@+id/infoToggleButton"
-            android:layout_width="wrap_content"
+            android:layout_width="@dimen/top_bar_control_height"
             android:layout_height="@dimen/top_bar_control_height"
             android:layout_marginEnd="8dp"
-            android:background="@drawable/bg_toggle_pill"
-            android:clickable="true"
-            android:focusable="true"
-            android:gravity="center_vertical"
-            android:minWidth="48dp"
-            android:orientation="horizontal"
-            android:paddingStart="11dp"
-            android:paddingEnd="11dp"
+            android:background="@drawable/bg_glass_icon_btn"
+            android:contentDescription="@string/photo_info_toggle"
+            android:padding="9dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_info_24"
             android:visibility="gone"
-            tools:visibility="visible">
-
-            <ImageView
-                android:layout_width="15dp"
-                android:layout_height="15dp"
-                android:layout_marginEnd="5dp"
-                android:contentDescription="@null"
-                android:src="@drawable/ic_info_24"
-                app:tint="@color/darkroom_text_secondary"/>
-
-            <TextView
-                android:id="@+id/infoToggleLabel"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/photo_info_toggle"
-                android:textColor="@color/darkroom_text_secondary"
-                android:textSize="12sp"
-                android:textStyle="bold"/>
-        </LinearLayout>
+            app:tint="@color/darkroom_text_secondary"
+            tools:visibility="visible"/>
 
         <!-- Action buttons (circle diameter unified with top bar height) -->
         <ImageButton
@@ -642,7 +622,6 @@
                     android:id="@+id/quickStripToggleHandle"
                     android:layout_width="wrap_content"
                     android:layout_height="26dp"
-                    android:layout_marginEnd="6dp"
                     android:background="@drawable/bg_filmstrip_handle"
                     android:clickable="true"
                     android:focusable="true"
@@ -651,21 +630,6 @@
                     android:paddingEnd="12dp"
                     android:text="@string/quick_strip_expand"
                     android:textColor="@color/darkroom_text_primary"
-                    android:textSize="11sp"
-                    android:textStyle="bold"/>
-
-                <TextView
-                    android:id="@+id/quickLiveTetherToggle"
-                    android:layout_width="wrap_content"
-                    android:layout_height="26dp"
-                    android:background="@drawable/bg_toggle_pill"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:gravity="center"
-                    android:paddingStart="10dp"
-                    android:paddingEnd="10dp"
-                    android:text="@string/quick_strip_live_tether"
-                    android:textColor="@color/darkroom_text_secondary"
                     android:textSize="11sp"
                     android:textStyle="bold"/>
 

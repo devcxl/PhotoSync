@@ -7,9 +7,7 @@ import android.transition.TransitionManager
 import android.view.MotionEvent
 import android.view.View
 import android.widget.LinearLayout
-import android.widget.PopupMenu
 
-import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
@@ -28,12 +26,13 @@ import cn.devcxl.photosync.editor.domain.EditGraphJsonCodec
 import cn.devcxl.photosync.editor.domain.PresetGraphMerger
 
 /**
- * The collapsible `快捷预设` strip above the filmstrip:
- * - Preset chips apply immediately to the current photo with an inline circular spinner while
- *   rendering.
- * - `⚡ 联机套用` picks or disables the `LiveTetherPreset` applied to newly synced photos.
- * - The hold-to-compare icon button appears only on edited photos and previews the unedited
- *   original strictly while held down.
+ * Unified collapsible preset strip above the filmstrip:
+ * - Picking a preset applies it to the current photo (with an inline circular spinner while
+ *   rendering) AND activates it for incoming tethered photos automatically.
+ * - Picking `无预设` clears the current photo's preset axes AND disables tethered auto-apply so
+ *   new shots display straight as originals.
+ * - The hold-to-compare icon button appears only on edited photos and shows the unedited original
+ *   strictly while held down.
  */
 @SuppressLint("ClickableViewAccessibility")
 internal class TetheredQuickStripController(
@@ -43,10 +42,9 @@ internal class TetheredQuickStripController(
     private val host: Host
 ) {
 
-    /** Callbacks the activity implements for quick-strip actions. */
+    /** Callbacks the activity implements for unified preset & compare actions. */
     interface Host {
-        fun onQuickPresetSelected(photoId: Long, graph: EditGraph, presetId: String?, presetName: String?)
-        fun onLiveTetherToggled(presetId: String?, presetName: String?)
+        fun onPresetSelected(photoId: Long?, graph: EditGraph?, presetId: String?, presetName: String?)
         fun onCompareChanged(comparing: Boolean)
         fun currentGraph(): EditGraph
         fun currentPhotoId(): Long?
@@ -59,14 +57,13 @@ internal class TetheredQuickStripController(
 
     private var presets: List<UserPresetRecord> = emptyList()
     private var chips: List<QuickPresetChip> = emptyList()
-    private var livePresetId: String? = null
+    private var activePresetId: String? = null
     private var collapsed: Boolean = true
     private var applyingChipActive: Boolean = false
     private var applyingPresetId: String? = null
 
     init {
         binding.quickStripToggleHandle.setOnClickListener { setCollapsed(!collapsed, animate = true) }
-        binding.quickLiveTetherToggle.setOnClickListener { onLiveTetherToggleClicked() }
         binding.quickCompareButton.setOnTouchListener { view, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
@@ -97,15 +94,13 @@ internal class TetheredQuickStripController(
             )
         }
         binding.quickPresetChipScroll.visibility = if (collapsed) View.GONE else View.VISIBLE
-        binding.quickStripToggleHandle.setText(
-            if (collapsed) R.string.quick_strip_expand else R.string.quick_strip_collapse
-        )
+        renderToggleHandle()
     }
 
-    /** Re-renders chips, the `⚡ 联机套用` pill and the hold-to-compare button. */
+    /** Re-renders chips, the preset toggle pill and the hold-to-compare button. */
     fun refresh(currentGraph: EditGraph) {
         rebuildChips(currentGraph)
-        renderLiveTetherToggle()
+        renderToggleHandle()
         renderCompareButton()
     }
 
@@ -117,43 +112,28 @@ internal class TetheredQuickStripController(
     }
 
     private fun renderCompareButton() {
-        val visible = host.canCompareCurrent()
-        binding.quickCompareButton.visibility = if (visible) View.VISIBLE else View.GONE
+        binding.quickCompareButton.visibility =
+            if (host.canCompareCurrent()) View.VISIBLE else View.GONE
     }
 
-    private fun onLiveTetherToggleClicked() {
-        if (presets.isEmpty()) {
-            host.onLiveTetherToggled(null, null)
+    private fun renderToggleHandle() {
+        val activePreset = activePresetId?.let { id -> presets.firstOrNull { it.id == id } }
+        val handle = binding.quickStripToggleHandle
+        if (!collapsed) {
+            handle.setText(R.string.quick_strip_collapse)
+            handle.setBackgroundResource(R.drawable.bg_filmstrip_handle)
+            handle.setTextColor(ContextCompat.getColor(context, R.color.darkroom_text_primary))
             return
         }
-        showLivePresetPicker()
-    }
-
-    private fun showLivePresetPicker() {
-        val isActive = livePresetId != null
-        val labels = mutableListOf<String>()
-        if (isActive) {
-            labels += context.getString(R.string.quick_strip_live_picker_turn_off)
+        if (activePreset != null) {
+            handle.text = context.getString(R.string.quick_strip_expand_active, activePreset.name)
+            handle.setBackgroundResource(R.drawable.bg_toggle_pill_on)
+            handle.setTextColor(ContextCompat.getColor(context, R.color.toggle_on_text))
+        } else {
+            handle.setText(R.string.quick_strip_expand)
+            handle.setBackgroundResource(R.drawable.bg_filmstrip_handle)
+            handle.setTextColor(ContextCompat.getColor(context, R.color.darkroom_text_primary))
         }
-        presets.forEach { preset ->
-            labels += if (preset.id == livePresetId) {
-                context.getString(R.string.quick_strip_live_badge, preset.name)
-            } else {
-                preset.name
-            }
-        }
-        AlertDialog.Builder(context)
-            .setTitle(R.string.quick_strip_live_picker_title)
-            .setItems(labels.toTypedArray()) { _, which ->
-                if (isActive && which == 0) {
-                    host.onLiveTetherToggled(null, null)
-                } else {
-                    val presetIndex = if (isActive) which - 1 else which
-                    presets.getOrNull(presetIndex)?.let { host.onLiveTetherToggled(it.id, it.name) }
-                }
-            }
-            .setNegativeButton(R.string.dialog_cancel, null)
-            .show()
     }
 
     private fun observePresets() {
@@ -168,36 +148,18 @@ internal class TetheredQuickStripController(
                     currentStore.observePresets().collect { list ->
                         presets = list
                         rebuildChips(host.currentGraph())
-                        renderLiveTetherToggle()
+                        renderToggleHandle()
                     }
                 }
                 launch {
                     currentStore.observeLiveTetherPresetId().collect { id ->
-                        livePresetId = id
-                        rebuildChips(host.currentGraph())
-                        renderLiveTetherToggle()
+                        activePresetId = id
+                        markSelectedChip(host.currentGraph())
+                        renderToggleHandle()
                     }
                 }
             }
         }
-    }
-
-    private fun renderLiveTetherToggle() {
-        val activePreset = livePresetId?.let { id -> presets.firstOrNull { it.id == id } }
-        val active = livePresetId != null
-        binding.quickLiveTetherToggle.text = if (activePreset != null) {
-            context.getString(R.string.quick_strip_live_tether_active, activePreset.name)
-        } else {
-            context.getString(R.string.quick_strip_live_tether)
-        }
-        binding.quickLiveTetherToggle.setBackgroundResource(
-            if (active) R.drawable.bg_toggle_pill_on else R.drawable.bg_toggle_pill
-        )
-        val tint = ContextCompat.getColor(
-            context,
-            if (active) R.color.toggle_on_text else R.color.darkroom_text_secondary
-        )
-        binding.quickLiveTetherToggle.setTextColor(tint)
     }
 
     private fun rebuildChips(currentGraph: EditGraph) {
@@ -205,17 +167,10 @@ internal class TetheredQuickStripController(
         container.removeAllViews()
         val built = mutableListOf<QuickPresetChip>()
         built += addChip(container, context.getString(R.string.quick_strip_no_preset), null)
-        presets.forEach { preset -> built += addChip(container, labelOf(preset), preset) }
+        presets.forEach { preset -> built += addChip(container, preset.name, preset) }
         chips = built
         markSelectedChip(currentGraph)
     }
-
-    private fun labelOf(preset: UserPresetRecord): CharSequence =
-        if (preset.id == livePresetId) {
-            context.getString(R.string.quick_strip_live_badge, preset.name)
-        } else {
-            preset.name
-        }
 
     private fun addChip(
         container: LinearLayout,
@@ -231,42 +186,21 @@ internal class TetheredQuickStripController(
             paddingPx = (CHIP_PADDING_DP * density).toInt()
         )
         chip.root.setOnClickListener { onChipTapped(preset) }
-        if (preset != null) {
-            chip.root.setOnLongClickListener { view ->
-                showChipMenu(preset, view)
-                true
-            }
-        }
         container.addView(chip.root)
         return chip
     }
 
-    private fun showChipMenu(preset: UserPresetRecord, anchor: View) {
-        val menu = PopupMenu(context, anchor)
-        val isLive = preset.id == livePresetId
-        val labelRes = if (isLive) R.string.quick_strip_menu_clear_live else R.string.quick_strip_menu_set_live
-        menu.menu.add(0, MENU_TOGGLE_LIVE, 0, labelRes)
-        menu.setOnMenuItemClickListener {
-            host.onLiveTetherToggled(
-                if (isLive) null else preset.id,
-                if (isLive) null else preset.name
-            )
-            true
-        }
-        menu.show()
-    }
-
     private fun onChipTapped(preset: UserPresetRecord?) {
         if (applyingChipActive) return
-        val photoId = host.currentPhotoId() ?: return
-        val graph = if (preset == null) {
+        val photoId = host.currentPhotoId()
+        val graph = if (photoId == null) {
+            null
+        } else if (preset == null) {
             PresetGraphMerger.resetPresetAxes(host.currentGraph())
         } else {
-            resolvePresetGraph(preset)
+            resolvePresetGraph(preset) ?: return
         }
-        if (graph != null) {
-            host.onQuickPresetSelected(photoId, graph, preset?.id, preset?.name)
-        }
+        host.onPresetSelected(photoId, graph, preset?.id, preset?.name)
     }
 
     private fun resolvePresetGraph(preset: UserPresetRecord): EditGraph? {
@@ -279,8 +213,8 @@ internal class TetheredQuickStripController(
         val matched = PresetGraphMerger.matchingPresetId(
             currentGraph,
             presets.map { it.id to it.graphSubsetJson }
-        )
-        val neutral = PresetGraphMerger.hasNeutralPresetAxes(currentGraph)
+        ) ?: activePresetId
+        val neutral = matched == null && PresetGraphMerger.hasNeutralPresetAxes(currentGraph)
         for (chip in chips) {
             val selected = if (chip.presetId == null) neutral else chip.presetId == matched
             val loading = applyingChipActive && chip.presetId == applyingPresetId
@@ -293,6 +227,5 @@ internal class TetheredQuickStripController(
         const val CHIP_HEIGHT_DP = 28.0f
         const val CHIP_PADDING_DP = 11.0f
         const val EXPAND_ANIM_MS = 160L
-        const val MENU_TOGGLE_LIVE = 1
     }
 }

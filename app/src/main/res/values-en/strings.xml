@@ -101,22 +101,15 @@
     <string name="filmstrip_edited_mark">✎</string>
     <string name="edit_photo">Edit photo</string>
 
-    <string name="quick_strip_expand">▴ Quick Presets</string>
+    <string name="quick_strip_expand">▴ Presets</string>
+    <string name="quick_strip_expand_active">▴ %1$s</string>
     <string name="quick_strip_collapse">▾ Hide Presets</string>
     <string name="quick_strip_no_preset">None</string>
-    <string name="quick_strip_live_tether">⚡ Live Tether</string>
-    <string name="quick_strip_live_tether_active">⚡ Live·%1$s</string>
     <string name="quick_strip_compare_hold">Hold to compare original</string>
-    <string name="quick_strip_preset_applied_named">Applied \"%1$s\" to current photo</string>
-    <string name="quick_strip_preset_cleared">Cleared preset on current photo</string>
+    <string name="quick_strip_preset_applied_named">Applied \"%1$s\" (auto-applied to new shots)</string>
+    <string name="quick_strip_preset_selected_tether_only">Selected \"%1$s\" for incoming tethered shots</string>
+    <string name="quick_strip_preset_cleared">Switched to No Preset (originals)</string>
     <string name="quick_strip_apply_failed">Failed to apply preset</string>
-    <string name="quick_strip_live_tether_on">Live Tether on: new synced photos will use \"%1$s\"</string>
-    <string name="quick_strip_live_tether_off">Live Tether auto-apply turned off</string>
-    <string name="quick_strip_live_tether_needs_preset">Pick a preset to enable Live Tether</string>
-    <string name="quick_strip_live_picker_title">Live Tether Preset (Auto-grade New Photos)</string>
-    <string name="quick_strip_live_picker_turn_off">Turn Off Live Tether</string>
-    <string name="quick_strip_menu_set_live">Set as Live Tether Preset</string>
-    <string name="quick_strip_menu_clear_live">Clear Live Tether Preset</string>
 
     <string name="compare_original_pill">Original (Before)</string>
 

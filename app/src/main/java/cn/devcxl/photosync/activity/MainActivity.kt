@@ -790,14 +790,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateInfoToggleAppearance() {
         binding.infoToggleButton.setBackgroundResource(
-            if (infoDrawerOpen) R.drawable.bg_toggle_pill_on else R.drawable.bg_toggle_pill
+            if (infoDrawerOpen) R.drawable.bg_toggle_pill_on else R.drawable.bg_glass_icon_btn
         )
         val colorRes = if (infoDrawerOpen) {
-            R.color.darkroom_text_primary
+            R.color.toggle_on_text
         } else {
             R.color.darkroom_text_secondary
         }
-        binding.infoToggleLabel.setTextColor(ContextCompat.getColor(this, colorRes))
+        binding.infoToggleButton.imageTintList =
+            ColorStateList.valueOf(ContextCompat.getColor(this, colorRes))
     }
 
     private fun alignInfoDrawerToToggle() {

@@ -12,17 +12,16 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
 import cn.devcxl.photosync.App
-import cn.devcxl.photosync.R
 import cn.devcxl.photosync.adapter.PhotoPagerAdapter
 import cn.devcxl.photosync.data.PhotoDao
 import cn.devcxl.photosync.databinding.ActivityMainBinding
-import cn.devcxl.photosync.editor.contract.EditorHostRegistry
 import cn.devcxl.photosync.editor.contract.PhotoEditRecord
 import cn.devcxl.photosync.editor.domain.EditGraph
 
 /**
- * Wires the tethered darkroom controls of `MainActivity`: the collapsible quick preset strip, the
- * `⚡ 联机套用` live-tether picker, and the explicit hold-to-compare button inside the quick strip.
+ * Wires the tethered darkroom controls of `MainActivity`: the unified collapsible preset strip
+ * (controlling both current-photo look and tethered auto-apply) and the explicit hold-to-compare
+ * button inside the strip.
  */
 internal class TetheredDarkroomCoordinator(
     private val context: Context,
@@ -88,31 +87,13 @@ internal class TetheredDarkroomCoordinator(
         }
     }
 
-    private fun setLiveTetherPreset(presetId: String?, presetName: String?) {
-        val store = EditorHostRegistry.editStore
-        if (store == null || (presetId == null && store.getLiveTetherPresetId() == null)) {
-            onFeedback(context.getString(R.string.quick_strip_live_tether_needs_preset))
-            return
-        }
-        store.setLiveTetherPresetId(presetId)
-        val message = if (presetId == null) {
-            context.getString(R.string.quick_strip_live_tether_off)
-        } else {
-            context.getString(R.string.quick_strip_live_tether_on, presetName ?: presetId)
-        }
-        onFeedback(message)
-    }
-
     private inner class QuickStripHost : TetheredQuickStripController.Host {
-        override fun onQuickPresetSelected(
-            photoId: Long,
-            graph: EditGraph,
+        override fun onPresetSelected(
+            photoId: Long?,
+            graph: EditGraph?,
             presetId: String?,
             presetName: String?
-        ) = darkroom.applyPreset(photoId, graph, presetId, presetName)
-
-        override fun onLiveTetherToggled(presetId: String?, presetName: String?) =
-            setLiveTetherPreset(presetId, presetName)
+        ) = darkroom.selectPreset(photoId, graph, presetId, presetName)
 
         override fun onCompareChanged(comparing: Boolean) {
             val path = darkroom.currentPhotoPath()

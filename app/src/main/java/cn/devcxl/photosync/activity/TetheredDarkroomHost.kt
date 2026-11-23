@@ -22,8 +22,8 @@ import cn.devcxl.photosync.editor.render.BackgroundPreviewRenderer
 import cn.devcxl.photosync.utils.ExtensionUtils
 
 /**
- * Executes quick-strip preset applications for `MainActivity`, keeping an inline spinner visible on
- * the tapped chip while the background preview renders.
+ * Executes unified preset selections for `MainActivity`: updates the active tethered preset so new
+ * incoming photos automatically match, and renders the current photo with an inline chip spinner.
  */
 internal class TetheredDarkroomHost(
     private val context: Context,
@@ -59,11 +59,21 @@ internal class TetheredDarkroomHost(
     }
 
     /**
-     * Renders the preview cache and persists [graph] for [photoId], displaying a spinner inside the
-     * tapped chip until the render finishes.
+     * Activates [presetId] for tethered sync (or clears it when `null`), and renders [graph] onto
+     * [photoId] when a photo is currently displayed.
      */
-    fun applyPreset(photoId: Long, graph: EditGraph, presetId: String?, presetName: String?) {
+    fun selectPreset(photoId: Long?, graph: EditGraph?, presetId: String?, presetName: String?) {
         val currentStore = store ?: return
+        currentStore.setLiveTetherPresetId(presetId)
+        if (photoId == null || graph == null) {
+            val message = if (presetName != null) {
+                context.getString(R.string.quick_strip_preset_selected_tether_only, presetName)
+            } else {
+                context.getString(R.string.quick_strip_preset_cleared)
+            }
+            onFeedback(message)
+            return
+        }
         val successMessage = if (presetName != null) {
             context.getString(R.string.quick_strip_preset_applied_named, presetName)
         } else {
