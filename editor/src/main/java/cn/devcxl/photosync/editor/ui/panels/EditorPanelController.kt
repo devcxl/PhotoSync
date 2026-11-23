@@ -75,6 +75,7 @@ internal class EditorPanelController(
             override fun onLiquifyResetRequested() = host.onLiquifyResetRequested()
         }
     )
+    private val rotateFlipPanel = RotateFlipPanelBinder(binding, ::commit)
     private val colorPanels = ColorPanelsBinder(
         binding = binding,
         undoController = undoController,
@@ -159,6 +160,7 @@ internal class EditorPanelController(
         effectsPanels.refresh(graph)
         portraitPanels.refresh(graph)
         presetPanels.refresh(graph)
+        rotateFlipPanel.refresh(graph)
         refreshHeaderReadout(graph)
         aspectRow.setVisible(currentTool == EditorTool.CROP)
         aspectRow.refresh(lockedAspect, host.previewAspect())
@@ -234,6 +236,7 @@ internal class EditorPanelController(
         effectsPanels.showFor(null)
         portraitPanels.showFor(null)
         presetPanels.setVisible(false)
+        rotateFlipPanel.setVisible(false)
         aspectRow.setVisible(false)
         binding.activeToolLabel.text = tabViews[group]?.text
         binding.activeValueText.setText(R.string.editor_tool_coming_soon)
@@ -276,6 +279,7 @@ internal class EditorPanelController(
         effectsPanels.showFor(spec.controlStyle)
         portraitPanels.showFor(spec.controlStyle)
         presetPanels.setVisible(spec.controlStyle == EditorControlStyle.PRESET)
+        rotateFlipPanel.setVisible(spec.controlStyle == EditorControlStyle.ROTATE_FLIP)
         val dial = spec.dial
         dialTool = if (dial == null) null else spec.tool
         if (dial == null) {

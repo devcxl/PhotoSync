@@ -7,7 +7,6 @@ import android.content.Context
 
 import cn.devcxl.photosync.editor.R
 import cn.devcxl.photosync.editor.domain.EditGraph
-import cn.devcxl.photosync.editor.domain.PresetGraphMerger
 import cn.devcxl.photosync.editor.ui.gesture.CropHandleMath
 import cn.devcxl.photosync.editor.ui.gesture.EditorTool
 
@@ -49,11 +48,7 @@ internal class EditorReadoutFormatter(private val context: Context) {
             context.getString(R.string.editor_value_aspect_fmt),
             CropHandleMath.physicalAspect(graph.geometry.crop, previewAspect)
         )
-        EditorTool.ROTATE90 -> String.format(
-            Locale.US,
-            context.getString(R.string.editor_value_plain_degrees_fmt),
-            (graph.geometry.rotate90 * QUARTER_TURN_DEGREES).toFloat()
-        )
+        EditorTool.ROTATE90 -> formatOrientationSummary(graph)
         EditorTool.FLIP_HORIZONTAL -> onOff(graph.geometry.flipH)
         EditorTool.FLIP_VERTICAL -> onOff(graph.geometry.flipV)
         EditorTool.LIQUIFY -> statusText(
@@ -92,6 +87,19 @@ internal class EditorReadoutFormatter(private val context: Context) {
             graph.effects.vignette.amount.toFloat()
         )
         else -> ""
+    }
+
+    private fun formatOrientationSummary(graph: EditGraph): String {
+        val geometry = graph.geometry
+        val angle = String.format(
+            Locale.US,
+            context.getString(R.string.editor_value_plain_degrees_fmt),
+            (geometry.rotate90 * QUARTER_TURN_DEGREES).toFloat()
+        )
+        val parts = mutableListOf(angle)
+        if (geometry.flipH) parts += context.getString(R.string.editor_orientation_flip_h_tag)
+        if (geometry.flipV) parts += context.getString(R.string.editor_orientation_flip_v_tag)
+        return parts.joinToString(" · ")
     }
 
     private fun panelStatusText(modified: Boolean, modifiedRes: Int): String =

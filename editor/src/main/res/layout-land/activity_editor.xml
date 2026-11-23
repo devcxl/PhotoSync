@@ -85,17 +85,16 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent">
 
-        <Button
+        <ImageButton
             android:id="@+id/btnDone"
-            android:layout_width="wrap_content"
+            android:layout_width="@dimen/editor_top_btn_height"
             android:layout_height="@dimen/editor_top_btn_height"
-            android:backgroundTint="@color/editor_accent_blue"
-            android:minWidth="72dp"
-            android:text="@string/editor_done"
-            android:textAllCaps="false"
-            android:textColor="@color/editor_text_primary"
-            android:textSize="12sp"
-            android:textStyle="bold" />
+            android:background="@drawable/bg_editor_primary_icon_btn"
+            android:contentDescription="@string/editor_done"
+            android:padding="8dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_editor_done_24"
+            app:tint="@color/editor_text_primary" />
 
         <cn.devcxl.photosync.editor.ui.widgets.BaseLookToggleView
             android:id="@+id/baseLookToggle"
@@ -111,52 +110,52 @@
             android:layout_height="0dp"
             android:layout_weight="1" />
 
-        <Button
+        <ImageButton
             android:id="@+id/btnUndo"
-            android:layout_width="wrap_content"
+            android:layout_width="@dimen/editor_top_btn_height"
             android:layout_height="@dimen/editor_top_btn_height"
-            android:layout_marginEnd="6dp"
-            android:backgroundTint="@color/editor_surface_elevated"
-            android:minWidth="64dp"
-            android:text="@string/editor_undo"
-            android:textAllCaps="false"
-            android:textColor="@color/editor_text_primary"
-            android:textSize="12sp" />
+            android:layout_marginEnd="8dp"
+            android:background="@drawable/bg_editor_icon_btn"
+            android:contentDescription="@string/editor_undo"
+            android:padding="8dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_editor_undo_24"
+            app:tint="@color/editor_text_primary" />
 
-        <Button
+        <ImageButton
             android:id="@+id/btnRedo"
-            android:layout_width="wrap_content"
+            android:layout_width="@dimen/editor_top_btn_height"
             android:layout_height="@dimen/editor_top_btn_height"
-            android:layout_marginEnd="6dp"
-            android:backgroundTint="@color/editor_surface_elevated"
-            android:minWidth="64dp"
-            android:text="@string/editor_redo"
-            android:textAllCaps="false"
-            android:textColor="@color/editor_text_primary"
-            android:textSize="12sp" />
+            android:layout_marginEnd="8dp"
+            android:background="@drawable/bg_editor_icon_btn"
+            android:contentDescription="@string/editor_redo"
+            android:padding="8dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_editor_redo_24"
+            app:tint="@color/editor_text_primary" />
 
-        <Button
+        <ImageButton
             android:id="@+id/btnExport"
-            android:layout_width="wrap_content"
+            android:layout_width="@dimen/editor_top_btn_height"
             android:layout_height="@dimen/editor_top_btn_height"
-            android:layout_marginEnd="6dp"
-            android:backgroundTint="@color/editor_surface_elevated"
-            android:minWidth="64dp"
-            android:text="@string/editor_export"
-            android:textAllCaps="false"
-            android:textColor="@color/editor_text_primary"
-            android:textSize="12sp" />
+            android:layout_marginEnd="8dp"
+            android:background="@drawable/bg_editor_icon_btn"
+            android:contentDescription="@string/editor_export"
+            android:padding="8dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_editor_export_24"
+            app:tint="@color/editor_text_primary" />
 
-        <Button
+        <ImageButton
             android:id="@+id/btnCompare"
-            android:layout_width="wrap_content"
+            android:layout_width="@dimen/editor_top_btn_height"
             android:layout_height="@dimen/editor_top_btn_height"
-            android:backgroundTint="@color/editor_surface_elevated"
-            android:minWidth="64dp"
-            android:text="@string/editor_compare"
-            android:textAllCaps="false"
-            android:textColor="@color/editor_text_primary"
-            android:textSize="12sp" />
+            android:background="@drawable/bg_editor_icon_btn"
+            android:contentDescription="@string/editor_compare"
+            android:padding="8dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_editor_compare_24"
+            app:tint="@color/editor_text_primary" />
     </LinearLayout>
 
     <!-- Quiet "+N new photos" pill: background ingest must never steal focus from a gesture -->
@@ -236,6 +235,10 @@
             android:layout_marginTop="8dp" />
 
         <include
+            android:id="@+id/rotateFlipPanel"
+            layout="@layout/editor_rotate_flip_panel" />
+
+        <include
             android:id="@+id/colorPanels"
             layout="@layout/editor_color_panels" />
 
@@ -310,16 +313,16 @@
                     android:layout_height="0dp"
                     android:layout_weight="1" />
 
-                <Button
+                <ImageButton
                     android:id="@+id/liquifyResetButton"
-                    android:layout_width="wrap_content"
-                    android:layout_height="@dimen/editor_liquify_reset_button_height"
-                    android:backgroundTint="@color/editor_surface_elevated"
-                    android:minWidth="0dp"
-                    android:text="@string/editor_liquify_reset"
-                    android:textAllCaps="false"
-                    android:textColor="@color/editor_text_secondary"
-                    android:textSize="11sp" />
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:background="@drawable/bg_editor_icon_btn"
+                    android:contentDescription="@string/editor_liquify_reset"
+                    android:padding="7dp"
+                    android:scaleType="centerInside"
+                    android:src="@drawable/ic_editor_reset_24"
+                    app:tint="@color/editor_text_secondary" />
             </LinearLayout>
 
             <LinearLayout

@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="editor_done">✓ Done</string>
-    <string name="editor_undo">↶ Undo</string>
-    <string name="editor_redo">↷ Redo</string>
+    <string name="editor_done">Done</string>
+    <string name="editor_undo">Undo</string>
+    <string name="editor_redo">Redo</string>
     <string name="editor_compare">Compare</string>
     <string name="editor_comparing_original">Original (Before)</string>
     <string name="editor_tab_preset">Presets</string>
@@ -35,6 +35,13 @@
     <string name="editor_tool_straighten_modified">Straighten •</string>
     <string name="editor_tool_rotate90">Rotate 90°</string>
     <string name="editor_tool_rotate90_modified">Rotate 90° •</string>
+    <string name="editor_tool_rotate_flip">Rotate</string>
+    <string name="editor_tool_rotate_flip_modified">Rotate •</string>
+    <string name="editor_rotate_ccw">Rotate 90° CCW</string>
+    <string name="editor_rotate_cw">Rotate 90° CW</string>
+    <string name="editor_rotate_reset">Reset Orientation</string>
+    <string name="editor_orientation_flip_h_tag">Flip H</string>
+    <string name="editor_orientation_flip_v_tag">Flip V</string>
     <string name="editor_tool_flip_horizontal">Flip H</string>
     <string name="editor_tool_flip_horizontal_modified">Flip H •</string>
     <string name="editor_tool_flip_vertical">Flip V</string>

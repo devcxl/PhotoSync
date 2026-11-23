@@ -552,20 +552,16 @@
                 android:textSize="11sp"
                 android:textStyle="bold"/>
 
-            <TextView
+            <ImageButton
                 android:id="@+id/batchBakeCancelButton"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:background="@drawable/bg_glass_pill"
-                android:clickable="true"
-                android:focusable="true"
-                android:paddingStart="8dp"
-                android:paddingTop="2dp"
-                android:paddingEnd="8dp"
-                android:paddingBottom="2dp"
-                android:text="@string/batch_bake_cancel"
-                android:textColor="@color/darkroom_text_secondary"
-                android:textSize="10sp"/>
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:background="@drawable/bg_glass_icon_btn"
+                android:contentDescription="@string/batch_bake_cancel"
+                android:padding="5dp"
+                android:scaleType="centerInside"
+                android:src="@drawable/ic_close_24"
+                app:tint="@color/darkroom_text_secondary"/>
         </LinearLayout>
 
         <TextView
@@ -775,53 +771,44 @@
                 android:orientation="horizontal"
                 android:visibility="gone">
 
-                <TextView
+                <ImageButton
                     android:id="@+id/quickCopyButton"
-                    android:layout_width="wrap_content"
-                    android:layout_height="28dp"
+                    android:layout_width="34dp"
+                    android:layout_height="30dp"
                     android:background="@drawable/bg_toggle_pill"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:gravity="center"
-                    android:paddingStart="11dp"
-                    android:paddingEnd="11dp"
-                    android:text="@string/quick_strip_copy"
-                    android:textColor="@color/darkroom_text_primary"
-                    android:textSize="11sp"/>
+                    android:contentDescription="@string/quick_strip_copy"
+                    android:padding="6dp"
+                    android:scaleType="centerInside"
+                    android:src="@drawable/ic_copy_24"
+                    app:tint="@color/darkroom_text_primary"/>
 
-                <TextView
+                <ImageButton
                     android:id="@+id/quickPasteButton"
-                    android:layout_width="wrap_content"
-                    android:layout_height="28dp"
-                    android:layout_marginStart="6dp"
+                    android:layout_width="34dp"
+                    android:layout_height="30dp"
+                    android:layout_marginStart="8dp"
                     android:background="@drawable/bg_toggle_pill"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:gravity="center"
-                    android:paddingStart="11dp"
-                    android:paddingEnd="11dp"
-                    android:text="@string/quick_strip_paste"
-                    android:textColor="@color/darkroom_text_primary"
-                    android:textSize="11sp"/>
+                    android:contentDescription="@string/quick_strip_paste"
+                    android:padding="6dp"
+                    android:scaleType="centerInside"
+                    android:src="@drawable/ic_paste_24"
+                    app:tint="@color/darkroom_text_primary"/>
 
                 <Space
                     android:layout_width="0dp"
                     android:layout_height="0dp"
                     android:layout_weight="1"/>
 
-                <TextView
+                <ImageButton
                     android:id="@+id/quickMultiSelectButton"
-                    android:layout_width="wrap_content"
-                    android:layout_height="28dp"
+                    android:layout_width="34dp"
+                    android:layout_height="30dp"
                     android:background="@drawable/bg_toggle_pill"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:gravity="center"
-                    android:paddingStart="11dp"
-                    android:paddingEnd="11dp"
-                    android:text="@string/quick_strip_select"
-                    android:textColor="@color/darkroom_text_primary"
-                    android:textSize="11sp"/>
+                    android:contentDescription="@string/quick_strip_select"
+                    android:padding="6dp"
+                    android:scaleType="centerInside"
+                    android:src="@drawable/ic_select_multi_24"
+                    app:tint="@color/darkroom_text_primary"/>
             </LinearLayout>
         </LinearLayout>
 

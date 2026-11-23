@@ -88,9 +88,12 @@ internal class TetheredQuickStripController(
         onClipboardChanged()
     }
 
-    /** Syncs the `多选` button with the adapter's selection mode. */
+    /** Syncs the multi-select icon button with the adapter's selection mode. */
     fun renderSelectionMode(selectionMode: Boolean) {
-        binding.quickMultiSelectButton.setText(
+        binding.quickMultiSelectButton.setImageResource(
+            if (selectionMode) R.drawable.ic_check_24 else R.drawable.ic_select_multi_24
+        )
+        binding.quickMultiSelectButton.contentDescription = context.getString(
             if (selectionMode) R.string.quick_strip_select_done else R.string.quick_strip_select
         )
         binding.quickMultiSelectButton.setBackgroundResource(

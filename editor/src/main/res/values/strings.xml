@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="editor_done">✓ 完成</string>
-    <string name="editor_undo">↶ 撤销</string>
-    <string name="editor_redo">↷ 重做</string>
+    <string name="editor_done">完成</string>
+    <string name="editor_undo">撤销</string>
+    <string name="editor_redo">重做</string>
     <string name="editor_compare">对比</string>
     <string name="editor_comparing_original">未编辑原图 (Before)</string>
     <string name="editor_tab_preset">预设</string>
@@ -35,6 +35,13 @@
     <string name="editor_tool_straighten_modified">拉直 •</string>
     <string name="editor_tool_rotate90">旋转 90°</string>
     <string name="editor_tool_rotate90_modified">旋转 90° •</string>
+    <string name="editor_tool_rotate_flip">旋转</string>
+    <string name="editor_tool_rotate_flip_modified">旋转 •</string>
+    <string name="editor_rotate_ccw">逆时针旋转 90°</string>
+    <string name="editor_rotate_cw">顺时针旋转 90°</string>
+    <string name="editor_rotate_reset">重置方向</string>
+    <string name="editor_orientation_flip_h_tag">水平翻转</string>
+    <string name="editor_orientation_flip_v_tag">垂直翻转</string>
     <string name="editor_tool_flip_horizontal">水平翻转</string>
     <string name="editor_tool_flip_horizontal_modified">水平翻转 •</string>
     <string name="editor_tool_flip_vertical">垂直翻转</string>

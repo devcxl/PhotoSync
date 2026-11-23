@@ -4,6 +4,7 @@ import kotlin.math.abs
 
 import cn.devcxl.photosync.editor.R
 import cn.devcxl.photosync.editor.domain.CropRect
+import cn.devcxl.photosync.editor.domain.DiscreteOrientationOps
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.EditParameterKey
 import cn.devcxl.photosync.editor.domain.GeometryOps
@@ -19,6 +20,9 @@ internal enum class EditorControlStyle {
 
     /** One-tap action such as a quarter turn or a mirror. */
     INSTANT,
+
+    /** Dedicated icon action bar for ±90° rotation, horizontal/vertical flip and reset. */
+    ROTATE_FLIP,
 
     /** The preview canvas owns the gesture; no dial is shown. */
     CANVAS,
@@ -100,8 +104,6 @@ internal data class EditorToolSpec(
  */
 internal object EditorToolCatalog {
 
-    private const val QUARTER_TURNS = 4
-
     private val specs: Map<EditorTool, EditorToolSpec> =
         (
             EditorPresetSpecs.presetSpecs() +
@@ -167,37 +169,12 @@ internal object EditorToolCatalog {
         EditorToolSpec(
             tool = EditorTool.ROTATE90,
             group = EditorGroup.GEOMETRY,
-            labelRes = R.string.editor_tool_rotate90,
-            modifiedLabelRes = R.string.editor_tool_rotate90_modified,
+            labelRes = R.string.editor_tool_rotate_flip,
+            modifiedLabelRes = R.string.editor_tool_rotate_flip_modified,
             parameterKey = EditParameterKey.GEOMETRY_ROTATE_FLIP,
-            controlStyle = EditorControlStyle.INSTANT,
-            isModified = { it.geometry.rotate90 != 0 },
-            instantAction = {
-                it.copy(geometry = it.geometry.copy(rotate90 = (it.geometry.rotate90 + 1) % QUARTER_TURNS))
-            },
-            reset = { it.copy(geometry = it.geometry.copy(rotate90 = 0)) }
-        ),
-        EditorToolSpec(
-            tool = EditorTool.FLIP_HORIZONTAL,
-            group = EditorGroup.GEOMETRY,
-            labelRes = R.string.editor_tool_flip_horizontal,
-            modifiedLabelRes = R.string.editor_tool_flip_horizontal_modified,
-            parameterKey = EditParameterKey.GEOMETRY_ROTATE_FLIP,
-            controlStyle = EditorControlStyle.INSTANT,
-            isModified = { it.geometry.flipH },
-            instantAction = { it.copy(geometry = it.geometry.copy(flipH = !it.geometry.flipH)) },
-            reset = { it.copy(geometry = it.geometry.copy(flipH = false)) }
-        ),
-        EditorToolSpec(
-            tool = EditorTool.FLIP_VERTICAL,
-            group = EditorGroup.GEOMETRY,
-            labelRes = R.string.editor_tool_flip_vertical,
-            modifiedLabelRes = R.string.editor_tool_flip_vertical_modified,
-            parameterKey = EditParameterKey.GEOMETRY_ROTATE_FLIP,
-            controlStyle = EditorControlStyle.INSTANT,
-            isModified = { it.geometry.flipV },
-            instantAction = { it.copy(geometry = it.geometry.copy(flipV = !it.geometry.flipV)) },
-            reset = { it.copy(geometry = it.geometry.copy(flipV = false)) }
+            controlStyle = EditorControlStyle.ROTATE_FLIP,
+            isModified = { DiscreteOrientationOps.isOrientationModified(it.geometry) },
+            reset = { it.copy(geometry = DiscreteOrientationOps.resetOrientation(it.geometry)) }
         ),
         EditorToolSpec(
             tool = EditorTool.PERSPECTIVE,

@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/rotateFlipPanelRoot"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="6dp"
+    android:gravity="center"
+    android:orientation="horizontal"
+    android:visibility="gone">
+
+    <ImageButton
+        android:id="@+id/btnRotateCcw"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:layout_marginEnd="12dp"
+        android:background="@drawable/bg_editor_icon_btn"
+        android:contentDescription="@string/editor_rotate_ccw"
+        android:padding="9dp"
+        android:scaleType="centerInside"
+        android:src="@drawable/ic_editor_rotate_ccw_24"
+        app:tint="@color/editor_text_primary" />
+
+    <ImageButton
+        android:id="@+id/btnRotateCw"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:layout_marginEnd="12dp"
+        android:background="@drawable/bg_editor_icon_btn"
+        android:contentDescription="@string/editor_rotate_cw"
+        android:padding="9dp"
+        android:scaleType="centerInside"
+        android:src="@drawable/ic_editor_rotate_cw_24"
+        app:tint="@color/editor_text_primary" />
+
+    <ImageButton
+        android:id="@+id/btnFlipHorizontal"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:layout_marginEnd="12dp"
+        android:background="@drawable/bg_editor_icon_btn"
+        android:contentDescription="@string/editor_tool_flip_horizontal"
+        android:padding="9dp"
+        android:scaleType="centerInside"
+        android:src="@drawable/ic_editor_flip_h_24"
+        app:tint="@color/editor_text_primary" />
+
+    <ImageButton
+        android:id="@+id/btnFlipVertical"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:layout_marginEnd="12dp"
+        android:background="@drawable/bg_editor_icon_btn"
+        android:contentDescription="@string/editor_tool_flip_vertical"
+        android:padding="9dp"
+        android:scaleType="centerInside"
+        android:src="@drawable/ic_editor_flip_v_24"
+        app:tint="@color/editor_text_primary" />
+
+    <ImageButton
+        android:id="@+id/btnRotateReset"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:background="@drawable/bg_editor_icon_btn"
+        android:contentDescription="@string/editor_rotate_reset"
+        android:padding="9dp"
+        android:scaleType="centerInside"
+        android:src="@drawable/ic_editor_reset_24"
+        app:tint="@color/editor_text_secondary" />
+
+</LinearLayout>
