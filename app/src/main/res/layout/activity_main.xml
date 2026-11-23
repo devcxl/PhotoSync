@@ -170,34 +170,6 @@
                     tools:text="1 / 12"/>
 
                 <TextView
-                    android:id="@+id/photoNameText"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:ellipsize="middle"
-                    android:fontFamily="monospace"
-                    android:maxWidth="180dp"
-                    android:singleLine="true"
-                    android:textColor="@color/darkroom_text_secondary"
-                    android:textSize="12sp"
-                    tools:text="DSC04821.ARW"/>
-
-                <TextView
-                    android:id="@+id/photoFormatBadge"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:background="@drawable/bg_badge_raw"
-                    android:paddingStart="6dp"
-                    android:paddingTop="1dp"
-                    android:paddingEnd="6dp"
-                    android:paddingBottom="1dp"
-                    android:textColor="@color/badge_raw_text"
-                    android:textSize="10sp"
-                    android:textStyle="bold"
-                    tools:text="RAW"/>
-
-                <TextView
                     android:id="@+id/photoEditedBadge"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -368,11 +340,11 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:background="@drawable/bg_info_card"
-        android:orientation="horizontal"
+        android:orientation="vertical"
         android:paddingStart="14dp"
-        android:paddingTop="9dp"
+        android:paddingTop="10dp"
         android:paddingEnd="14dp"
-        android:paddingBottom="9dp"
+        android:paddingBottom="10dp"
         android:visibility="gone"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintTop_toTopOf="parent"
@@ -383,72 +355,114 @@
         <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginEnd="16dp"
-            android:orientation="vertical">
+            android:layout_marginBottom="8dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
 
             <TextView
+                android:id="@+id/infoFileNameText"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/info_label_resolution"
-                android:textColor="@color/darkroom_text_muted"
-                android:textSize="10sp"/>
-
-            <TextView
-                android:id="@+id/infoResolutionText"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
+                android:ellipsize="middle"
                 android:fontFamily="monospace"
+                android:maxWidth="220dp"
+                android:singleLine="true"
                 android:textColor="@color/darkroom_text_primary"
                 android:textSize="12sp"
                 android:textStyle="bold"
-                tools:text="6000 × 4000"/>
+                tools:text="DSC04821.ARW"/>
+
+            <TextView
+                android:id="@+id/infoFormatBadge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:background="@drawable/bg_badge_raw"
+                android:paddingStart="6dp"
+                android:paddingTop="1dp"
+                android:paddingEnd="6dp"
+                android:paddingBottom="1dp"
+                android:textColor="@color/badge_raw_text"
+                android:textSize="10sp"
+                android:textStyle="bold"
+                tools:text="RAW"/>
         </LinearLayout>
 
         <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginEnd="16dp"
-            android:orientation="vertical">
+            android:orientation="horizontal">
 
-            <TextView
+            <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/info_label_format_size"
-                android:textColor="@color/darkroom_text_muted"
-                android:textSize="10sp"/>
+                android:layout_marginEnd="16dp"
+                android:orientation="vertical">
 
-            <TextView
-                android:id="@+id/infoFormatSizeText"
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/info_label_resolution"
+                    android:textColor="@color/darkroom_text_muted"
+                    android:textSize="10sp"/>
+
+                <TextView
+                    android:id="@+id/infoResolutionText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/darkroom_text_primary"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    tools:text="6000 × 4000"/>
+            </LinearLayout>
+
+            <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:fontFamily="monospace"
-                android:textColor="@color/darkroom_text_primary"
-                android:textSize="12sp"
-                android:textStyle="bold"
-                tools:text="RAW · 48.6 MB"/>
-        </LinearLayout>
+                android:layout_marginEnd="16dp"
+                android:orientation="vertical">
 
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:orientation="vertical">
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/info_label_format_size"
+                    android:textColor="@color/darkroom_text_muted"
+                    android:textSize="10sp"/>
 
-            <TextView
+                <TextView
+                    android:id="@+id/infoFormatSizeText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/darkroom_text_primary"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    tools:text="RAW · 48.6 MB"/>
+            </LinearLayout>
+
+            <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/info_label_camera_handle"
-                android:textColor="@color/darkroom_text_muted"
-                android:textSize="10sp"/>
+                android:orientation="vertical">
 
-            <TextView
-                android:id="@+id/infoHandleText"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:fontFamily="monospace"
-                android:textColor="@color/darkroom_text_primary"
-                android:textSize="12sp"
-                android:textStyle="bold"
-                tools:text="#0x10042"/>
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/info_label_camera_handle"
+                    android:textColor="@color/darkroom_text_muted"
+                    android:textSize="10sp"/>
+
+                <TextView
+                    android:id="@+id/infoHandleText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/darkroom_text_primary"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    tools:text="#0x10042"/>
+            </LinearLayout>
         </LinearLayout>
     </LinearLayout>
 

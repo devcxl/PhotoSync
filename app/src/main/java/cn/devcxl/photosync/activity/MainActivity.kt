@@ -741,47 +741,26 @@ class MainActivity : AppCompatActivity() {
         val index = binding.viewPager.currentItem.coerceIn(0, count - 1)
         val item = adapter.getItem(index) ?: return
         binding.photoCounterText.text = formatPhotoCounter(index, count)
-        binding.photoNameText.text = item.name ?: getString(R.string.photo_default_name)
 
         val exported = isPhotoExported(item.uriString)
         val edited = isPhotoMarkedEdited(item, editedPhotoMap)
         binding.photoEditedBadge.visibility = if (edited) View.VISIBLE else View.GONE
         binding.photoExportedBadge.visibility = if (exported) View.VISIBLE else View.GONE
-        if (exported) {
-            binding.exportButton.setBackgroundResource(R.drawable.bg_glass_icon_btn_exported)
-            binding.exportButton.setImageResource(R.drawable.ic_check_24)
-            ImageViewCompat.setImageTintList(
-                binding.exportButton,
-                ColorStateList.valueOf(ContextCompat.getColor(this, R.color.exported_text))
-            )
-        } else {
-            binding.exportButton.setBackgroundResource(R.drawable.bg_glass_icon_btn)
-            binding.exportButton.setImageResource(R.drawable.ic_export_24)
-            ImageViewCompat.setImageTintList(
-                binding.exportButton,
-                ColorStateList.valueOf(ContextCompat.getColor(this, R.color.darkroom_text_primary))
-            )
-        }
-
-        when (resolvePhotoFormatBadge(item.path)) {
-            PhotoFormatBadge.RAW -> {
-                binding.photoFormatBadge.visibility = View.VISIBLE
-                binding.photoFormatBadge.setText(R.string.format_raw)
-                binding.photoFormatBadge.setBackgroundResource(R.drawable.bg_badge_raw)
-                binding.photoFormatBadge.setTextColor(
-                    ContextCompat.getColor(this, R.color.badge_raw_text)
+        if (binding.exportButtonSpinner.visibility != View.VISIBLE) {
+            if (exported) {
+                binding.exportButton.setBackgroundResource(R.drawable.bg_glass_icon_btn_exported)
+                binding.exportButton.setImageResource(R.drawable.ic_check_24)
+                ImageViewCompat.setImageTintList(
+                    binding.exportButton,
+                    ColorStateList.valueOf(ContextCompat.getColor(this, R.color.exported_text))
                 )
-            }
-            PhotoFormatBadge.JPEG -> {
-                binding.photoFormatBadge.visibility = View.VISIBLE
-                binding.photoFormatBadge.setText(R.string.format_jpeg)
-                binding.photoFormatBadge.setBackgroundResource(R.drawable.bg_badge_jpg)
-                binding.photoFormatBadge.setTextColor(
-                    ContextCompat.getColor(this, R.color.badge_jpg_text)
+            } else {
+                binding.exportButton.setBackgroundResource(R.drawable.bg_glass_icon_btn)
+                binding.exportButton.setImageResource(R.drawable.ic_export_24)
+                ImageViewCompat.setImageTintList(
+                    binding.exportButton,
+                    ColorStateList.valueOf(ContextCompat.getColor(this, R.color.darkroom_text_primary))
                 )
-            }
-            PhotoFormatBadge.OTHER -> {
-                binding.photoFormatBadge.visibility = View.GONE
             }
         }
         updateInfoToggleAppearance()
@@ -852,6 +831,28 @@ class MainActivity : AppCompatActivity() {
         binding.infoHandleText.text = handleText
 
         val formatBadge = resolvePhotoFormatBadge(item.path)
+        binding.infoFileNameText.text = item.name ?: getString(R.string.photo_default_name)
+        when (formatBadge) {
+            PhotoFormatBadge.RAW -> {
+                binding.infoFormatBadge.visibility = View.VISIBLE
+                binding.infoFormatBadge.setText(R.string.format_raw)
+                binding.infoFormatBadge.setBackgroundResource(R.drawable.bg_badge_raw)
+                binding.infoFormatBadge.setTextColor(
+                    ContextCompat.getColor(this, R.color.badge_raw_text)
+                )
+            }
+            PhotoFormatBadge.JPEG -> {
+                binding.infoFormatBadge.visibility = View.VISIBLE
+                binding.infoFormatBadge.setText(R.string.format_jpeg)
+                binding.infoFormatBadge.setBackgroundResource(R.drawable.bg_badge_jpg)
+                binding.infoFormatBadge.setTextColor(
+                    ContextCompat.getColor(this, R.color.badge_jpg_text)
+                )
+            }
+            PhotoFormatBadge.OTHER -> {
+                binding.infoFormatBadge.visibility = View.GONE
+            }
+        }
         binding.infoResolutionText.text = getString(R.string.info_unknown_value)
         binding.infoFormatSizeText.text = formatPhotoFormatAndSize(formatBadge, 0L)
 
