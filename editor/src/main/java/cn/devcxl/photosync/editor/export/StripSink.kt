@@ -14,20 +14,19 @@ internal fun interface StripSink {
     /**
      * Consumes [rows] full-width `RGBA8` scanlines.
      *
-     * @param rgba Row buffer with `width * 4` bytes per row, bottom image row first (the order
-     *   `glReadPixels` produces).
+     * @param rgba Row buffer with `width * 4` bytes per row, top image row first (because every
+     *   offscreen FBO in the bake chain renders top-down with `QuadOrientation.OFFSCREEN`).
      * @param rows Number of valid rows in the strip.
      */
     fun writeStrip(rgba: ByteBuffer, rows: Int)
 }
 
 /**
- * Streams strips into the native baseline JPEG encoder, flipping rows for free by handing the
- * native `jpeg_write_scanlines` row pointers in reverse order.
+ * Streams top-down strips directly into the native baseline JPEG encoder.
  */
 internal class JpegStripSink(private val jpeg: JpegStreamWriter) : StripSink {
 
     override fun writeStrip(rgba: ByteBuffer, rows: Int) {
-        jpeg.writeStrip(rgba, rows, bottomUp = true)
+        jpeg.writeStrip(rgba, rows, bottomUp = false)
     }
 }

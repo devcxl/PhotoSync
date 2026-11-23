@@ -12,16 +12,19 @@ import timber.log.Timber
 import cn.devcxl.photosync.editor.domain.ColumnBand
 import cn.devcxl.photosync.editor.domain.ColumnBandTiling
 import cn.devcxl.photosync.editor.domain.Mat3
-import cn.devcxl.photosync.editor.domain.SourceSliceRect
 import cn.devcxl.photosync.editor.domain.SourceSlicePlanner
+import cn.devcxl.photosync.editor.domain.SourceSliceRect
 
 /**
  * Streams one baked frame strip by strip into [sink].
  *
- * For every row strip the encoder loops the column bands, renders each one through [chain] and
- * scatters the halo-free inner region into a full-width `RGBA8` row buffer with
- * `GL_PACK_ROW_LENGTH = cropWidth` and `GL_PACK_SKIP_PIXELS = band.x0`. Once a strip is complete the
- * buffer goes straight to `jpeg_write_scanlines`, so peak CPU memory is one crowded strip.
+ * For every row strip the encoder renders each column band through [chain], reads its halo-free
+ * inner region tightly-packed via `glReadPixels` (`GL_PACK_ROW_LENGTH = 0`) into a reusable
+ * band buffer, and copies each row into the full-width `RGBA8` strip buffer at column `band.x0`.
+ *
+ * Avoiding `GL_PACK_ROW_LENGTH` / `GL_PACK_SKIP_PIXELS` on client-memory `glReadPixels` guarantees
+ * identical pixel layout across all Android Adreno/Mali/PowerVR GLES 3.0 drivers, many of which
+ * ignore non-zero pack-row-length when no PBO is bound.
  */
 internal class BakeBandEncoder(
     private val chain: BakePassChain,
@@ -44,24 +47,36 @@ internal class BakeBandEncoder(
      * @throws IOException when a band cannot be rendered or read back.
      */
     fun encode(isActive: () -> Boolean) {
+        val stripRows = minOf(ColumnBandTiling.STRIP_HEIGHT, cropHeight)
+        val maxBandWidth = minOf(ColumnBandTiling.MAX_BAND_WIDTH, cropWidth)
         val rowBuffer = ByteBuffer
-            .allocateDirect(cropWidth * ColumnBandTiling.STRIP_HEIGHT * BYTES_PER_RGBA_PIXEL)
+            .allocateDirect(cropWidth * stripRows * BYTES_PER_RGBA_PIXEL)
             .order(ByteOrder.nativeOrder())
+        val bandBuffer = ByteBuffer
+            .allocateDirect(maxBandWidth * stripRows * BYTES_PER_RGBA_PIXEL)
+            .order(ByteOrder.nativeOrder())
+        val rowScratch = ByteArray(maxBandWidth * BYTES_PER_RGBA_PIXEL)
         var renderedBands = 0
         for (strip in ColumnBandTiling.rowStrips(cropHeight)) {
             for (band in ColumnBandTiling.columnBands(cropWidth, cropHeight, strip)) {
                 if (!isActive()) {
                     throw CancellationException("Bake cancelled before band $renderedBands")
                 }
-                renderBand(band, rowBuffer)
+                renderBand(band, bandBuffer, rowBuffer, rowScratch)
                 renderedBands++
             }
+            rowBuffer.rewind()
             sink.writeStrip(rowBuffer, strip.height)
         }
         Timber.d("Baked %d column bands at %dx%d", renderedBands, cropWidth, cropHeight)
     }
 
-    private fun renderBand(band: ColumnBand, rowBuffer: ByteBuffer) {
+    private fun renderBand(
+        band: ColumnBand,
+        bandBuffer: ByteBuffer,
+        rowBuffer: ByteBuffer,
+        rowScratch: ByteArray
+    ) {
         val binding = bindSource(band)
         if (binding.textureId == 0) {
             throw IOException("Bake could not upload the source of band ${band.x0}")
@@ -75,7 +90,7 @@ internal class BakeBandEncoder(
         if (framebuffer == 0) {
             throw IOException("Bake could not render band ${band.x0}")
         }
-        readBand(band, framebuffer, rowBuffer)
+        readBand(band, framebuffer, bandBuffer, rowBuffer, rowScratch)
     }
 
     private fun bindSource(band: ColumnBand): SourceBinding {
@@ -102,12 +117,19 @@ internal class BakeBandEncoder(
         return SourceBinding(source.uploadSlice(request), request.rect)
     }
 
-    private fun readBand(band: ColumnBand, framebuffer: Int, rowBuffer: ByteBuffer) {
+    private fun readBand(
+        band: ColumnBand,
+        framebuffer: Int,
+        bandBuffer: ByteBuffer,
+        rowBuffer: ByteBuffer,
+        rowScratch: ByteArray
+    ) {
         val plan = ColumnBandTiling.readPlan(band, cropWidth)
+        bandBuffer.rewind()
         GLES20.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, framebuffer)
         GLES20.glPixelStorei(GLES20.GL_PACK_ALIGNMENT, plan.packAlignment)
-        GLES20.glPixelStorei(GLES30.GL_PACK_ROW_LENGTH, plan.packRowLength)
-        GLES20.glPixelStorei(GLES30.GL_PACK_SKIP_PIXELS, plan.packSkipPixels)
+        GLES20.glPixelStorei(GLES30.GL_PACK_ROW_LENGTH, 0)
+        GLES20.glPixelStorei(GLES30.GL_PACK_SKIP_PIXELS, 0)
         GLES20.glPixelStorei(GLES30.GL_PACK_SKIP_ROWS, 0)
         GLES20.glReadPixels(
             plan.readX,
@@ -116,18 +138,51 @@ internal class BakeBandEncoder(
             plan.readHeight,
             GLES20.GL_RGBA,
             GLES20.GL_UNSIGNED_BYTE,
-            rowBuffer
+            bandBuffer
         )
         val error = GLES20.glGetError()
-        GLES20.glPixelStorei(GLES30.GL_PACK_ROW_LENGTH, 0)
-        GLES20.glPixelStorei(GLES30.GL_PACK_SKIP_PIXELS, 0)
         GLES20.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
         if (error != GLES20.GL_NO_ERROR) {
             throw IOException("glReadPixels failed for band ${band.x0} (0x${error.toString(16)})")
         }
+        scatterBandIntoStrip(
+            bandBuffer = bandBuffer,
+            rowBuffer = rowBuffer,
+            rowScratch = rowScratch,
+            bandWidth = plan.readWidth,
+            bandHeight = plan.readHeight,
+            bandX0 = band.x0,
+            cropWidth = cropWidth
+        )
     }
 
-    private companion object {
+    internal companion object {
         const val BYTES_PER_RGBA_PIXEL = 4
+
+        /**
+         * Copies a tightly-packed [bandWidth] x [bandHeight] `RGBA8` band into its column slot
+         * `[bandX0, bandX0 + bandWidth)` inside the full-width [cropWidth] strip buffer.
+         */
+        fun scatterBandIntoStrip(
+            bandBuffer: ByteBuffer,
+            rowBuffer: ByteBuffer,
+            rowScratch: ByteArray,
+            bandWidth: Int,
+            bandHeight: Int,
+            bandX0: Int,
+            cropWidth: Int
+        ) {
+            val bandRowBytes = bandWidth * BYTES_PER_RGBA_PIXEL
+            val stripRowBytes = cropWidth * BYTES_PER_RGBA_PIXEL
+            val columnByteOffset = bandX0 * BYTES_PER_RGBA_PIXEL
+            val src = bandBuffer.duplicate()
+            val dst = rowBuffer.duplicate()
+            src.position(0)
+            for (row in 0 until bandHeight) {
+                src.get(rowScratch, 0, bandRowBytes)
+                dst.position(row * stripRowBytes + columnByteOffset)
+                dst.put(rowScratch, 0, bandRowBytes)
+            }
+        }
     }
 }

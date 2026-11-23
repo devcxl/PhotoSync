@@ -130,9 +130,8 @@ internal class BakeTestSession private constructor(
         private fun bottomUpToArgb(buffer: ByteBuffer, width: Int, height: Int): IntArray {
             val pixels = IntArray(width * height)
             for (row in 0 until height) {
-                val sourceRow = height - 1 - row
                 for (column in 0 until width) {
-                    val offset = (sourceRow * width + column) * BYTES_PER_PIXEL
+                    val offset = (row * width + column) * BYTES_PER_PIXEL
                     pixels[row * width + column] = argbAt(buffer, offset)
                 }
             }
@@ -141,7 +140,7 @@ internal class BakeTestSession private constructor(
     }
 }
 
-/** Copies production strips into one top-down ARGB image for pixel assertions. */
+/** Copies production top-down strips into one ARGB image for pixel assertions. */
 internal class CapturingStripSink(private val width: Int, private val height: Int) : StripSink {
 
     val argb: IntArray = IntArray(width * height)
@@ -152,7 +151,7 @@ internal class CapturingStripSink(private val width: Int, private val height: In
         val view = rgba.duplicate().order(ByteOrder.nativeOrder())
         view.rewind()
         for (row in 0 until rows) {
-            val imageRow = nextTopRow + (rows - 1 - row)
+            val imageRow = nextTopRow + row
             for (column in 0 until width) {
                 val offset = (row * width + column) * 4
                 argb[imageRow * width + column] = argbAt(view, offset)

@@ -44,13 +44,19 @@ internal class OffscreenColorTarget {
      * @param allowHalfFloat Whether Tier 1 `GL_RGBA16F` rendering is requested for this pass.
      * @return True when the target was (re)allocated, so the caller can redraw unconditionally.
      */
-    fun ensureSize(width: Int, height: Int, allowHalfFloat: Boolean): Boolean {
+    fun ensureSize(
+        width: Int,
+        height: Int,
+        allowHalfFloat: Boolean,
+        exactSize: Boolean = false
+    ): Boolean {
         if (isDisabled) return false
         val targetWidth = width.coerceAtLeast(1)
         val targetHeight = height.coerceAtLeast(1)
+        val tolerance = if (exactSize) 0 else SIZE_TOLERANCE_PX
         val sizeUnchanged = isReady &&
-            abs(targetWidth - this.width) <= SIZE_TOLERANCE_PX &&
-            abs(targetHeight - this.height) <= SIZE_TOLERANCE_PX
+            abs(targetWidth - this.width) <= tolerance &&
+            abs(targetHeight - this.height) <= tolerance
         if (sizeUnchanged && allowHalfFloat == isHalfFloatTarget) return false
         release()
         allocate(targetWidth, targetHeight, allowHalfFloat)

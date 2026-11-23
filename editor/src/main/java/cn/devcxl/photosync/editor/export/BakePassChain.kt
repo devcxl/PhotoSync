@@ -141,7 +141,7 @@ internal class BakePassChain {
         val width = frame.band.fboWidth
         val height = frame.band.fboHeight
         if (!drawPassA(frame, geometryTarget)) return 0
-        passBTarget.ensureSize(width, height, allowHalfFloat = true)
+        passBTarget.ensureSize(width, height, allowHalfFloat = true, exactSize = true)
         if (!passBTarget.isReady) return 0
         passBTarget.bind()
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
@@ -153,7 +153,7 @@ internal class BakePassChain {
         passBTarget.unbind()
 
         val detailTexture = renderSpatialDetail(frame, width, height)
-        outputTarget.ensureSize(width, height, allowHalfFloat = false)
+        outputTarget.ensureSize(width, height, allowHalfFloat = false, exactSize = true)
         if (!outputTarget.isReady) return 0
         outputTarget.bind()
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
@@ -194,7 +194,7 @@ internal class BakePassChain {
     }
 
     private fun drawPassA(frame: BakeFrame, target: OffscreenColorTarget): Boolean {
-        target.ensureSize(frame.band.fboWidth, frame.band.fboHeight, allowHalfFloat = true)
+        target.ensureSize(frame.band.fboWidth, frame.band.fboHeight, allowHalfFloat = true, exactSize = true)
         if (!target.isReady) return false
         target.bind()
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)

@@ -72,7 +72,7 @@ internal class SpatialDetailGlChain {
         var current = inputTextureId
         for ((index, stage) in plan.stages.withIndex()) {
             val target = pingPong[index % pingPong.size]
-            target.ensureSize(width, height, allowHalfFloat = true)
+            target.ensureSize(width, height, allowHalfFloat = true, exactSize = true)
             if (!target.isReady) {
                 Timber.w("Pass C target unavailable; spatial detail stops at stage %s", stage)
                 return current
