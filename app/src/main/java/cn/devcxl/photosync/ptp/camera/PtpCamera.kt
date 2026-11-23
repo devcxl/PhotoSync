@@ -101,10 +101,17 @@ internal class PtpCamera private constructor(
     internal suspend fun close() = withContext(NonCancellable) {
         mutex.withLock {
             withContext(ioDispatcher) {
-                try {
-                    session.closeSession()
-                } catch (e: PtpException) {
-                    Timber.w(e, "CloseSession failed during teardown")
+                if (linkBroken) {
+                    Timber.i("Skipping CloseSession on broken USB link; cancelling and resetting device")
+                    runCatching { transport.cancelAndResetDevice() }
+                        .onFailure { Timber.w(it, "cancelAndResetDevice failed during broken-link teardown") }
+                } else {
+                    try {
+                        session.closeSession()
+                    } catch (e: PtpException) {
+                        Timber.w(e, "CloseSession failed during teardown; cancelling and resetting device")
+                        runCatching { transport.cancelAndResetDevice() }
+                    }
                 }
                 session.abandon()
                 transport.close()
@@ -382,11 +389,21 @@ internal class PtpCamera private constructor(
         if (linkBroken) {
             throw PtpTransportException("The USB link is unusable after a failed transfer; reconnect the camera")
         }
-        withContext(ioDispatcher) { block() }
+        withContext(ioDispatcher) {
+            try {
+                block()
+            } catch (e: PtpTransportException) {
+                linkBroken = true
+                throw e
+            } catch (e: PtpProtocolException) {
+                linkBroken = true
+                throw e
+            }
+        }
     }
 
     companion object {
-        private const val RESET_SETTLE_MS = 300L
+        private val INIT_SETTLE_DELAYS_MS = longArrayOf(300L, 500L, 800L)
         private const val READ_BUFFER_BYTES = 64 * 1024
         private const val WRITE_BUFFER_BYTES = 64 * 1024
         private const val PROGRESS_STEP_BYTES = 256 * 1024
@@ -403,14 +420,29 @@ internal class PtpCamera private constructor(
             ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
         ): PtpCamera = withContext(ioDispatcher) {
             val transport = UsbPtpTransport.open(usbManager, device)
-            val camera = PtpCamera(
+            connectWithTransport(
                 usbDevice = device,
                 transport = transport,
                 profile = profileFor(device.vendorId),
                 ioDispatcher = ioDispatcher,
             )
+        }
+
+        internal suspend fun connectWithTransport(
+            usbDevice: UsbDevice?,
+            transport: PtpTransport,
+            profile: VendorProfile = GenericProfile,
+            ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+            settleDelaysMs: LongArray = INIT_SETTLE_DELAYS_MS,
+        ): PtpCamera = withContext(ioDispatcher) {
+            val camera = PtpCamera(
+                usbDevice = usbDevice,
+                transport = transport,
+                profile = profile,
+                ioDispatcher = ioDispatcher,
+            )
             try {
-                camera.initialise()
+                camera.initialise(settleDelaysMs)
             } catch (e: Exception) {
                 transport.close()
                 throw e
@@ -426,22 +458,56 @@ internal class PtpCamera private constructor(
         }
     }
 
-    private suspend fun initialise() {
-        transport.resetDevice()
-        // A body needs a moment after a device reset before it answers on the bulk pipe;
-        // without it the first GetDeviceInfo tends to come back as a timeout.
-        delay(RESET_SETTLE_MS)
-        val info = readDeviceInfo()
-        deviceInfo = info
-        Timber.i(
-            "Connected to %s %s (fw %s, vendor extension 0x%04x, %d operations, %d events)",
-            info.manufacturer,
-            info.model,
-            info.deviceVersion,
-            info.vendorExtensionId,
-            info.operationsSupported.size,
-            info.eventsSupported.size,
-        )
+    private suspend fun initialise(settleDelaysMs: LongArray = INIT_SETTLE_DELAYS_MS) {
+        var lastError: PtpException? = null
+        val delays = if (settleDelaysMs.isNotEmpty()) settleDelaysMs else INIT_SETTLE_DELAYS_MS
+        for (attempt in delays.indices) {
+            if (attempt == 0) {
+                transport.resetDevice()
+            } else {
+                transport.cancelAndResetDevice()
+            }
+            // A body needs a moment after a device reset before it answers on the bulk pipe;
+            // without it the first GetDeviceInfo tends to come back as a timeout.
+            val settleMs = delays[attempt]
+            if (settleMs > 0L) {
+                delay(settleMs)
+            }
+            // Flush any late packet the camera emitted into Bulk-IN during the settle window
+            // before sending GetDeviceInfo (0x1001).
+            transport.drainPendingInput()
+            try {
+                val info = readDeviceInfo()
+                deviceInfo = info
+                Timber.i(
+                    "Connected to %s %s (fw %s, vendor extension 0x%04x, %d operations, %d events)",
+                    info.manufacturer,
+                    info.model,
+                    info.deviceVersion,
+                    info.vendorExtensionId,
+                    info.operationsSupported.size,
+                    info.eventsSupported.size,
+                )
+                return
+            } catch (e: PtpProtocolException) {
+                lastError = e
+                Timber.w(
+                    e,
+                    "GetDeviceInfo attempt %d/%d got unexpected framing; retrying after pipe recovery",
+                    attempt + 1,
+                    delays.size,
+                )
+            } catch (e: PtpTransportException) {
+                lastError = e
+                Timber.w(
+                    e,
+                    "GetDeviceInfo attempt %d/%d transport failed; retrying after pipe recovery",
+                    attempt + 1,
+                    delays.size,
+                )
+            }
+        }
+        throw lastError ?: PtpProtocolException("GetDeviceInfo failed after ${delays.size} attempts")
     }
 }
 

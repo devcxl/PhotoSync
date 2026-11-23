@@ -135,6 +135,36 @@ class PtpBulkInReaderTest {
         }
     }
 
+    @Test
+    fun shouldDrainBufferedTailAndPendingPackets_whenDrainingBulkIn() {
+        val staleTail = ByteArray(100) { 0x62 }
+        val staleTransfer = ByteArray(2_048) { 0x41 }
+        val pipe = FakeBulkInPipe(
+            maxPacketSize = 512,
+            transfers = listOf(
+                dataContainer(PtpOp.GET_OBJECT, tid = 1, payload = staleTail),
+                staleTransfer,
+            ),
+        )
+        val reader = PtpBulkInReader(maxPacketSize = 512, readUsb = pipe::read)
+
+        // Read the header so 100 bytes remain buffered inside PtpBulkInReader
+        reader.readHeader(5_000)
+        val drained = reader.drain(timeoutMs = 50, maxBytes = 64 * 1024, maxDurationMs = 1_000L)
+
+        assertEquals(staleTail.size + staleTransfer.size, drained)
+        assertTrue(pipe.allReadsWerePacketAligned)
+    }
+
+    @Test
+    fun shouldRespectMaxBytesLimit_whenBulkInNeverStops() {
+        val endlessReader = PtpBulkInReader(maxPacketSize = 512) { _, _, length, _ -> length }
+
+        val drained = endlessReader.drain(timeoutMs = 50, maxBytes = 32 * 1024, maxDurationMs = 5_000L)
+
+        assertEquals(32 * 1024, drained)
+    }
+
     private fun dataContainer(opcode: Int, tid: Int, payload: ByteArray): ByteArray =
         PtpContainer.dataHeader(payload.size, opcode, tid) + payload
 

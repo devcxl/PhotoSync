@@ -30,13 +30,27 @@ internal interface PtpTransport {
     fun openBody(length: Int): PtpBody
 
     /**
-     * Issues the class-specific device reset (`ResetDevice`, 0x66) and clears any halt left
-     * on the bulk endpoints by an earlier session.
+     * Discards any stale bytes still queued in the bulk-IN reader or USB endpoint FIFO.
      *
-     * A halted bulk endpoint fails every transfer, and nothing else in this layer would
-     * recover from it.
+     * @return Total number of stale bytes discarded.
+     */
+    fun drainPendingInput(): Int = 0
+
+    /**
+     * Issues the class-specific device reset (`ResetDevice`, 0x66), clears any halt left on the
+     * bulk endpoints by an earlier session, and drains stale bulk-IN data.
+     *
+     * A halted bulk endpoint or an undrained FIFO breaks every later transfer, and nothing else
+     * in this layer would recover from it.
      */
     fun resetDevice()
+
+    /**
+     * Stronger recovery for a wedged or out-of-sync PTP pipe: issues a class-specific cancel
+     * request (`0x64`), resets the device (`0x66`), clears halts, and drains any leftover
+     * bulk-IN packets.
+     */
+    fun cancelAndResetDevice() = resetDevice()
 
     /** Releases the interface and closes the USB connection. */
     fun close()
