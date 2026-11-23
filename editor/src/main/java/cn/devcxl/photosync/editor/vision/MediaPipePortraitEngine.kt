@@ -41,8 +41,8 @@ class PortraitEngineResult(
  *
  * The engine runs the bundled `face_landmarker.task` plus `selfie_segmenter.tflite` from the first
  * frame, and swaps the segmenter for the downloaded six-class model as soon as
- * [upgradeToMulticlass] succeeds. Everything is created through [MediaPipeDelegatePolicy], so a
- * GPU initialisation failure degrades to CPU instead of breaking the Portrait tab.
+ * [upgradeToMulticlass] succeeds. [MediaPipeDelegatePolicy] selects delegates separately for
+ * face landmarks and segmentation.
  */
 class MediaPipePortraitEngine(
     private val context: Context,
@@ -67,7 +67,7 @@ class MediaPipePortraitEngine(
             faceLandmarker = delegatePolicy.createTask { delegate -> createFaceLandmarker(delegate) }
         }
         if (segmenter == null && multiclassSegmenter == null) {
-            segmenter = delegatePolicy.createTask { delegate ->
+            segmenter = delegatePolicy.createSegmentationTask { delegate ->
                 createSegmenter(delegate, assetPath = PortraitBundledModels.SELFIE_SEGMENTER_ASSET)
             }
         }
@@ -93,7 +93,7 @@ class MediaPipePortraitEngine(
             Timber.e(e, "Downloaded portrait model could not be mapped into memory")
             return false
         }
-        val upgraded = delegatePolicy.createTask { delegate ->
+        val upgraded = delegatePolicy.createSegmentationTask { delegate ->
             createSegmenter(delegate, modelBuffer = buffer)
         }
         if (upgraded == null) {

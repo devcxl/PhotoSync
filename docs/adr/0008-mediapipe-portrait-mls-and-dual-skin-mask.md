@@ -18,9 +18,11 @@
 - R8 加 `-keep class com.google.mediapipe.** { *; }`：`tasks-vision` AAR 不带 consumer rules，JNI 按类名反查，混淆即崩。
 - `ModelDownloadManager` 的契约是「`.part` 续传 → 尺寸 + SHA-256 校验 → 原子 rename」；校验失败删除文件并返回 `null`，绝不把半包交给 MediaPipe。HTTP 走 `ModelHttpSource` 接口（生产实现 `HttpUrlConnectionSource`），使 Range/校验/清理逻辑可用纯 JVM 单测覆盖，不需要网络。
 
-### 2. GPU Delegate 默认关闭，失败即永久黑名单
+### 2. 人脸定位可用 GPU，置信度分割使用 CPU
 
-MediaPipe 的 GPU 推理硬性要求 OpenGL ES 3.1，且任务层**不会**自动回退 CPU（初始化抛 `MediaPipeException`）。`MediaPipeDelegatePolicy` 因此：默认 `Delegate.CPU`；仅当 `reqGlEsVersion >= 0x30001` 且未列入 `SharedPreferences` 黑名单时才尝试 GPU；捕获 `MediaPipeException`/`RuntimeException` 后写入黑名单并重建 CPU 任务。**CPU 是验收基线**，GPU 只是加分项。
+人脸定位仅在 `reqGlEsVersion >= 0x30001` 且未列入黑名单时尝试 GPU；初始化失败后记录黑名单并重建 CPU 任务。
+
+使用 MediaPipe Tasks 1.2.3 时，内置与六类分割均使用 CPU。真机上 GPU 任务能成功初始化，但在 JNI 拷贝 `256×256` 置信度掩码时失败：原生要求 `131072` 字节，Java 按 float32 分配 `262144` 字节。此错误早于应用读取掩码，不能仅通过初始化回退或调整应用缓冲区解决。此约束不影响人脸定位或 GLES 预览渲染；升级依赖后，须在受影响设备上验证 GPU 置信度掩码读回再放开。
 
 ### 3. MLS 相似变换采用闭式最小二乘，而不是「归一化 A(v−q*)」捷径
 

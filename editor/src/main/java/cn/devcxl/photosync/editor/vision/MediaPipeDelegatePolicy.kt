@@ -7,7 +7,7 @@ import com.google.mediapipe.tasks.core.Delegate
 import timber.log.Timber
 
 /**
- * Tier 4 of the GPU fallback matrix: decides whether MediaPipe may use its GPU delegate.
+ * Selects delegates independently for face landmarks and the Java confidence-mask readback.
  *
  * Defaults to [Delegate.CPU] and only offers [Delegate.GPU] when the device reports OpenGL ES 3.1
  * (`reqGlEsVersion >= 0x30001`, the hard requirement of MediaPipe's ML inference) **and** this
@@ -49,6 +49,18 @@ class MediaPipeDelegatePolicy(
                 recordGpuFailure(e)
             }
         }
+        return createCpuTask(factory)
+    }
+
+    /**
+     * Uses CPU for confidence-mask segmentation. The Android Tasks API allocates 4 bytes per
+     * pixel before JNI readback, but some GPU paths return 2-byte pixels even after successful
+     * task creation. CPU returns the float32 planes the Java API expects.
+     */
+    internal fun <T : Any> createSegmentationTask(factory: (Delegate) -> T): T? =
+        createCpuTask(factory)
+
+    private fun <T : Any> createCpuTask(factory: (Delegate) -> T): T? {
         return try {
             factory(Delegate.CPU)
         } catch (e: RuntimeException) {
