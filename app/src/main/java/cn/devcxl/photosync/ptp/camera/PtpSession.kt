@@ -27,6 +27,10 @@ internal class PtpSession(private val transport: PtpTransport) {
     var transactionId: Int = 0
         private set
 
+    /** Transaction that may still be active on the device, or null after a complete response. */
+    var inFlightTransactionId: Int? = null
+        private set
+
     /**
      * Opens the session, recovering from a camera that still holds one.
      *
@@ -74,6 +78,7 @@ internal class PtpSession(private val transport: PtpTransport) {
     fun abandon() {
         isOpen = false
         transactionId = 0
+        inFlightTransactionId = null
     }
 
     /**
@@ -92,7 +97,7 @@ internal class PtpSession(private val transport: PtpTransport) {
         transport.writeContainer(PtpContainer.command(opcode, tid, params))
         val header = transport.readHeader()
         if (header.type == PtpContainer.TYPE_RESPONSE) {
-            val response = readResponse(header)
+            val response = readResponse(header, tid)
             return PtpDataExchange(response, null)
         }
         requireDataHeader(header, opcode, tid)
@@ -104,7 +109,7 @@ internal class PtpSession(private val transport: PtpTransport) {
             throw PtpProtocolException("Data container for 0x%04x declares %d bytes".format(opcode, payloadLength))
         }
         val body = transport.readBody(payloadLength)
-        return PtpDataExchange(readResponseFromWire(), body)
+        return PtpDataExchange(readResponseFromWire(tid), body)
     }
 
     /**
@@ -119,7 +124,7 @@ internal class PtpSession(private val transport: PtpTransport) {
         transport.writeContainer(PtpContainer.command(opcode, tid, params))
         val header = transport.readHeader()
         if (header.type == PtpContainer.TYPE_RESPONSE) {
-            return PtpDataStart.Rejected(readResponse(header))
+            return PtpDataStart.Rejected(readResponse(header, tid))
         }
         requireDataHeader(header, opcode, tid)
         return PtpDataStart.Streaming(
@@ -129,7 +134,10 @@ internal class PtpSession(private val transport: PtpTransport) {
     }
 
     /** Reads the response that terminates an exchange started by [beginData]. */
-    fun finishData(): PtpResponsePacket = readResponseFromWire()
+    fun finishData(): PtpResponsePacket {
+        val tid = checkNotNull(inFlightTransactionId) { "No streaming PTP transaction is active" }
+        return readResponseFromWire(tid)
+    }
 
     private fun recoverFromOpenSession(supportsCloseSession: Boolean) {
         if (!supportsCloseSession) {
@@ -164,13 +172,18 @@ internal class PtpSession(private val transport: PtpTransport) {
                 "Expected a response to 0x%04x, got container type ${header.type}".format(opcode)
             )
         }
-        return readResponse(header)
+        return readResponse(header, tid)
     }
 
-    private fun readResponse(header: PtpContainerHeader): PtpResponsePacket {
+    private fun readResponse(header: PtpContainerHeader, expectedTid: Int): PtpResponsePacket {
+        if (header.transactionId != expectedTid) {
+            throw PtpProtocolException(
+                "Response transaction ${header.transactionId} does not match expected transaction $expectedTid"
+            )
+        }
         val payloadLength = header.length - PtpContainer.HEADER_BYTES
         val bytes = transport.readBody(payloadLength)
-        return PtpResponsePacket(
+        val response = PtpResponsePacket(
             code = header.code,
             transactionId = header.transactionId,
             params = IntArray(payloadLength / 4) { index ->
@@ -180,14 +193,16 @@ internal class PtpSession(private val transport: PtpTransport) {
                     ((bytes[index * 4 + 3].toInt() and 0xff) shl 24)
             },
         )
+        inFlightTransactionId = null
+        return response
     }
 
-    private fun readResponseFromWire(): PtpResponsePacket {
+    private fun readResponseFromWire(expectedTid: Int): PtpResponsePacket {
         val header = transport.readHeader()
         if (header.type != PtpContainer.TYPE_RESPONSE) {
             throw PtpProtocolException("Expected the closing response, got container type ${header.type}")
         }
-        return readResponse(header)
+        return readResponse(header, expectedTid)
     }
 
     private fun requireDataHeader(header: PtpContainerHeader, opcode: Int, tid: Int) {
@@ -214,10 +229,9 @@ internal class PtpSession(private val transport: PtpTransport) {
     }
 
     private fun nextTransactionId(): Int {
-        if (!isOpen) {
-            return CLOSED_TRANSACTION_ID
-        }
-        return transactionId++
+        val next = if (isOpen) transactionId++ else CLOSED_TRANSACTION_ID
+        inFlightTransactionId = next
+        return next
     }
 
     private companion object {

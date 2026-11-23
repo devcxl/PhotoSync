@@ -46,11 +46,11 @@ internal interface PtpTransport {
     fun resetDevice()
 
     /**
-     * Stronger recovery for a wedged or out-of-sync PTP pipe: issues a class-specific cancel
-     * request (`0x64`), resets the device (`0x66`), clears halts, and drains any leftover
-     * bulk-IN packets.
+     * Stronger recovery for a wedged or out-of-sync PTP pipe. If the interrupted transaction id is
+     * known, a class-specific cancel request (`0x64`) can identify it; an unknown id must not be
+     * guessed. The transport also resets the device, clears halts and drains leftover bulk-IN data.
      */
-    fun cancelAndResetDevice() = resetDevice()
+    fun cancelAndResetDevice(transactionId: Int?) = resetDevice()
 
     /** Releases the interface and closes the USB connection. */
     fun close()

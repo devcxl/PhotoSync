@@ -39,6 +39,24 @@ internal class UsbPtpTransport private constructor(
         connection.bulkTransfer(bulkIn, dest, offset, length, timeoutMs)
     }
 
+    private val recoveryControl = PtpRecoveryControl(
+        PtpControlTransfer { requestType, request, buffer, length, timeoutMs ->
+            connection.controlTransfer(
+                requestType, request, 0, usbInterface.id, buffer, length, timeoutMs
+            )
+        }
+    )
+
+    private val recovery = PtpUsbRecovery(
+        recoveryControl = recoveryControl,
+        drain = { drainPendingInput() },
+        reset = ::sendClassDeviceReset,
+        clearHalt = {
+            clearHalt(bulkOut)
+            clearHalt(bulkIn)
+        },
+    )
+
     override fun writeContainer(bytes: ByteArray) {
         var written = 0
         while (written < bytes.size) {
@@ -97,25 +115,10 @@ internal class UsbPtpTransport private constructor(
         return drained
     }
 
-    override fun resetDevice() {
-        drainPendingInput()
-        sendClassDeviceReset()
-        // The reset should have cleared these already, but a halt that survives it would
-        // break every later transfer, and clearing one costs a single control request.
-        clearHalt(bulkOut)
-        clearHalt(bulkIn)
-        drainPendingInput()
-    }
+    override fun resetDevice() = recovery.resetDevice()
 
-    override fun cancelAndResetDevice() {
-        drainPendingInput()
-        sendClassCancelRequest()
-        drainPendingInput()
-        sendClassDeviceReset()
-        clearHalt(bulkOut)
-        clearHalt(bulkIn)
-        drainPendingInput()
-    }
+    override fun cancelAndResetDevice(transactionId: Int?) =
+        recovery.cancelAndResetDevice(transactionId)
 
     private fun sendClassDeviceReset() {
         val result = connection.controlTransfer(
@@ -134,23 +137,6 @@ internal class UsbPtpTransport private constructor(
         }
     }
 
-    private fun sendClassCancelRequest() {
-        val result = connection.controlTransfer(
-            // USB Still Image Capture Class Spec 1.0 section 5.2 (Cancel Request, 0x64):
-            // 6-byte payload: CancellationCode (0x4001) + TransactionID (0xFFFFFFFF = active).
-            UsbConstants.USB_DIR_OUT or UsbConstants.USB_TYPE_CLASS or RECIPIENT_INTERFACE,
-            CLASS_CANCEL_REQUEST,
-            0,
-            usbInterface.id,
-            CANCEL_ACTIVE_TRANSACTION_PAYLOAD,
-            CANCEL_ACTIVE_TRANSACTION_PAYLOAD.size,
-            COMMAND_TIMEOUT_MS,
-        )
-        if (result < 0) {
-            Timber.d("PTP CancelRequest (0x64) control transfer returned %d", result)
-        }
-    }
-
     override fun close() {
         runCatching { connection.releaseInterface(usbInterface) }
         runCatching { connection.close() }
@@ -164,8 +150,8 @@ internal class UsbPtpTransport private constructor(
      * by value 0.
      */
     private fun clearHalt(endpoint: UsbEndpoint) {
-        runCatching {
-            connection.controlTransfer(
+        try {
+            val result = connection.controlTransfer(
                 // bmRequestType: host-to-device, standard, endpoint recipient. UsbConstants
                 // exposes the direction and type bits but no recipient constants.
                 RECIPIENT_ENDPOINT,
@@ -176,6 +162,9 @@ internal class UsbPtpTransport private constructor(
                 0,
                 COMMAND_TIMEOUT_MS,
             )
+            if (result < 0) Timber.w("PTP clear endpoint halt failed (result=%d)", result)
+        } catch (error: RuntimeException) {
+            Timber.w(error, "PTP clear endpoint halt failed")
         }
     }
 
@@ -211,19 +200,12 @@ internal class UsbPtpTransport private constructor(
         private const val READ_CHUNK_BYTES = 16 * 1024
         private const val MAX_DATASET_BYTES = 16 * 1024 * 1024
 
-        private const val CLASS_CANCEL_REQUEST = 0x64
         private const val CLASS_DEVICE_RESET = 0x66
         private const val CLEAR_FEATURE = 0x01
         private const val ENDPOINT_HALT = 0x00
         private const val RECIPIENT_INTERFACE = 0x01
         private const val RECIPIENT_ENDPOINT = 0x02
         private const val INTERFACE_CLASS_STILL_IMAGE = 6
-
-        /** USB SIC 1.0 Cancel Request payload: code 0x4001 (LE), transactionId 0xFFFFFFFF. */
-        private val CANCEL_ACTIVE_TRANSACTION_PAYLOAD = byteArrayOf(
-            0x01, 0x40,
-            0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte(),
-        )
 
         /**
          * Opens [device] and claims its PTP interface.
@@ -328,8 +310,10 @@ internal class PtpBulkInReader(
     }
 
     /**
-     * Discards any buffered tail bytes and drains unread packets from the USB bulk-IN pipe until
-     * a short read times out or [maxBytes] / [maxDurationMs] is reached.
+     * Discards the buffered tail and drains unread packets until several consecutive empty reads
+     * or [maxBytes] / [maxDurationMs] is reached. A single USB timeout does not prove the device
+     * has finished sending an interrupted transfer; later bytes could otherwise corrupt the next
+     * container header.
      *
      * Every read submitted to [readUsb] stays packet-aligned so Android/Linux host controllers
      * never fail the drain itself with `EOVERFLOW`.
@@ -338,23 +322,22 @@ internal class PtpBulkInReader(
         timeoutMs: Int,
         maxBytes: Int,
         maxDurationMs: Long,
-        clockMs: () -> Long = System::currentTimeMillis,
+        clockMs: () -> Long = { System.nanoTime() / 1_000_000L },
     ): Int {
         var totalDrained = bufferedCount
         clear()
         if (maxBytes <= 0) return totalDrained
         val scratch = ByteArray(alignedChunkBytes)
         val startedAt = clockMs()
-        var zeroPackets = 0
+        var emptyReads = 0
         while (totalDrained < maxBytes && (clockMs() - startedAt) < maxDurationMs) {
             val got = readUsb(scratch, 0, scratch.size, timeoutMs)
             if (got > 0) {
                 totalDrained += got
-                zeroPackets = 0
-            } else if (got == 0 && zeroPackets < MAX_ZERO_PACKETS) {
-                zeroPackets++
+                emptyReads = 0
             } else {
-                break
+                emptyReads++
+                if (emptyReads >= MAX_DRAIN_EMPTY_READS) break
             }
         }
         return totalDrained
@@ -438,6 +421,7 @@ internal class PtpBulkInReader(
 
     private companion object {
         const val DEFAULT_READ_CHUNK_BYTES = 16 * 1024
+        const val MAX_DRAIN_EMPTY_READS = 3
         const val MAX_ZERO_PACKETS = 2
     }
 }

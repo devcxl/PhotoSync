@@ -10,6 +10,7 @@ import cn.devcxl.photosync.ptp.transport.PtpBody
 import cn.devcxl.photosync.ptp.transport.PtpTransport
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -157,13 +158,74 @@ class PtpSessionTest {
         }
     }
 
-    private fun reply(code: Int, params: IntArray = IntArray(0)): ByteArray {
+    @Test
+    fun shouldRejectStaleResponse_whenTransactionIdDoesNotMatch() {
+        val session = PtpSession(ScriptedTransport(reply(PtpStatus.OK, transactionId = 99)))
+
+        assertThrows(PtpProtocolException::class.java) {
+            session.transactForData(PtpOp.GET_DEVICE_INFO)
+        }
+    }
+
+    @Test
+    fun shouldRejectStaleClosingResponse_whenDatasetWasReceived() {
+        val transport = ScriptedTransport(
+            dataHeader(PtpOp.GET_DEVICE_INFO, 0, 4),
+            reply(PtpStatus.OK, transactionId = 99),
+        )
+
+        assertThrows(PtpProtocolException::class.java) {
+            PtpSession(transport).transactForData(PtpOp.GET_DEVICE_INFO)
+        }
+    }
+
+    @Test
+    fun shouldRejectStaleClosingResponse_whenStreamFinishes() {
+        val transport = ScriptedTransport(
+            reply(PtpStatus.OK),
+            dataHeader(PtpOp.GET_OBJECT, 1, 4),
+            reply(PtpStatus.OK, transactionId = 99),
+        )
+        val session = PtpSession(transport)
+        session.open(supportsCloseSession = true)
+        session.beginData(PtpOp.GET_OBJECT, 7)
+
+        assertThrows(PtpProtocolException::class.java) {
+            session.finishData()
+        }
+    }
+
+    @Test
+    fun shouldClearTransactionId_whenResponseCompletes() {
+        val session = PtpSession(
+            ScriptedTransport(reply(PtpStatus.OK), reply(PtpStatus.OK, transactionId = 1))
+        )
+        assertNull(session.inFlightTransactionId)
+        session.open(supportsCloseSession = true)
+        assertNull(session.inFlightTransactionId)
+
+        session.transact(PtpOp.GET_STORAGE_IDS)
+        assertNull(session.inFlightTransactionId)
+    }
+
+    @Test
+    fun shouldKeepTransactionIdForRecovery_whenResponseIsIncomplete() {
+        val session = PtpSession(ScriptedTransport(dataHeader(PtpOp.GET_DEVICE_INFO, 99, 4)))
+        assertThrows(PtpProtocolException::class.java) {
+            session.transactForData(PtpOp.GET_DEVICE_INFO)
+        }
+        assertEquals(0, session.inFlightTransactionId)
+        session.abandon()
+        assertNull(session.inFlightTransactionId)
+    }
+
+    private fun reply(code: Int, params: IntArray = IntArray(0), transactionId: Int = 0): ByteArray {
         val length = PtpContainer.HEADER_BYTES + params.size * 4
         val out = ByteArrayOutputStream()
         out.write(u32(length))
         out.write(u16(PtpContainer.TYPE_RESPONSE))
         out.write(u16(code))
-        out.write(u32(1))
+        out.write(u32(transactionId))
         params.forEach { out.write(u32(it)) }
         return out.toByteArray()
     }

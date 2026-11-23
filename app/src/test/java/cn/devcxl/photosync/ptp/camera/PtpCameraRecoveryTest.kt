@@ -215,7 +215,7 @@ class PtpCameraRecoveryTest {
             pendingBodies.clear()
         }
 
-        override fun cancelAndResetDevice() {
+        override fun cancelAndResetDevice(transactionId: Int?) {
             cancelAndResetCalls++
             staleHeadersBeforeCancel.clear()
             pendingHeaders.clear()

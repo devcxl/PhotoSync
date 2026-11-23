@@ -165,6 +165,39 @@ class PtpBulkInReaderTest {
         assertEquals(32 * 1024, drained)
     }
 
+    @Test
+    fun shouldDrainLateStaleBytes_whenFirstBulkInReadTimesOut() {
+        var nowMs = 0L
+        val results = ArrayDeque(listOf(-1, 53, -1, -1, -1))
+        val reader = PtpBulkInReader(maxPacketSize = 512) { buffer, offset, _, _ ->
+            nowMs += 50
+            val result = if (results.isEmpty()) -1 else results.removeFirst()
+            if (result > 0) buffer.fill(0x62, offset, offset + result)
+            result
+        }
+
+        val drained = reader.drain(
+            timeoutMs = 50,
+            maxBytes = 32 * 1024,
+            maxDurationMs = 1_000L,
+            clockMs = { nowMs },
+        )
+
+        assertEquals(53, drained)
+    }
+
+    @Test
+    fun shouldStopDrainingAfterBoundedEmptyReads_whenPipeIsUnavailable() {
+        var calls = 0
+        val reader = PtpBulkInReader(maxPacketSize = 512) { _, _, _, _ ->
+            calls++
+            -1
+        }
+
+        assertEquals(0, reader.drain(timeoutMs = 50, maxBytes = 32 * 1024, maxDurationMs = 1_000L))
+        assertEquals(3, calls)
+    }
+
     private fun dataContainer(opcode: Int, tid: Int, payload: ByteArray): ByteArray =
         PtpContainer.dataHeader(payload.size, opcode, tid) + payload
 

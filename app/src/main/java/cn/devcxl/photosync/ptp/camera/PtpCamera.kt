@@ -17,7 +17,6 @@ import cn.devcxl.photosync.ptp.protocol.PtpObjectInfo
 import cn.devcxl.photosync.ptp.protocol.PtpOp
 import cn.devcxl.photosync.ptp.protocol.PtpProtocolException
 import cn.devcxl.photosync.ptp.protocol.PtpResponsePacket
-import cn.devcxl.photosync.ptp.protocol.PtpStatus
 import cn.devcxl.photosync.ptp.protocol.PtpStorageInfo
 import cn.devcxl.photosync.ptp.protocol.PtpTransportException
 import cn.devcxl.photosync.ptp.transport.PtpTransport
@@ -26,7 +25,6 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -103,14 +101,14 @@ internal class PtpCamera private constructor(
             withContext(ioDispatcher) {
                 if (linkBroken) {
                     Timber.i("Skipping CloseSession on broken USB link; cancelling and resetting device")
-                    runCatching { transport.cancelAndResetDevice() }
+                    runCatching { transport.cancelAndResetDevice(session.inFlightTransactionId) }
                         .onFailure { Timber.w(it, "cancelAndResetDevice failed during broken-link teardown") }
                 } else {
                     try {
                         session.closeSession()
                     } catch (e: PtpException) {
                         Timber.w(e, "CloseSession failed during teardown; cancelling and resetting device")
-                        runCatching { transport.cancelAndResetDevice() }
+                        runCatching { transport.cancelAndResetDevice(session.inFlightTransactionId) }
                     }
                 }
                 session.abandon()
@@ -403,7 +401,6 @@ internal class PtpCamera private constructor(
     }
 
     companion object {
-        private val INIT_SETTLE_DELAYS_MS = longArrayOf(300L, 500L, 800L)
         private const val READ_BUFFER_BYTES = 64 * 1024
         private const val WRITE_BUFFER_BYTES = 64 * 1024
         private const val PROGRESS_STEP_BYTES = 256 * 1024
@@ -433,7 +430,7 @@ internal class PtpCamera private constructor(
             transport: PtpTransport,
             profile: VendorProfile = GenericProfile,
             ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
-            settleDelaysMs: LongArray = INIT_SETTLE_DELAYS_MS,
+            settleDelaysMs: LongArray = PtpCameraInitializer.DEFAULT_SETTLE_DELAYS_MS,
         ): PtpCamera = withContext(ioDispatcher) {
             val camera = PtpCamera(
                 usbDevice = usbDevice,
@@ -458,111 +455,16 @@ internal class PtpCamera private constructor(
         }
     }
 
-    private suspend fun initialise(settleDelaysMs: LongArray = INIT_SETTLE_DELAYS_MS) {
-        var lastError: PtpException? = null
-        val delays = if (settleDelaysMs.isNotEmpty()) settleDelaysMs else INIT_SETTLE_DELAYS_MS
-        for (attempt in delays.indices) {
-            if (attempt == 0) {
-                transport.resetDevice()
-            } else {
-                transport.cancelAndResetDevice()
-            }
-            // A body needs a moment after a device reset before it answers on the bulk pipe;
-            // without it the first GetDeviceInfo tends to come back as a timeout.
-            val settleMs = delays[attempt]
-            if (settleMs > 0L) {
-                delay(settleMs)
-            }
-            // Flush any late packet the camera emitted into Bulk-IN during the settle window
-            // before sending GetDeviceInfo (0x1001).
-            transport.drainPendingInput()
-            try {
-                val info = readDeviceInfo()
-                deviceInfo = info
-                Timber.i(
-                    "Connected to %s %s (fw %s, vendor extension 0x%04x, %d operations, %d events)",
-                    info.manufacturer,
-                    info.model,
-                    info.deviceVersion,
-                    info.vendorExtensionId,
-                    info.operationsSupported.size,
-                    info.eventsSupported.size,
-                )
-                return
-            } catch (e: PtpProtocolException) {
-                lastError = e
-                Timber.w(
-                    e,
-                    "GetDeviceInfo attempt %d/%d got unexpected framing; retrying after pipe recovery",
-                    attempt + 1,
-                    delays.size,
-                )
-            } catch (e: PtpTransportException) {
-                lastError = e
-                Timber.w(
-                    e,
-                    "GetDeviceInfo attempt %d/%d transport failed; retrying after pipe recovery",
-                    attempt + 1,
-                    delays.size,
-                )
-            }
-        }
-        throw lastError ?: PtpProtocolException("GetDeviceInfo failed after ${delays.size} attempts")
-    }
-}
-
-/** The handles one or more storages report, and whether every storage answered. */
-internal data class ObjectHandles(
-    val handles: List<Int>,
-    val complete: Boolean,
-)
-
-/** Storage for the handles a device has already imported, owned by the caller. */
-internal interface ImportedHandleStore {
-    /** Previously imported handles, or null when this device has no record. */
-    suspend fun load(): List<Int>?
-
-    /** Replaces the record with [handles]. */
-    suspend fun save(handles: List<Int>)
-}
-
-/**
- * The handles this session already imported.
- *
- * Kept out of the sync loop so the delete path can remove a handle at once: handles are
- * reused by cameras, and a deleted handle left in the set would make the next photo on
- * that handle look imported.
- */
-internal class HandledObjects {
-    @Volatile
-    private var handles: List<Int> = emptyList()
-
-    @Synchronized
-    fun snapshot(): List<Int> = handles
-
-    @Synchronized
-    fun replace(next: List<Int>) {
-        handles = next
-    }
-
-    @Synchronized
-    fun add(handle: Int): Boolean {
-        val current = handles
-        if (handle in current) {
-            return false
-        }
-        handles = current + handle
-        return true
-    }
-
-    @Synchronized
-    fun remove(handle: Int): Boolean {
-        val current = handles
-        val next = current.filter { it != handle }
-        if (next.size == current.size) {
-            return false
-        }
-        handles = next
-        return true
+    /**
+     * Runs the connect handshake; [PtpCameraInitializer] owns the reset/retry policy.
+     * The device info it reads is published back into [info].
+     */
+    private suspend fun initialise(settleDelaysMs: LongArray) {
+        PtpCameraInitializer(
+            transport = transport,
+            session = session,
+            readDeviceInfo = ::readDeviceInfo,
+            onDeviceInfo = { deviceInfo = it },
+        ).initialise(settleDelaysMs)
     }
 }
