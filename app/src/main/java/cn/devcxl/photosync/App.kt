@@ -3,6 +3,7 @@ package cn.devcxl.photosync
 import java.io.File
 
 import android.app.Application
+import android.content.ComponentCallbacks2
 import android.content.Context
 import android.content.IntentFilter
 import android.hardware.usb.UsbManager
@@ -30,6 +31,7 @@ import cn.devcxl.photosync.editor.R as EditorR
 import cn.devcxl.photosync.editor.contract.EditorHostRegistry
 import cn.devcxl.photosync.editor.domain.BuiltinPresets
 import cn.devcxl.photosync.editor.render.BackgroundPreviewRenderer
+import cn.devcxl.photosync.editor.render.RecentEditorSourceCache
 import cn.devcxl.photosync.export.MediaStoreGallerySink
 import cn.devcxl.photosync.ptp.manager.UsbPtpConnectionController
 import cn.devcxl.photosync.receiver.UsbPermissionReceiver
@@ -143,6 +145,20 @@ class App : Application() {
         configureTetheredSync()
     }
 
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            RecentEditorSourceCache.shared.onMemoryPressure()
+            BackgroundPreviewRenderer.onMemoryPressure()
+        }
+    }
+
+    override fun onLowMemory() {
+        super.onLowMemory()
+        RecentEditorSourceCache.shared.onMemoryPressure()
+        BackgroundPreviewRenderer.onMemoryPressure()
+    }
+
     /**
      * Wires the process-wide download sink.
      *
@@ -232,6 +248,7 @@ class App : Application() {
 
     override fun onTerminate() {
         super.onTerminate()
+        BackgroundPreviewRenderer.shutdown()
         unregisterReceiver(usbReceiver)
         unregisterReceiver(usbPermissionReceiver)
     }

@@ -61,8 +61,8 @@
 
 ### 7. GPU 4 级降级矩阵落地方式
 
-- `GlCapabilities.refresh()` 在 EGL 上下文创建后探测 `GL_EXT_color_buffer_half_float` / `GL_EXT_color_buffer_float` / GLES 3.1+，记录 Tier 1 或 Tier 2，并输出 `maxTex` / `renderer`。
-- `OffscreenColorTarget` 是 Pass A 与 Pass D 共用的通用离屏目标：Tier 1 `RGBA16F`，Tier 2 `RGBA8`；FBO 不完整时禁用该 Pass 并回退。
+- 每个 EGL 上下文独立持有 `GlCapabilities`，创建后探测 `GL_EXT_color_buffer_half_float` / `GL_EXT_color_buffer_float` / GLES 3.1+，记录 Tier 1 或 Tier 2，并输出 `maxTex` / `renderer`；一个上下文的探测或降级不能改变其他上下文。
+- `OffscreenColorTarget` 是 Pass A 与 Pass D 共用的通用离屏目标：Tier 1 `RGBA16F`，Tier 2 `RGBA8`。若驱动宣称支持但半浮点 FBO 不完整，当前上下文降级并尝试一次 `RGBA8`；若 `RGBA8` 仍不完整，禁用该目标。
 - Tier 2 下每个 Pass 在输出前追加 `1/255` 三角抖动：Pass A 在 sRGB 编码分支抖动、Pass B 通过 `uDitherAmp` 抖动、Pass D 恒定抖动。
 - Tier 3：Pass D 着色器编译/链接失败时 `GlCapabilities.markMinimalFallback` 以 `Timber.e` 记录 `renderer` / `glVersion` / `maxTex`，`EffectsOutputStage.isReady == false`，预览退回 Pass A + Pass B（既有 `ExposureGlProgram` 的最小兜底保持原样）。
 

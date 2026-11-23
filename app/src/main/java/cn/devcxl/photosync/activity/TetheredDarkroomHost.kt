@@ -4,6 +4,7 @@ import java.io.IOException
 
 import android.content.Context
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -81,15 +82,16 @@ internal class TetheredDarkroomHost(
         }
         quickStrip.setApplyingPreset(active = true, presetId = presetId)
         scope.launch {
-            val saved = saveOnIo(currentStore, photoId, graph)
-            withContext(Dispatchers.Main) {
-                quickStrip.setApplyingPreset(active = false, presetId = null)
+            try {
+                val saved = saveOnIo(currentStore, photoId, graph)
                 if (saved) {
                     onGraphPersisted(photoId)
                     onFeedback(successMessage)
                 } else {
                     onFeedback(context.getString(R.string.quick_strip_apply_failed))
                 }
+            } finally {
+                quickStrip.setApplyingPreset(active = false, presetId = null)
             }
         }
     }
@@ -118,6 +120,8 @@ internal class TetheredDarkroomHost(
             currentStore.saveEditForPhoto(photoId, graph, previewCachePath = previewPath)
         }
         true
+    } catch (cancelled: CancellationException) {
+        throw cancelled
     } catch (io: IOException) {
         Timber.e(io, "Failed to persist gallery edit for photoId=%d", photoId)
         false

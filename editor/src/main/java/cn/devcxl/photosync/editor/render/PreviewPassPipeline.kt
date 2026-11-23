@@ -23,11 +23,19 @@ import cn.devcxl.photosync.editor.domain.WarpDisplacementField
  */
 internal class PreviewPassPipeline {
 
+    /**
+     * Capabilities of the EGL context this pipeline currently renders on.
+     *
+     * Created with the pipeline, re-probed by [init] on every surface (re)creation, and never shared
+     * with the headless bake or a previous context.
+     */
+    internal val capabilities = GlCapabilities()
+
     private val exposureProgram = ExposureGlProgram()
     private val geometryProgram = GeometryCaGlProgram()
-    private val spatialDetail = SpatialDetailRenderer()
-    private val effectsStage = EffectsOutputStage(exposureProgram)
-    private val geometryTarget = OffscreenColorTarget()
+    private val spatialDetail = SpatialDetailRenderer(capabilities)
+    private val effectsStage = EffectsOutputStage(exposureProgram, capabilities)
+    private val geometryTarget = OffscreenColorTarget(capabilities)
     private val textures = EditorSourceTextures()
     private val warpTexture = WarpTexture()
     private val skinMaskTexture = SkinMaskTexture()
@@ -45,8 +53,10 @@ internal class PreviewPassPipeline {
     /** Creates every GL object. Must run on the GL thread after the EGL context exists. */
     fun init(preferEs3: Boolean) {
         GLES20.glClearColor(0.0f, 0.0f, 0.0f, 1.0f)
-        GlCapabilities.invalidate()
-        if (preferEs3) GlCapabilities.refresh()
+        // A (re)created context may have a different driver, so drop the previous facts and probe
+        // before any program is compiled: compile failures are recorded on top of the fresh tier.
+        capabilities.reset()
+        if (preferEs3) capabilities.refresh()
         exposureProgram.init(preferEs3)
         geometryTarget.release()
         geometryTarget.resetDisableFlag()
@@ -58,7 +68,9 @@ internal class PreviewPassPipeline {
         skinMaskTexture.invalidate()
         curveLutTexture.invalidate()
         textures.invalidateContext()
-        if (preferEs3) geometryProgram.init()
+        if (preferEs3 && !geometryProgram.init()) {
+            capabilities.markMinimalFallback("Pass A GeometryCa")
+        }
     }
 
     /** Stages [source] for upload on the GL thread. */
@@ -115,7 +127,7 @@ internal class PreviewPassPipeline {
             return
         }
         val frame = renderGeometryPass(request, source)
-        if (GlCapabilities.isMinimalFallback) {
+        if (capabilities.isMinimalFallback) {
             lastPassCDrawCalls = 0
             drawPassB(request, frame)
             return

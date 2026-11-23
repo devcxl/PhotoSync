@@ -58,18 +58,26 @@ internal data class BakeFrame(
  */
 internal class BakePassChain {
 
+    /**
+     * Capabilities of this bake's headless EGL context.
+     *
+     * Scoped to the chain so a bake can never raise Tier 3 for the editor preview (or inherit the
+     * preview's tier) even when both run at the same time.
+     */
+    internal val capabilities = GlCapabilities()
+
     private val geometryProgram = GeometryCaGlProgram()
     private val exposureProgram = ExposureGlProgram()
-    private val spatialChain = SpatialDetailGlChain()
+    private val spatialChain = SpatialDetailGlChain(capabilities)
     private val effectsProgram = EffectsOutputGlProgram()
     private val warpTexture = WarpTexture()
     private val skinMaskTexture = SkinMaskTexture()
     private val curveLutTexture = CurveLutTexture()
     private val lutTexture = Lut3dTexture()
 
-    private val geometryTarget = OffscreenColorTarget()
-    private val passBTarget = OffscreenColorTarget()
-    private val outputTarget = OffscreenColorTarget()
+    private val geometryTarget = OffscreenColorTarget(capabilities)
+    private val passBTarget = OffscreenColorTarget(capabilities)
+    private val outputTarget = OffscreenColorTarget(capabilities)
 
     private var prepassTextureId: Int = 0
     private var atmosphericLight: FloatArray = floatArrayOf(1.0f, 1.0f, 1.0f)
@@ -80,11 +88,14 @@ internal class BakePassChain {
 
     /** Compiles the programs and probes capabilities. Must run with the EGL context current. */
     fun init(): Boolean {
-        GlCapabilities.refresh()
+        capabilities.reset()
+        capabilities.refresh()
         val passA = geometryProgram.init()
         exposureProgram.init(preferEs3 = true)
         val passC = spatialChain.init()
         val passD = effectsProgram.init()
+        if (!passA) capabilities.markMinimalFallback("Pass A GeometryCa")
+        if (!passD) capabilities.markMinimalFallback("Pass D effects shader")
         warpTexture.stage(null)
         warpTexture.uploadIfNeeded()
         skinMaskTexture.stage(null)
@@ -190,6 +201,8 @@ internal class BakePassChain {
         geometryTarget.release()
         passBTarget.release()
         outputTarget.release()
+        // The headless context is destroyed right after this call, so nothing stays cached.
+        capabilities.reset()
         isReady = false
     }
 

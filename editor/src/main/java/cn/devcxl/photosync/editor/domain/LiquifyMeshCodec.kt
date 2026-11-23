@@ -22,8 +22,16 @@ import timber.log.Timber
  */
 internal object LiquifyMeshCodec {
 
-    /** File name of the persisted displacement grid inside the photo's edit directory. */
-    const val FILE_NAME = "liquify_128x128.bin"
+    private const val FILE_STEM = "liquify_128x128"
+    private const val FILE_SUFFIX = ".bin"
+
+    /**
+     * File name of the legacy, non-content-addressed payload.
+     *
+     * Rows written before payloads became content-addressed still point at this name, so it stays
+     * readable forever: nothing in this codec ever deletes it.
+     */
+    const val FILE_NAME: String = FILE_STEM + FILE_SUFFIX
 
     private const val BYTES_PER_HALF = 2
 
@@ -39,8 +47,31 @@ internal object LiquifyMeshCodec {
     /**
      * Returns the relative path a photo's mesh is stored under, for example
      * `edits/42/liquify_128x128.bin`.
+     *
+     * This is the pre-content-addressed name of the *live* in-session reference; a completed save
+     * stores its payload under [persistedRelativePath] with the digest instead.
      */
     fun persistedRelativePath(photoId: Long): String = "$EDIT_DIR_PREFIX$photoId/$FILE_NAME"
+
+    /**
+     * Relative path of the content-addressed payload of [photoId] whose SHA-256 is [sha256].
+     *
+     * Content addressing is what lets a save write a *new* file instead of overwriting the one the
+     * previous edit record verifies: two different grids never share a path, and re-saving the same
+     * grid lands on the same name.
+     */
+    fun persistedRelativePath(photoId: Long, sha256: String): String =
+        "$EDIT_DIR_PREFIX$photoId/${fileNameFor(sha256)}"
+
+    /**
+     * Content-addressed file name of the payload whose SHA-256 is [sha256].
+     *
+     * The **whole** digest is part of the name. A truncated digest would be shorter, but a collision
+     * would silently make two different grids share one path — and the second save would then rewrite
+     * the payload the older row still verifies, which is exactly the corruption content addressing is
+     * meant to prevent.
+     */
+    fun fileNameFor(sha256: String): String = "${FILE_STEM}_$sha256$FILE_SUFFIX"
 
     /** Encodes [mesh] into the uncompressed `RG16F` byte stream. */
     fun encodeRaw(mesh: LiquifyMesh): ByteArray {

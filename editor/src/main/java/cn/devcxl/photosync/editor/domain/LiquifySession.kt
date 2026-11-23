@@ -8,9 +8,12 @@ package cn.devcxl.photosync.editor.domain
  * [LiquifyRef] to the compressed payload, so a hundred brush strokes cannot grow the database row.
  * A stroke that the two-finger preemption rule cancels is rolled back from the pre-stroke snapshot
  * without touching the history, which is what makes "put a second finger down to zoom" safe.
+ *
+ * Writing the payload is not part of the session: `EditorSaveCoordinator` copies the grid on the
+ * main thread and persists that copy on a worker, so an undo or a fresh stroke cannot change what a
+ * running save is writing.
  */
 internal class LiquifySession(
-    private val photoId: Long,
     private val store: LiquifyMeshStore,
     private val history: LiquifyHistory = LiquifyHistory()
 ) {
@@ -145,12 +148,4 @@ internal class LiquifySession(
         mesh = loaded
         return true
     }
-
-    /**
-     * Writes the mesh to private file storage.
-     *
-     * @return The reference to record in `EditGraph.geometry.liquify`, or `null` when the mesh is
-     *   empty or unreadable, in which case the reference must be cleared instead.
-     */
-    fun persist(): LiquifyRef? = store.write(photoId, mesh)
 }

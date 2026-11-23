@@ -77,7 +77,18 @@ internal class ExposureGlProgram {
 
     private val quad = QuadMesh()
 
+    /**
+     * True only while the full ES 3 Pass B program (BaseLook, white balance, tone and display
+     * color) is linked.
+     *
+     * The ES 2 fallbacks drop part of that chain, so an offscreen render that must reproduce the
+     * canvas pixel-for-pixel has to treat `false` as "this context cannot run Pass B".
+     */
+    var isFullQuality: Boolean = false
+        private set
+
     fun init(preferEs3: Boolean = true) {
+        isFullQuality = false
         programId = if (preferEs3) {
             GlShaderCompiler.buildProgram(
                 ExposureShaderSources.VERTEX_SHADER_ES3,
@@ -86,6 +97,7 @@ internal class ExposureGlProgram {
                 if (id == 0) {
                     Timber.w("GLES 3.0 shader compile failed; falling back to GLES 2.0 shader")
                 }
+                isFullQuality = id != 0
             }
         } else {
             0

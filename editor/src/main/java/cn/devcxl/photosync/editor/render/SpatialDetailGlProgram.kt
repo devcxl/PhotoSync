@@ -66,16 +66,18 @@ internal class SpatialDetailGlProgram {
     val isReady: Boolean
         get() = programId != 0
 
-    /** Compiles the Pass C program; records Tier 3 minimal fallback when the driver rejects it. */
+    /**
+     * Compiles the Pass C program.
+     *
+     * A failure is reported through the return value only; [SpatialDetailGlChain] turns it into a
+     * Tier 3 minimal fallback of its own EGL context.
+     */
     fun init(): Boolean {
         programId = GlShaderCompiler.buildProgram(
             DetailShaderSources.VERTEX_SHADER,
             DetailShaderSources.FRAGMENT_SHADER
         )
-        if (programId == 0) {
-            GlCapabilities.markMinimalFallback("Pass C SpatialDetail")
-            return false
-        }
+        if (programId == 0) return false
         resolveLocations()
         return true
     }

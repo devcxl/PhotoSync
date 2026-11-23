@@ -1,7 +1,6 @@
 package cn.devcxl.photosync.editor.render
 
 import java.io.File
-import java.io.FileOutputStream
 import kotlin.math.roundToInt
 
 import android.graphics.Bitmap
@@ -265,33 +264,27 @@ internal object PreviewCacheWriter {
 
     private fun compressAndWrite(rendered: Bitmap, cacheDir: File, photoId: Long): String? {
         val editDir = File(cacheDir, EditorCachePaths.photoEditDirName(photoId))
-        if (!editDir.exists() && !editDir.mkdirs()) {
+        if (!editDir.isDirectory && !editDir.mkdirs() && !editDir.isDirectory) {
             rendered.recycle()
             return null
         }
-        editDir.listFiles()?.forEach { it.delete() }
         return compressAndWriteTo(rendered, editDir)
     }
 
     /**
-     * Compresses [rendered] into `preview_<ts>.jpg` inside [outDir] and returns its absolute path.
+     * Writes a uniquely named preview into [outDir] and returns its absolute path.
      *
      * The bitmap is recycled on every path, including failures.
      */
     private fun compressAndWriteTo(rendered: Bitmap, outDir: File): String? {
-        if (!outDir.exists() && !outDir.mkdirs()) {
+        if (!outDir.isDirectory && !outDir.mkdirs() && !outDir.isDirectory) {
             rendered.recycle()
             return null
         }
-        val outFile = File(outDir, "preview_${System.currentTimeMillis()}.jpg")
         return try {
-            FileOutputStream(outFile).use { stream ->
-                if (!rendered.compress(Bitmap.CompressFormat.JPEG, PREVIEW_JPEG_QUALITY, stream)) {
-                    return null
-                }
-                stream.flush()
+            PreviewFileWriter.write(outDir) { stream ->
+                rendered.compress(Bitmap.CompressFormat.JPEG, PREVIEW_JPEG_QUALITY, stream)
             }
-            outFile.absolutePath
         } finally {
             rendered.recycle()
         }

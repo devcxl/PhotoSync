@@ -2,11 +2,13 @@ package cn.devcxl.photosync.data
 
 import java.io.File
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -234,6 +236,56 @@ class TetheredPhotoIngestorTest {
         assertTrue("no preview means no bound edit", !ingested.hasEdit)
         assertNull(committer.commits.single().stagedPreview)
         assertNull(committer.commits.single().graphJson)
+    }
+
+    @Test
+    fun shouldPropagateCancellationAndRemoveStaging_whenPreviewRenderIsCancelled() {
+        val store = FakeEditStore(
+            presets = mapOf("p1" to preset("p1", gradedGraph(glow = 9))),
+            activePresetId = "p1"
+        )
+        val committer = RecordingCommitter()
+        var jobDir: File? = null
+        val ingestor = ingestor(store, committer) { _, _, _, outDir ->
+            jobDir = outDir
+            outDir.mkdirs()
+            File(outDir, "partial").writeText("partial")
+            throw CancellationException("cancelled")
+        }
+
+        assertThrows(CancellationException::class.java) {
+            runBlocking {
+                ingestor.onFileDownloaded(sourceFile(), CAMERA_HANDLE, isRaw = true, isJpeg = false)
+            }
+        }
+        assertTrue(committer.commits.isEmpty())
+        assertTrue(jobDir?.exists() == false)
+    }
+
+    @Test
+    fun shouldPropagateCancellationAndRemoveStaging_whenCommitIsCancelled() {
+        val store = FakeEditStore(
+            presets = mapOf("p1" to preset("p1", gradedGraph(contrast = 4))),
+            activePresetId = "p1"
+        )
+        val committer = object : TetheredPhotoCommitter {
+            override suspend fun commit(photo: PhotoEntity, stagedPreview: File?, graphJson: String?): Long {
+                throw CancellationException("cancelled")
+            }
+        }
+        var jobDir: File? = null
+        val ingestor = ingestor(store, committer) { _, _, _, outDir ->
+            jobDir = outDir
+            outDir.mkdirs()
+            File(outDir, "preview.jpg").apply { writeText("preview") }
+        }
+
+        assertThrows(CancellationException::class.java) {
+            runBlocking {
+                ingestor.onFileDownloaded(sourceFile(), CAMERA_HANDLE, isRaw = true, isJpeg = false)
+            }
+        }
+        assertTrue(jobDir?.exists() == false)
     }
 
     @Test

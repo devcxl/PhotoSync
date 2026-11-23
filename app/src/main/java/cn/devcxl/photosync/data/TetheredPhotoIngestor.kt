@@ -4,6 +4,7 @@ import java.io.File
 import java.io.IOException
 import java.util.UUID
 
+import kotlinx.coroutines.CancellationException
 import timber.log.Timber
 
 import cn.devcxl.photosync.data.entity.PhotoEntity
@@ -83,15 +84,15 @@ class TetheredPhotoIngestor(
         if (!isRaw && !isJpeg) return TetheredIngestResult.Ignored
         val preset = resolveActivePreset()
         val jobDir = File(stagingDir, "$STAGING_DIR_NAME/${UUID.randomUUID()}")
-        val staged = stagePreview(file, isRaw, preset, jobDir)
-        val effectiveGraphJson = if (staged != null) preset?.graphJson else null
-        val photo = PhotoEntity(
-            path = file.absolutePath,
-            name = file.name,
-            uriString = null,
-            objectHandle = objectHandle
-        )
         return try {
+            val staged = stagePreview(file, isRaw, preset, jobDir)
+            val effectiveGraphJson = if (staged != null) preset?.graphJson else null
+            val photo = PhotoEntity(
+                path = file.absolutePath,
+                name = file.name,
+                uriString = null,
+                objectHandle = objectHandle
+            )
             val photoId = commitSafely(photo, staged, effectiveGraphJson)
             if (photoId == null) {
                 staged?.delete()
@@ -121,6 +122,8 @@ class TetheredPhotoIngestor(
         graphJson: String?
     ): Long? = try {
         committer.commit(photo, staged, graphJson)
+    } catch (cancelled: CancellationException) {
+        throw cancelled
     } catch (io: IOException) {
         Timber.e(io, "Tethered ingest I/O failure while committing photo")
         null
@@ -135,6 +138,8 @@ class TetheredPhotoIngestor(
         val presetId = editStore.getLiveTetherPresetId()?.takeIf { it.isNotBlank() } ?: return null
         val preset = try {
             editStore.getPreset(presetId)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (io: IOException) {
             Timber.e(io, "LiveTetherPreset lookup failed")
             null
@@ -159,6 +164,8 @@ class TetheredPhotoIngestor(
         val graph = preset?.graphJson?.let { EditGraphJsonCodec.decode(it) } ?: return null
         val staged = try {
             renderPreview(file.absolutePath, isRaw, graph, outDir)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (io: IOException) {
             Timber.e(io, "LiveTetherPreset preview render failed; importing ungraded")
             null

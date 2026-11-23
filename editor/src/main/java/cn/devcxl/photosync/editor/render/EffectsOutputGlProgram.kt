@@ -59,16 +59,18 @@ internal class EffectsOutputGlProgram {
     val isReady: Boolean
         get() = programId != 0
 
-    /** Compiles and links the Pass D program. Must run on the GL thread. */
+    /**
+     * Compiles and links the Pass D program.
+     *
+     * A failure is reported through the return value only: the owning stage decides whether it is a
+     * Tier 3 minimal fallback for its own EGL context.
+     */
     fun init(): Boolean {
         programId = GlShaderCompiler.buildProgram(
             ExposureShaderSources.VERTEX_SHADER_ES3,
             EffectsOutputShaderSources.FRAGMENT_SHADER_ES3
         )
-        if (programId == 0) {
-            GlCapabilities.markMinimalFallback("Pass D effects shader")
-            return false
-        }
+        if (programId == 0) return false
         resolveLocations()
         return true
     }

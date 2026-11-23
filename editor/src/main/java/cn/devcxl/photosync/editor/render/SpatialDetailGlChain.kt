@@ -18,10 +18,13 @@ import cn.devcxl.photosync.editor.domain.TileUvTransform
  * Scales `sharpenRadiusPx` by `workingShortEdge / fullResolutionShortEdge` and scales Stage 0 skin
  * blur step proportionally to working resolution so preview and full-res Bake stay physically aligned.
  */
-internal class SpatialDetailGlChain {
+internal class SpatialDetailGlChain(private val capabilities: GlCapabilities) {
 
     private val program = SpatialDetailGlProgram()
-    private val pingPong = arrayOf(OffscreenColorTarget(), OffscreenColorTarget())
+    private val pingPong = arrayOf(
+        OffscreenColorTarget(capabilities),
+        OffscreenColorTarget(capabilities)
+    )
 
     /** FBO draw calls issued by the most recent [run]. */
     var lastDrawCalls: Int = 0
@@ -31,10 +34,15 @@ internal class SpatialDetailGlChain {
     val isReady: Boolean
         get() = program.isReady
 
-    /** Compiles the Pass C program; returns false when the driver rejects it (Tier 2/3). */
+    /** Compiles the Pass C program; a failure raises Tier 3 for this context only. */
     fun init(): Boolean {
         lastDrawCalls = 0
-        return program.init()
+        // A recreated context needs fresh attachments: a target disabled by the previous driver must
+        // be able to allocate again.
+        pingPong.forEach { it.resetDisableFlag() }
+        val ready = program.init()
+        if (!ready) capabilities.markMinimalFallback("Pass C SpatialDetail")
+        return ready
     }
 
     /** Releases every GL object owned by the chain. */

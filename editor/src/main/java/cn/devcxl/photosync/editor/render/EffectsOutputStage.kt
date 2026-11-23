@@ -33,11 +33,14 @@ internal data class EffectsStageRequest(
  * Staging Pass B offscreen is what makes the grain and vignette seams disappear: their coordinates
  * are the cropped frame's own UVs, never the letterboxed canvas.
  */
-internal class EffectsOutputStage(private val exposureProgram: ExposureGlProgram) {
+internal class EffectsOutputStage(
+    private val exposureProgram: ExposureGlProgram,
+    private val capabilities: GlCapabilities
+) {
 
     private val program = EffectsOutputGlProgram()
     private val lutTexture = Lut3dTexture()
-    private val stagingTarget = OffscreenColorTarget()
+    private val stagingTarget = OffscreenColorTarget(capabilities)
     private var fallbackLogged = false
 
     /** True when Pass D can run on this context. */
@@ -52,7 +55,7 @@ internal class EffectsOutputStage(private val exposureProgram: ExposureGlProgram
         lutTexture.invalidate()
         fallbackLogged = false
         if (!preferEs3) return
-        program.init()
+        if (!program.init()) capabilities.markMinimalFallback("Pass D effects shader")
     }
 
     /** Stages [samples] for the GL thread. */

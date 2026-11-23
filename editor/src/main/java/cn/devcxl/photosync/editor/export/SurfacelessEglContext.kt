@@ -1,5 +1,7 @@
 package cn.devcxl.photosync.editor.export
 
+import java.util.concurrent.atomic.AtomicBoolean
+
 import android.opengl.EGL14
 import android.opengl.EGLConfig
 import android.opengl.EGLContext
@@ -9,18 +11,32 @@ import android.opengl.GLES20
 
 import timber.log.Timber
 
+import cn.devcxl.photosync.editor.render.SharedEglDisplay
+
 /**
- * Headless EGL display/context for the bake exporter.
+ * Headless EGL context for the bake exporter and the offscreen preview renderer.
  *
  * Prefers `EGL_KHR_surfaceless_context` (no window, no pbuffer) and falls back to a `1 x 1` pbuffer,
- * so a bake never needs a `GLSurfaceView` or a visible window. All GL work must run on the thread
- * that calls [makeCurrent]; [close] tears the context down again.
+ * so a headless render never needs a `GLSurfaceView` or a visible window. All GL work must run on
+ * the thread that calls [makeCurrent]; [close] tears this context down again.
+ *
+ * ## Coexistence with the editor canvas
+ * The context lives on the process default display, which the editor's `GLSurfaceView` also uses and
+ * may terminate at any time. [close] therefore destroys only this context and its surface — it never
+ * calls `eglTerminate`, which would invalidate the live canvas — and the loss of the shared display
+ * shows up as a failed [makeCurrent] or an unclean GL error queue, which every caller treats as
+ * "GPU unavailable" and answers with the CPU renderer.
+ *
+ * [eglReleaseThread] is called on [close]: it releases only the calling thread's EGL state and does
+ * not affect the display's initialization.
  */
 internal class SurfacelessEglContext private constructor(
     private val display: EGLDisplay,
     private val context: EGLContext,
     private val surface: EGLSurface
 ) : AutoCloseable {
+
+    private val closed = AtomicBoolean(false)
 
     /** `GL_MAX_TEXTURE_SIZE` of the export context. */
     var glMaxTextureSize: Int = 0
@@ -36,9 +52,10 @@ internal class SurfacelessEglContext private constructor(
      * @return True when the context is usable.
      */
     fun makeCurrent(): Boolean {
+        if (closed.get()) return false
         val applied = EGL14.eglMakeCurrent(display, surface, surface, context)
         if (!applied) {
-            Timber.e("eglMakeCurrent failed: 0x%x", EGL14.eglGetError())
+            Timber.w("eglMakeCurrent failed: 0x%x", EGL14.eglGetError())
             return false
         }
         val size = IntArray(1)
@@ -47,8 +64,23 @@ internal class SurfacelessEglContext private constructor(
         return glMaxTextureSize > 0
     }
 
-    /** Releases the context, surface and display. Safe to call without a current context. */
+    /**
+     * True while this exact context is current on the calling thread.
+     *
+     * Checked around every offscreen pass: a `GLSurfaceView` that terminates the shared display
+     * invalidates the context even though the handle is still returned by [EGL14.eglGetCurrentContext].
+     * A `false` answer means "do not publish anything".
+     */
+    fun isCurrentOnThisThread(): Boolean =
+        !closed.get() && EGL14.eglGetCurrentContext() == context && context != EGL14.EGL_NO_CONTEXT
+
+    /**
+     * Destroys this context and its surface; the shared display stays alive.
+     *
+     * Idempotent, and safe without a current context.
+     */
     override fun close() {
+        if (!closed.compareAndSet(false, true)) return
         EGL14.eglMakeCurrent(
             display,
             EGL14.EGL_NO_SURFACE,
@@ -59,8 +91,8 @@ internal class SurfacelessEglContext private constructor(
             EGL14.eglDestroySurface(display, surface)
         }
         EGL14.eglDestroyContext(display, context)
+        // Per-thread EGL state only; the display connection and the canvas context are untouched.
         EGL14.eglReleaseThread()
-        EGL14.eglTerminate(display)
     }
 
     companion object {
@@ -74,34 +106,21 @@ internal class SurfacelessEglContext private constructor(
         /**
          * Creates a headless GLES 3 context (GLES 2 when the driver has no ES 3 config).
          *
-         * @return The created context with `eglMakeCurrent` already applied, or `null`.
+         * @return The created context with `eglMakeCurrent` already applied, or `null` when EGL
+         *   cannot provide a usable context on this thread.
          */
         fun create(): SurfacelessEglContext? {
-            val display = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
-            if (display == EGL14.EGL_NO_DISPLAY) {
-                Timber.e("eglGetDisplay returned no display")
-                return null
-            }
-            val version = IntArray(2)
-            if (!EGL14.eglInitialize(display, version, 0, version, 1)) {
-                Timber.e("eglInitialize failed: 0x%x", EGL14.eglGetError())
-                return null
-            }
+            val display = SharedEglDisplay.acquire() ?: return null
             val config = chooseConfig(display, EGL_OPENGL_ES3_BIT)
                 ?: chooseConfig(display, EGL14.EGL_OPENGL_ES2_BIT)
             if (config == null) {
-                Timber.e("No EGL config supports an ES 2/3 pbuffer")
-                EGL14.eglTerminate(display)
+                Timber.w("No EGL config supports an ES 2/3 pbuffer")
                 return null
             }
-            val context = createContext(display, config) ?: run {
-                EGL14.eglTerminate(display)
-                return null
-            }
-            val surfaceless = createSurfaceless(display, context)
-            if (surfaceless != null) {
-                return surfaceless
-            }
+            val context = createContext(display, config) ?: return null
+            createSurfaceless(display, context)?.let { return it }
+            // The surfaceless attempt left the context intact, so the same context is retried on a
+            // pbuffer instead of creating a second one.
             return createWithPbuffer(display, config, context)
         }
 
@@ -143,16 +162,29 @@ internal class SurfacelessEglContext private constructor(
                 display, config, EGL14.EGL_NO_CONTEXT, attributes, 0
             )
             if (context == EGL14.EGL_NO_CONTEXT) {
-                Timber.w("ES 3 context creation failed (0x%x); retrying with ES 2",
-                    EGL14.eglGetError())
+                Timber.w(
+                    "ES 3 context creation failed (0x%x); retrying with ES 2",
+                    EGL14.eglGetError()
+                )
                 val fallback = intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE)
-                return EGL14.eglCreateContext(
+                val es2 = EGL14.eglCreateContext(
                     display, config, EGL14.EGL_NO_CONTEXT, fallback, 0
-                ).takeIf { it != EGL14.EGL_NO_CONTEXT }
+                )
+                if (es2 == EGL14.EGL_NO_CONTEXT) {
+                    Timber.w("No headless EGL context could be created")
+                    return null
+                }
+                return es2
             }
             return context
         }
 
+        /**
+         * Binds [context] without any surface.
+         *
+         * @return The usable context, or `null` when the extension is missing or binding failed.
+         *   On `null` [context] is left **alive** so `create` can retry it on a pbuffer.
+         */
         private fun createSurfaceless(
             display: EGLDisplay,
             context: EGLContext
@@ -161,17 +193,11 @@ internal class SurfacelessEglContext private constructor(
             if (!extensions.contains("EGL_KHR_surfaceless_context")) {
                 return null
             }
-            val applied = EGL14.eglMakeCurrent(
-                display, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, context
-            )
-            if (!applied) {
-                Timber.w("Surfaceless makeCurrent failed: 0x%x", EGL14.eglGetError())
-                return null
-            }
             val created = SurfacelessEglContext(display, context, EGL14.EGL_NO_SURFACE)
             created.isSurfaceless = true
             if (!created.makeCurrent()) {
-                created.close()
+                // Do not close: the context is still valid and the caller retries it on a pbuffer.
+                Timber.w("Surfaceless binding failed; retrying on a pbuffer")
                 return null
             }
             return created
@@ -191,9 +217,8 @@ internal class SurfacelessEglContext private constructor(
             )
             val surface = EGL14.eglCreatePbufferSurface(display, config, attributes, 0)
             if (surface == EGL14.EGL_NO_SURFACE) {
-                Timber.e("eglCreatePbufferSurface failed: 0x%x", EGL14.eglGetError())
+                Timber.w("eglCreatePbufferSurface failed: 0x%x", EGL14.eglGetError())
                 EGL14.eglDestroyContext(display, context)
-                EGL14.eglTerminate(display)
                 return null
             }
             val created = SurfacelessEglContext(display, context, surface)

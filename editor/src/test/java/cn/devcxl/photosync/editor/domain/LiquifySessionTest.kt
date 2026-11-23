@@ -20,7 +20,7 @@ class LiquifySessionTest {
 
     @Test
     fun shouldRestoreThePreStrokeMesh_whenATwoFingerPreemptionCancelsTheStroke() {
-        val session = LiquifySession(PHOTO_ID, unusedStore)
+        val session = LiquifySession(unusedStore)
         session.beginStroke()
         session.pushStroke(Uv(0.50f, 0.50f), Uv(0.56f, 0.50f), RADIUS, frameAspect = 1.0f)
         assertTrue(session.commitStroke())
@@ -41,7 +41,7 @@ class LiquifySessionTest {
 
     @Test
     fun shouldRecordExactlyOneUndoStep_whenAStrokeIsCommitted() {
-        val session = LiquifySession(PHOTO_ID, unusedStore)
+        val session = LiquifySession(unusedStore)
         session.beginStroke()
         repeat(40) { step ->
             session.pushStroke(
@@ -63,7 +63,7 @@ class LiquifySessionTest {
 
     @Test
     fun shouldNotRecordAStep_whenTheStrokeDidNotMove() {
-        val session = LiquifySession(PHOTO_ID, unusedStore)
+        val session = LiquifySession(unusedStore)
         session.beginStroke()
 
         assertFalse(session.commitStroke())
@@ -73,7 +73,7 @@ class LiquifySessionTest {
 
     @Test
     fun shouldBeUndoableAndClearTheMesh_whenResetIsApplied() {
-        val session = LiquifySession(PHOTO_ID, unusedStore)
+        val session = LiquifySession(unusedStore)
         session.beginStroke()
         session.pushStroke(Uv(0.5f, 0.5f), Uv(0.58f, 0.5f), RADIUS, frameAspect = 1.0f)
         session.commitStroke()
@@ -87,7 +87,7 @@ class LiquifySessionTest {
 
     @Test
     fun shouldClampBrushSettingsIntoTheirLegalRanges_whenThePanelSendsOutOfBoundsValues() {
-        val session = LiquifySession(PHOTO_ID, unusedStore)
+        val session = LiquifySession(unusedStore)
 
         val tooLarge = session.updateSettings { it.withSizeNorm(9.0f).withStrength(4.0f) }
         assertEquals(LiquifyBrushSettings.MAX_SIZE_NORM, tooLarge.sizeNorm, 1e-6f)
@@ -99,7 +99,6 @@ class LiquifySessionTest {
     }
 
     private companion object {
-        const val PHOTO_ID = 42L
         const val RADIUS = 0.08f
     }
 }

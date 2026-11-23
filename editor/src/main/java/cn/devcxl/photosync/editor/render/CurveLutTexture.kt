@@ -32,6 +32,16 @@ internal class CurveLutTexture {
 
     private var halfFloatBytes: ByteBuffer? = null
     private var rgba8Bytes: ByteBuffer? = null
+    private var uploadFailed: Boolean = false
+
+    /**
+     * True when the staged curve is either the identity or fully uploaded.
+     *
+     * A `false` value means the last upload was rejected by the driver, which would silently drop
+     * the curve from a frame; offscreen callers use it to fall back to the CPU renderer instead.
+     */
+    val isUploaded: Boolean
+        get() = !uploadFailed && (stagedCurve.isIdentity() || textureId != 0)
 
     /** Stages [curve] for upload on the GL thread when it differs from the previous curve. */
     fun stage(curve: CurveOps) {
@@ -44,13 +54,14 @@ internal class CurveLutTexture {
     fun uploadIfNeeded(preferEs3: Boolean) {
         if (!needsUpload) return
         needsUpload = false
+        uploadFailed = false
         val curve = stagedCurve
         if (curve.isIdentity()) return
 
         ensureTexture()
         bindParameters()
         if (preferEs3 && uploadHalfFloat(curve)) return
-        uploadRgba8(curve)
+        uploadFailed = !uploadRgba8(curve)
     }
 
     /** Drops the stale GL texture name after EGL context loss (the driver already reclaimed it). */
@@ -100,18 +111,25 @@ internal class CurveLutTexture {
         return false
     }
 
-    private fun uploadRgba8(curve: CurveOps) {
+    private fun uploadRgba8(curve: CurveOps): Boolean {
         val floats = CurveLutBuilder.buildFloatLut(curve)
         val bytes = obtainBuffer(rgba8Bytes, floats.size).also { rgba8Bytes = it }
         for (value in floats) {
             bytes.put((value.coerceIn(0.0f, 1.0f) * 255.0f + 0.5f).toInt().toByte())
         }
         bytes.rewind()
+        GLES20.glGetError()
         GLES20.glTexImage2D(
             GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA,
             CurveLutBuilder.LUT_SIZE, 1, 0,
             GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, bytes
         )
+        val error = GLES20.glGetError()
+        if (error != GLES20.GL_NO_ERROR) {
+            Timber.w("The RGBA8 curve LUT upload failed (error=0x%x)", error)
+            return false
+        }
+        return true
     }
 
     private fun obtainBuffer(existing: ByteBuffer?, capacity: Int): ByteBuffer =

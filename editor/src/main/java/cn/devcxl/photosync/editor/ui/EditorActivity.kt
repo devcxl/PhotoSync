@@ -1,5 +1,6 @@
 package cn.devcxl.photosync.editor.ui
 
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -104,7 +105,8 @@ class EditorActivity : AppCompatActivity(),
     }
 
     private fun initCoordinators() {
-        liquifySession = LiquifySession(photoId, LiquifyMeshStore(filesDir))
+        val meshStore = LiquifyMeshStore(filesDir)
+        liquifySession = LiquifySession(meshStore)
         previewSession = EditorPreviewSession(renderer, cacheDir, photoId, lutStore)
         sessionLoader = EditorSessionLoader(photoId, previewSession, liquifySession)
         historyCoordinator = EditorHistoryCoordinator(
@@ -119,9 +121,10 @@ class EditorActivity : AppCompatActivity(),
         )
         saveCoordinator = EditorSaveCoordinator(
             photoId = photoId,
-            previewSession = previewSession,
-            liquifySession = liquifySession,
-            portraitAnalysis = { portraitHost.analysis() }
+            meshStore = meshStore,
+            previewRenderer = EditorPreviewCacheRenderer { graph, warpField, skinMask ->
+                previewSession.writePreviewCache(graph, warpField, skinMask)
+            }
         )
     }
 
@@ -220,7 +223,9 @@ class EditorActivity : AppCompatActivity(),
         mainHandler.removeCallbacks(settleFullQualityRunnable)
         canvas.detachOverlays()
         portraitHost.release()
-        previewSession.release()
+        // A save may still be resampling the staged source on a worker thread; recycling it here
+        // would free the pixels under it. The coordinator recycles once the last reader is done.
+        saveCoordinator.releasePreviewSource { mainHandler.post(previewSession::release) }
         super.onDestroy()
     }
 
@@ -283,19 +288,35 @@ class EditorActivity : AppCompatActivity(),
     }
 
     override fun onDoneRequested() {
-        topBar.setSaving(true)
         EditorFinishAction.saveAndFinish(
-            activity = this,
             scope = lifecycleScope,
-            photoId = photoId,
-            sourcePath = sourcePath,
-            graph = undoController.currentGraph,
+            snapshot = {
+                saveCoordinator.captureSnapshot(
+                    graph = undoController.currentGraph,
+                    liquify = liquifySession,
+                    portrait = portraitHost.analysis(),
+                    hasSource = previewSession.source != null
+                )
+            },
             save = saveCoordinator::persist,
+            onSavingStarted = { topBar.setSaving(true) },
+            onSaved = ::finishWithSavedEdit,
             onSaveFailed = {
                 topBar.setSaving(false)
                 Toast.makeText(this, R.string.editor_save_failed, Toast.LENGTH_SHORT).show()
             }
         )
+    }
+
+    private fun finishWithSavedEdit() {
+        setResult(
+            Activity.RESULT_OK,
+            Intent().apply {
+                putExtra(EXTRA_PHOTO_ID, photoId)
+                putExtra(EXTRA_SOURCE_PATH, sourcePath)
+            }
+        )
+        finish()
     }
 
     override fun onExportRequested() {

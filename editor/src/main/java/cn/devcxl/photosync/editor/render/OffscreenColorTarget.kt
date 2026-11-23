@@ -10,11 +10,16 @@ import timber.log.Timber
  * Reusable offscreen colour target shared by intermediate preview passes (Pass A geometry,
  * Pass B staging for Pass C/D, and Pass C ping-pong buffers).
  *
- * Picks the highest available tier from [GlCapabilities]:
+ * Picks the highest available tier from the [capabilities] of its own EGL context:
  * - Tier 1: `GL_RGBA16F` when `EXT_color_buffer_half_float` is complete.
  * - Tier 2: `GL_RGBA8` otherwise, where each pass dithers its own output.
+ *
+ * The capability reference also keeps the FBO decision honest: a driver that advertises half-float
+ * colour buffers but returns an incomplete `GL_RGBA16F` attachment downgrades **its own context** to
+ * Tier 2, and the target is reallocated as `GL_RGBA8` instead of dropping the whole pass. Other
+ * contexts of the process are unaffected.
  */
-internal class OffscreenColorTarget {
+internal class OffscreenColorTarget(private val capabilities: GlCapabilities) {
 
     var textureId: Int = 0
         private set
@@ -54,12 +59,15 @@ internal class OffscreenColorTarget {
         val targetWidth = width.coerceAtLeast(1)
         val targetHeight = height.coerceAtLeast(1)
         val tolerance = if (exactSize) 0 else SIZE_TOLERANCE_PX
+        val useHalfFloat = allowHalfFloat && capabilities.supportsHalfFloatTargets
         val sizeUnchanged = isReady &&
             abs(targetWidth - this.width) <= tolerance &&
             abs(targetHeight - this.height) <= tolerance
-        if (sizeUnchanged && allowHalfFloat == isHalfFloatTarget) return false
+        // Compare against the effective format, not the request: a context downgraded to Tier 2 must
+        // keep its RGBA8 attachment instead of reallocating on every frame.
+        if (sizeUnchanged && useHalfFloat == isHalfFloatTarget) return false
         release()
-        allocate(targetWidth, targetHeight, allowHalfFloat)
+        allocate(targetWidth, targetHeight, useHalfFloat)
         return true
     }
 
@@ -86,6 +94,7 @@ internal class OffscreenColorTarget {
         }
         width = 0
         height = 0
+        isHalfFloatTarget = false
     }
 
     /** Re-arms the target after an EGL context recreation. */
@@ -93,8 +102,7 @@ internal class OffscreenColorTarget {
         isDisabled = false
     }
 
-    private fun allocate(targetWidth: Int, targetHeight: Int, allowHalfFloat: Boolean) {
-        val useHalfFloat = allowHalfFloat && GlCapabilities.supportsHalfFloatTargets
+    private fun allocate(targetWidth: Int, targetHeight: Int, useHalfFloat: Boolean) {
         width = targetWidth
         height = targetHeight
         isHalfFloatTarget = useHalfFloat
@@ -131,12 +139,20 @@ internal class OffscreenColorTarget {
             0
         )
         val status = GLES20.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER)
-        if (status != GLES30.GL_FRAMEBUFFER_COMPLETE) {
-            Timber.e("Offscreen target framebuffer incomplete (status=%d); disabling the pass", status)
-            isDisabled = true
-            release()
-        }
         GLES20.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+        if (status == GLES30.GL_FRAMEBUFFER_COMPLETE) return
+
+        val rejectedHalfFloat = useHalfFloat
+        release()
+        if (rejectedHalfFloat) {
+            // The driver claimed half-float colour buffers but rejected the attachment. Record the
+            // downgrade on this context and retry once as RGBA8 so the pass keeps rendering.
+            capabilities.markHalfFloatTargetsUnavailable(status)
+            allocate(targetWidth, targetHeight, useHalfFloat = false)
+            return
+        }
+        Timber.e("Offscreen target framebuffer incomplete (status=%d); disabling the pass", status)
+        isDisabled = true
     }
 
     companion object {

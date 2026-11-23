@@ -60,12 +60,15 @@ internal class GeometryCaGlProgram {
     val isReady: Boolean
         get() = programId != 0
 
+    /**
+     * Compiles and links the Pass A program.
+     *
+     * A failure is reported through the return value only: the owning pipeline decides whether it
+     * is a Tier 3 minimal fallback for **its** EGL context.
+     */
     fun init(): Boolean {
         programId = GlShaderCompiler.buildProgram(VERTEX_SHADER, FRAGMENT_SHADER)
-        if (programId == 0) {
-            GlCapabilities.markMinimalFallback("Pass A GeometryCa")
-            return false
-        }
+        if (programId == 0) return false
         aPositionLoc = GLES20.glGetAttribLocation(programId, "aPosition")
         aTexCoordLoc = GLES20.glGetAttribLocation(programId, "aTexCoord")
         uTextureLoc = GLES20.glGetUniformLocation(programId, "uTex0")

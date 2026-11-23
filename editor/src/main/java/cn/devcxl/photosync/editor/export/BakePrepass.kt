@@ -18,7 +18,7 @@ internal class BakePrepass(
     private val source: BakeSourceTextures
 ) : AutoCloseable {
 
-    private val analyzer = PrepassAnalyzer()
+    private val analyzer = PrepassAnalyzer(chain.capabilities)
 
     /**
      * Analyses the proxy and publishes the guide texture into [chain].

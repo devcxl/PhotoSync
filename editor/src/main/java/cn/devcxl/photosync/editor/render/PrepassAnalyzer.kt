@@ -22,9 +22,9 @@ import cn.devcxl.photosync.editor.domain.PrepassMath
  * [sourceTarget] is already the image top, so `glReadPixels` yields top-down rows directly without
  * needing a vertical flip.
  */
-internal class PrepassAnalyzer {
+internal class PrepassAnalyzer(capabilities: GlCapabilities) {
 
-    private val sourceTarget = OffscreenColorTarget()
+    private val sourceTarget = OffscreenColorTarget(capabilities)
     private val texture = PrepassTexture()
     private var readbackBuffer: ByteBuffer? = null
 

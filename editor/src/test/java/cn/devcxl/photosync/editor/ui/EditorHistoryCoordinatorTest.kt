@@ -21,7 +21,7 @@ class EditorHistoryCoordinatorTest {
     @Test
     fun shouldUndoAndRedoChronologicallyAcrossParamAndLiquifySteps_whenToolsAreInterleaved() {
         val undoController = EditorUndoController()
-        val session = LiquifySession(42L, LiquifyMeshStore(File("/tmp/opencode/unused_history_test")))
+        val session = LiquifySession(LiquifyMeshStore(File("/tmp/opencode/unused_history_test")))
         var meshPublishedCount = 0
         val coordinator = EditorHistoryCoordinator(
             photoId = 42L,

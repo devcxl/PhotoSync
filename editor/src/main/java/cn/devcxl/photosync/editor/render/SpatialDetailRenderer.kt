@@ -14,11 +14,11 @@ import cn.devcxl.photosync.editor.domain.SpatialDetailPlanner
  * When the plan resolves to zero stages, [renderToTexture] returns `0` without touching a
  * framebuffer so the caller maintains the **0 FBO Draw Call** guarantee.
  */
-internal class SpatialDetailRenderer {
+internal class SpatialDetailRenderer(private val capabilities: GlCapabilities) {
 
-    private val chain = SpatialDetailGlChain()
-    private val analyzer = PrepassAnalyzer()
-    private val passBTarget = OffscreenColorTarget()
+    private val chain = SpatialDetailGlChain(capabilities)
+    private val analyzer = PrepassAnalyzer(capabilities)
+    private val passBTarget = OffscreenColorTarget(capabilities)
     private val presentProgram = PresentGlProgram()
 
     private var chainReady: Boolean = false
@@ -34,8 +34,9 @@ internal class SpatialDetailRenderer {
     /** Runs the Pass C GL setup after a surface (re)creation. */
     fun init() {
         release()
+        passBTarget.resetDisableFlag()
         chainReady = chain.init()
-        presentProgram.init()
+        if (!presentProgram.init()) capabilities.markMinimalFallback("PresentGlProgram")
         lastDrawCalls = 0
     }
 

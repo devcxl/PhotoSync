@@ -4,6 +4,7 @@ import java.io.File
 
 import timber.log.Timber
 
+import cn.devcxl.photosync.editor.contract.EditorCachePaths
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.LiquifyMesh
 import cn.devcxl.photosync.editor.domain.WarpDisplacementField
@@ -86,6 +87,11 @@ internal class EditorPreviewSession(
     /**
      * Renders the screen-sized preview cache for [graph]. Blocking: call from an IO dispatcher.
      *
+     * Tries the offscreen GPU chain first — synchronously on this thread, with its own headless EGL
+     * context, so the session's source pixels are never shared with another thread — and falls back to
+     * [PreviewCacheWriter] (the CPU reference implementation) whenever the GPU cannot reproduce the
+     * graph exactly.
+     *
      * @param warpField Composed displacement grid (face MLS + body + liquify) so the cache matches
      *   the canvas exactly.
      * @param skinMask Portrait analysis mask, or `null` when the portrait group is unused.
@@ -96,9 +102,25 @@ internal class EditorPreviewSession(
         warpField: WarpDisplacementField? = null,
         skinMask: FloatArray? = null
     ): String? {
+        val current = source ?: return null
         val lut = loadLutFor(graph)
-        return when (val current = source) {
-            null -> null
+        if (!PreviewGraphAssets.isComplete(graph, lut)) {
+            // Publishing without the LUT would commit a preview that shows a different look.
+            Timber.e("The referenced 3D LUT is unavailable; keeping the previous preview")
+            return null
+        }
+        val accelerated = OffscreenPreviewRenderer.renderNow(
+            OffscreenPreviewRequest(
+                source = current,
+                graph = graph,
+                warpField = warpField,
+                skinMask = skinMask,
+                lut = lut,
+                outDir = File(cacheDir, EditorCachePaths.photoEditDirName(photoId))
+            )
+        )
+        if (accelerated != null) return accelerated.absolutePath
+        return when (current) {
             is EditorSource.LinearRawSource -> PreviewCacheWriter.writePreviewCache(
                 source = current.full,
                 graph = graph,

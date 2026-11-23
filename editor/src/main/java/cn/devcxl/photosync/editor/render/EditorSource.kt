@@ -63,6 +63,15 @@ internal object EditorSourceLoader {
     private const val LINEAR_PROXY_MAX_EDGE_PX = 1024
 
     /**
+     * Fingerprint of everything [load] bakes into its output besides the file content: the linear
+     * preview/proxy caps above and the matching 2048/1024px caps in `EditorBitmapLoader`.
+     *
+     * [RecentEditorSourceCache] includes it in its key, so bump this string whenever one of those
+     * caps changes; otherwise a source decoded with the old caps could be reused.
+     */
+    internal const val DECODE_PROFILE_ID = "preview-2048-linear-2048-proxy-1024-v1"
+
+    /**
      * Loads [sourcePath] into an [EditorSource], preferring a 16-bit linear decode for RAW files
      * when [preferLinear] (a GLES 3.0 context) is available.
      *

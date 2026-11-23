@@ -23,19 +23,22 @@ internal class PresentGlProgram {
     val isReady: Boolean
         get() = programId != 0
 
-    /** Compiles the presentation program. */
-    fun init() {
+    /**
+     * Compiles the presentation program.
+     *
+     * @return True when the program linked; [SpatialDetailRenderer] records the Tier 3 fallback of
+     *   its own EGL context otherwise.
+     */
+    fun init(): Boolean {
         programId = GlShaderCompiler.buildProgram(VERTEX_SHADER, FRAGMENT_SHADER)
-        if (programId == 0) {
-            GlCapabilities.markMinimalFallback("PresentGlProgram")
-            return
-        }
+        if (programId == 0) return false
         aPositionLoc = GLES20.glGetAttribLocation(programId, "aPosition")
         aTexCoordLoc = GLES20.glGetAttribLocation(programId, "aTexCoord")
         uTextureLoc = GLES20.glGetUniformLocation(programId, "uTex0")
         uScaleLoc = GLES20.glGetUniformLocation(programId, "uScale")
         uOffsetLoc = GLES20.glGetUniformLocation(programId, "uOffset")
         uDitherAmpLoc = GLES20.glGetUniformLocation(programId, "uDitherAmp")
+        return true
     }
 
     /** Draws [textureId] into the currently bound framebuffer with triangular dithering. */
