@@ -1,10 +1,13 @@
 package cn.devcxl.photosync.activity
 
+import android.annotation.SuppressLint
 import android.content.Context
+import android.transition.AutoTransition
+import android.transition.TransitionManager
+import android.view.MotionEvent
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.PopupMenu
-import android.widget.TextView
 
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
@@ -25,10 +28,14 @@ import cn.devcxl.photosync.editor.domain.EditGraphJsonCodec
 import cn.devcxl.photosync.editor.domain.PresetGraphMerger
 
 /**
- * The collapsible `快捷预设与联机操作栏` above the filmstrip: preset chips, the `无预设` reset, the
- * `⚡ 联机套用` toggle and the compact copy/paste/select actions — all reachable without opening the
- * editor.
+ * The collapsible `快捷预设` strip above the filmstrip:
+ * - Preset chips apply immediately to the current photo with an inline circular spinner while
+ *   rendering.
+ * - `⚡ 联机套用` picks or disables the `LiveTetherPreset` applied to newly synced photos.
+ * - The hold-to-compare icon button appears only on edited photos and previews the unedited
+ *   original strictly while held down.
  */
+@SuppressLint("ClickableViewAccessibility")
 internal class TetheredQuickStripController(
     private val context: Context,
     private val binding: ActivityMainBinding,
@@ -38,14 +45,12 @@ internal class TetheredQuickStripController(
 
     /** Callbacks the activity implements for quick-strip actions. */
     interface Host {
-        fun onQuickPresetSelected(photoId: Long, graph: EditGraph, presetName: String?)
+        fun onQuickPresetSelected(photoId: Long, graph: EditGraph, presetId: String?, presetName: String?)
         fun onLiveTetherToggled(presetId: String?, presetName: String?)
-        fun onQuickCopyRequested()
-        fun onQuickCopyWithMaskRequested()
-        fun onQuickPasteRequested()
-        fun onMultiSelectToggled()
+        fun onCompareChanged(comparing: Boolean)
         fun currentGraph(): EditGraph
         fun currentPhotoId(): Long?
+        fun canCompareCurrent(): Boolean
     }
 
     private val density = context.resources.displayMetrics.density
@@ -53,58 +58,67 @@ internal class TetheredQuickStripController(
         get() = EditorHostRegistry.editStore
 
     private var presets: List<UserPresetRecord> = emptyList()
+    private var chips: List<QuickPresetChip> = emptyList()
     private var livePresetId: String? = null
     private var collapsed: Boolean = true
+    private var applyingChipActive: Boolean = false
+    private var applyingPresetId: String? = null
 
     init {
-        binding.quickStripToggleHandle.setOnClickListener { setCollapsed(!collapsed) }
+        binding.quickStripToggleHandle.setOnClickListener { setCollapsed(!collapsed, animate = true) }
         binding.quickLiveTetherToggle.setOnClickListener { onLiveTetherToggleClicked() }
-        binding.quickCopyButton.setOnClickListener { host.onQuickCopyRequested() }
-        binding.quickCopyButton.setOnLongClickListener {
-            host.onQuickCopyWithMaskRequested()
-            true
+        binding.quickCompareButton.setOnTouchListener { view, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    view.isPressed = true
+                    host.onCompareChanged(true)
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    view.isPressed = false
+                    host.onCompareChanged(false)
+                    if (event.actionMasked == MotionEvent.ACTION_UP) view.performClick()
+                    true
+                }
+                else -> false
+            }
         }
-        binding.quickPasteButton.setOnClickListener { host.onQuickPasteRequested() }
-        binding.quickMultiSelectButton.setOnClickListener { host.onMultiSelectToggled() }
-        setCollapsed(true)
+        setCollapsed(true, animate = false)
         observePresets()
     }
 
-    /** Collapses or expands the strip; the toggle handle stays visible either way. */
-    fun setCollapsed(collapsed: Boolean) {
+    /** Collapses or expands the preset chip row with a smooth transition when requested. */
+    fun setCollapsed(collapsed: Boolean, animate: Boolean = true) {
         this.collapsed = collapsed
-        val visible = if (collapsed) View.GONE else View.VISIBLE
-        binding.quickPresetChipScroll.visibility = visible
-        binding.quickActionRow.visibility = visible
+        if (animate) {
+            TransitionManager.beginDelayedTransition(
+                binding.quickPresetStrip,
+                AutoTransition().setDuration(EXPAND_ANIM_MS)
+            )
+        }
+        binding.quickPresetChipScroll.visibility = if (collapsed) View.GONE else View.VISIBLE
         binding.quickStripToggleHandle.setText(
             if (collapsed) R.string.quick_strip_expand else R.string.quick_strip_collapse
         )
     }
 
-    /** Re-renders the preset chips against the current photo's graph. */
+    /** Re-renders chips, the `⚡ 联机套用` pill and the hold-to-compare button. */
     fun refresh(currentGraph: EditGraph) {
         rebuildChips(currentGraph)
         renderLiveTetherToggle()
-        onClipboardChanged()
+        renderCompareButton()
     }
 
-    /** Syncs the multi-select icon button with the adapter's selection mode. */
-    fun renderSelectionMode(selectionMode: Boolean) {
-        binding.quickMultiSelectButton.setImageResource(
-            if (selectionMode) R.drawable.ic_check_24 else R.drawable.ic_select_multi_24
-        )
-        binding.quickMultiSelectButton.contentDescription = context.getString(
-            if (selectionMode) R.string.quick_strip_select_done else R.string.quick_strip_select
-        )
-        binding.quickMultiSelectButton.setBackgroundResource(
-            if (selectionMode) R.drawable.bg_toggle_pill_on else R.drawable.bg_toggle_pill
-        )
+    /** Shows or clears an inline circular spinner on the preset chip currently rendering. */
+    fun setApplyingPreset(active: Boolean, presetId: String?) {
+        applyingChipActive = active
+        applyingPresetId = if (active) presetId else null
+        markSelectedChip(host.currentGraph())
     }
 
-    /** Re-renders after a paste or copy so `粘贴参数` updates its enabled state. */
-    fun onClipboardChanged() {
-        binding.quickPasteButton.isEnabled = EditClipboard.hasContent
-        binding.quickPasteButton.alpha = if (EditClipboard.hasContent) 1.0f else DISABLED_ALPHA
+    private fun renderCompareButton() {
+        val visible = host.canCompareCurrent()
+        binding.quickCompareButton.visibility = if (visible) View.VISIBLE else View.GONE
     }
 
     private fun onLiveTetherToggleClicked() {
@@ -189,8 +203,10 @@ internal class TetheredQuickStripController(
     private fun rebuildChips(currentGraph: EditGraph) {
         val container = binding.quickPresetChipContainer
         container.removeAllViews()
-        addChip(container, context.getString(R.string.quick_strip_no_preset), null)
-        presets.forEach { preset -> addChip(container, labelOf(preset), preset) }
+        val built = mutableListOf<QuickPresetChip>()
+        built += addChip(container, context.getString(R.string.quick_strip_no_preset), null)
+        presets.forEach { preset -> built += addChip(container, labelOf(preset), preset) }
+        chips = built
         markSelectedChip(currentGraph)
     }
 
@@ -205,23 +221,24 @@ internal class TetheredQuickStripController(
         container: LinearLayout,
         label: CharSequence,
         preset: UserPresetRecord?
-    ) {
+    ): QuickPresetChip {
         val chip = QuickChipFactory.create(
             context = context,
             label = label,
+            presetId = preset?.id,
             heightPx = (CHIP_HEIGHT_DP * density).toInt(),
             textSizeSp = 11.0f,
             paddingPx = (CHIP_PADDING_DP * density).toInt()
         )
-        chip.tag = preset?.id
-        chip.setOnClickListener { onChipTapped(preset) }
+        chip.root.setOnClickListener { onChipTapped(preset) }
         if (preset != null) {
-            chip.setOnLongClickListener { view ->
+            chip.root.setOnLongClickListener { view ->
                 showChipMenu(preset, view)
                 true
             }
         }
-        container.addView(chip)
+        container.addView(chip.root)
+        return chip
     }
 
     private fun showChipMenu(preset: UserPresetRecord, anchor: View) {
@@ -240,13 +257,16 @@ internal class TetheredQuickStripController(
     }
 
     private fun onChipTapped(preset: UserPresetRecord?) {
+        if (applyingChipActive) return
         val photoId = host.currentPhotoId() ?: return
         val graph = if (preset == null) {
             PresetGraphMerger.resetPresetAxes(host.currentGraph())
         } else {
             resolvePresetGraph(preset)
         }
-        if (graph != null) host.onQuickPresetSelected(photoId, graph, preset?.name)
+        if (graph != null) {
+            host.onQuickPresetSelected(photoId, graph, preset?.id, preset?.name)
+        }
     }
 
     private fun resolvePresetGraph(preset: UserPresetRecord): EditGraph? {
@@ -256,25 +276,23 @@ internal class TetheredQuickStripController(
     }
 
     private fun markSelectedChip(currentGraph: EditGraph) {
-        val container = binding.quickPresetChipContainer
         val matched = PresetGraphMerger.matchingPresetId(
             currentGraph,
             presets.map { it.id to it.graphSubsetJson }
         )
         val neutral = PresetGraphMerger.hasNeutralPresetAxes(currentGraph)
-        for (index in 0 until container.childCount) {
-            val chip = container.getChildAt(index) as? TextView ?: continue
-            val presetId = chip.tag as? String
-            val selected = if (presetId == null) neutral else presetId == matched
-            QuickChipFactory.applySelection(context, chip, selected)
-            chip.alpha = if (selected) 1.0f else 0.75f
+        for (chip in chips) {
+            val selected = if (chip.presetId == null) neutral else chip.presetId == matched
+            val loading = applyingChipActive && chip.presetId == applyingPresetId
+            QuickChipFactory.applySelection(context, chip, selected = selected, loading = loading)
+            chip.root.isEnabled = !applyingChipActive
         }
     }
 
     private companion object {
         const val CHIP_HEIGHT_DP = 28.0f
         const val CHIP_PADDING_DP = 11.0f
-        const val DISABLED_ALPHA = 0.4f
+        const val EXPAND_ANIM_MS = 160L
         const val MENU_TOGGLE_LIVE = 1
     }
 }

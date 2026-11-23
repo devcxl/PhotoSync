@@ -171,7 +171,7 @@ class EditorActivity : AppCompatActivity(),
             context = this,
             scope = lifecycleScope,
             filesDir = filesDir,
-            onExportingChanged = topBar::setExportEnabled,
+            onExportingChanged = topBar::setExporting,
             onFinished = { renderCoordinator.updateHistoryButtons() }
         )
     }
@@ -283,7 +283,7 @@ class EditorActivity : AppCompatActivity(),
     }
 
     override fun onDoneRequested() {
-        binding.btnDone.isEnabled = false
+        topBar.setSaving(true)
         EditorFinishAction.saveAndFinish(
             activity = this,
             scope = lifecycleScope,
@@ -292,7 +292,7 @@ class EditorActivity : AppCompatActivity(),
             graph = undoController.currentGraph,
             save = saveCoordinator::persist,
             onSaveFailed = {
-                binding.btnDone.isEnabled = true
+                topBar.setSaving(false)
                 Toast.makeText(this, R.string.editor_save_failed, Toast.LENGTH_SHORT).show()
             }
         )

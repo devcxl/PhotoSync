@@ -19,7 +19,8 @@
     <string name="editor_source_missing">Source file missing — reconnect camera to re-sync</string>
     <string name="editor_save_failed">Failed to save edits; check available storage</string>
     <string name="editor_export">Export</string>
-    <string name="editor_exporting">Baking export…</string>
+    <string name="editor_exporting">Baking Export</string>
+    <string name="editor_exporting_detail">Rendering at full resolution and saving to gallery…</string>
     <string name="editor_export_done">Exported to gallery</string>
     <string name="editor_export_failed">Bake export failed; check available storage</string>
     <string name="editor_export_no_sink">Export service unavailable; return to gallery and retry</string>

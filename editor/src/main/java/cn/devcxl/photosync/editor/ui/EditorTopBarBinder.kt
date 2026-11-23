@@ -4,6 +4,9 @@ import android.annotation.SuppressLint
 import android.view.MotionEvent
 import android.view.View
 
+import androidx.core.content.ContextCompat
+
+import cn.devcxl.photosync.editor.R
 import cn.devcxl.photosync.editor.databinding.ActivityEditorBinding
 import cn.devcxl.photosync.editor.domain.BaseLook
 
@@ -66,10 +69,29 @@ internal class EditorTopBarBinder(
         binding.baseLookToggle.setLook(baseLook)
     }
 
-    /** Enables or disables the export button while a bake is running. */
-    fun setExportEnabled(enabled: Boolean) {
-        binding.btnExport.isEnabled = enabled
-        binding.btnExport.alpha = if (enabled) 1.0f else DISABLED_ALPHA
+    /** Shows or hides the in-button spinner and full-resolution export progress overlay. */
+    fun setExporting(exporting: Boolean) {
+        binding.btnExport.isEnabled = !exporting
+        val icon = if (exporting) {
+            null
+        } else {
+            ContextCompat.getDrawable(binding.btnExport.context, R.drawable.ic_editor_export_24)
+        }
+        binding.btnExport.setImageDrawable(icon)
+        binding.btnExportSpinner.visibility = if (exporting) View.VISIBLE else View.GONE
+        fadeOverlay(binding.exportProgressOverlay, exporting)
+    }
+
+    /** Shows an in-button circular spinner inside Done while preview persistence runs. */
+    fun setSaving(saving: Boolean) {
+        binding.btnDone.isEnabled = !saving
+        val icon = if (saving) {
+            null
+        } else {
+            ContextCompat.getDrawable(binding.btnDone.context, R.drawable.ic_editor_done_24)
+        }
+        binding.btnDone.setImageDrawable(icon)
+        binding.btnDoneSpinner.visibility = if (saving) View.VISIBLE else View.GONE
     }
 
     /** Shows or hides the "comparing original" status pill. */
@@ -77,7 +99,23 @@ internal class EditorTopBarBinder(
         binding.compareStatusPill.visibility = if (comparing) View.VISIBLE else View.GONE
     }
 
+    private fun fadeOverlay(overlay: View, visible: Boolean) {
+        overlay.animate().cancel()
+        if (visible) {
+            overlay.alpha = 0.0f
+            overlay.visibility = View.VISIBLE
+            overlay.animate().alpha(1.0f).setDuration(OVERLAY_FADE_MS).withEndAction(null).start()
+        } else if (overlay.visibility == View.VISIBLE) {
+            overlay.animate()
+                .alpha(0.0f)
+                .setDuration(OVERLAY_FADE_MS)
+                .withEndAction { overlay.visibility = View.GONE }
+                .start()
+        }
+    }
+
     private companion object {
         private const val DISABLED_ALPHA = 0.4f
+        private const val OVERLAY_FADE_MS = 180L
     }
 }

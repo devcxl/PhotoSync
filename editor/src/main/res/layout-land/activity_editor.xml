@@ -85,16 +85,31 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent">
 
-        <ImageButton
-            android:id="@+id/btnDone"
+        <FrameLayout
             android:layout_width="@dimen/editor_top_btn_height"
-            android:layout_height="@dimen/editor_top_btn_height"
-            android:background="@drawable/bg_editor_primary_icon_btn"
-            android:contentDescription="@string/editor_done"
-            android:padding="8dp"
-            android:scaleType="centerInside"
-            android:src="@drawable/ic_editor_done_24"
-            app:tint="@color/editor_text_primary" />
+            android:layout_height="@dimen/editor_top_btn_height">
+
+            <ImageButton
+                android:id="@+id/btnDone"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@drawable/bg_editor_primary_icon_btn"
+                android:contentDescription="@string/editor_done"
+                android:padding="8dp"
+                android:scaleType="centerInside"
+                android:src="@drawable/ic_editor_done_24"
+                app:tint="@color/editor_text_primary" />
+
+            <ProgressBar
+                android:id="@+id/btnDoneSpinner"
+                style="?android:attr/progressBarStyleSmall"
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:layout_gravity="center"
+                android:indeterminate="true"
+                android:indeterminateTint="@color/editor_text_primary"
+                android:visibility="gone" />
+        </FrameLayout>
 
         <cn.devcxl.photosync.editor.ui.widgets.BaseLookToggleView
             android:id="@+id/baseLookToggle"
@@ -134,17 +149,32 @@
             android:src="@drawable/ic_editor_redo_24"
             app:tint="@color/editor_text_primary" />
 
-        <ImageButton
-            android:id="@+id/btnExport"
+        <FrameLayout
             android:layout_width="@dimen/editor_top_btn_height"
             android:layout_height="@dimen/editor_top_btn_height"
-            android:layout_marginEnd="8dp"
-            android:background="@drawable/bg_editor_icon_btn"
-            android:contentDescription="@string/editor_export"
-            android:padding="8dp"
-            android:scaleType="centerInside"
-            android:src="@drawable/ic_editor_export_24"
-            app:tint="@color/editor_text_primary" />
+            android:layout_marginEnd="8dp">
+
+            <ImageButton
+                android:id="@+id/btnExport"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@drawable/bg_editor_icon_btn"
+                android:contentDescription="@string/editor_export"
+                android:padding="8dp"
+                android:scaleType="centerInside"
+                android:src="@drawable/ic_editor_export_24"
+                app:tint="@color/editor_text_primary" />
+
+            <ProgressBar
+                android:id="@+id/btnExportSpinner"
+                style="?android:attr/progressBarStyleSmall"
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:layout_gravity="center"
+                android:indeterminate="true"
+                android:indeterminateTint="@color/editor_accent_blue"
+                android:visibility="gone" />
+        </FrameLayout>
 
         <ImageButton
             android:id="@+id/btnCompare"
@@ -441,5 +471,58 @@
                 android:textSize="11sp" />
         </LinearLayout>
     </LinearLayout>
+
+    <!-- Dedicated full-resolution bake progress overlay -->
+    <FrameLayout
+        android:id="@+id/exportProgressOverlay"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:background="#8C000000"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:background="@drawable/bg_editor_progress_card"
+            android:gravity="center_horizontal"
+            android:minWidth="220dp"
+            android:orientation="vertical"
+            android:paddingStart="24dp"
+            android:paddingTop="22dp"
+            android:paddingEnd="24dp"
+            android:paddingBottom="20dp">
+
+            <ProgressBar
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:indeterminate="true"
+                android:indeterminateTint="@color/editor_accent_blue" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/editor_exporting"
+                android:textColor="@color/editor_text_primary"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:gravity="center"
+                android:text="@string/editor_exporting_detail"
+                android:textColor="@color/editor_text_secondary"
+                android:textSize="11sp" />
+        </LinearLayout>
+    </FrameLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

@@ -62,7 +62,6 @@ import cn.devcxl.photosync.adapter.FilmstripAdapter
 import cn.devcxl.photosync.adapter.JpegSourceInfo
 import cn.devcxl.photosync.adapter.PhotoPagerAdapter
 import cn.devcxl.photosync.adapter.PhotoRenderState
-import cn.devcxl.photosync.adapter.canComparePhoto
 import cn.devcxl.photosync.data.AppDatabase
 import cn.devcxl.photosync.data.PhotoDao
 import cn.devcxl.photosync.data.entity.PhotoEntity
@@ -106,7 +105,7 @@ class MainActivity : AppCompatActivity() {
         private const val PREF_DELETE_ON_CAMERA = "delete_on_camera"
         private const val MENU_EXPORT_BAKED = 1
         private const val MENU_EXPORT_ORIGINAL = 2
-        private const val MENU_EXPORT_BATCH = 3
+        private const val EXPORT_OVERLAY_FADE_MS = 180L
         private val exportDateFormat = ThreadLocal.withInitial {
             SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
         }
@@ -200,7 +199,6 @@ class MainActivity : AppCompatActivity() {
             scope = lifecycleScope,
             dao = dao,
             adapter = adapter,
-            filmstripAdapter = filmstripAdapter,
             originalPreviewCache = originalPreviewCache,
             currentIndex = { binding.viewPager.currentItem },
             editedMap = { editedPhotoMap },
@@ -360,13 +358,6 @@ class MainActivity : AppCompatActivity() {
             },
             onPhotoTap = {
                 onPhotoCanvasTap()
-            },
-            canCompareProvider = { path ->
-                val preview = resolvePreviewOverridePath(path)
-                canComparePhoto(path, preview != null, preview)
-            },
-            onCompareChanged = { path, comparing ->
-                darkroom.setComparing(path, comparing)
             }
         )
     }
@@ -379,6 +370,7 @@ class MainActivity : AppCompatActivity() {
         }
         binding.viewPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
             override fun onPageSelected(position: Int) {
+                darkroom.endCompare()
                 currentPageZoomed = false
                 binding.zoomBadge.visibility = View.GONE
                 if (position >= adapter.itemCount - 1) {
@@ -419,8 +411,7 @@ class MainActivity : AppCompatActivity() {
                     binding.viewPager.setCurrentItem(position, true)
                 }
             },
-            hasEditPreviewProvider = { photoId -> editedPhotoMap.containsKey(photoId) },
-            onSelectionChanged = { selection -> darkroom.handleSelectionChanged(selection) }
+            hasEditPreviewProvider = { photoId -> editedPhotoMap.containsKey(photoId) }
         )
         binding.filmstripRecyclerView.apply {
             layoutManager = LinearLayoutManager(this@MainActivity, RecyclerView.HORIZONTAL, false)
@@ -1291,12 +1282,10 @@ class MainActivity : AppCompatActivity() {
         val menu = PopupMenu(this, binding.exportButton)
         menu.menu.add(0, MENU_EXPORT_BAKED, 0, R.string.export_menu_edited).isEnabled = hasRealEdit
         menu.menu.add(0, MENU_EXPORT_ORIGINAL, 1, R.string.export_menu_original)
-        menu.menu.add(0, MENU_EXPORT_BATCH, 2, R.string.export_menu_batch)
         menu.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 MENU_EXPORT_BAKED -> requestExport(index, bakeEdited = true)
                 MENU_EXPORT_ORIGINAL -> requestExport(index, bakeEdited = false)
-                MENU_EXPORT_BATCH -> darkroom.enqueueBatchBake()
             }
             true
         }
@@ -1329,34 +1318,71 @@ class MainActivity : AppCompatActivity() {
         return EditGraphJsonCodec.decode(record.graphJson)
     }
 
+    private fun setExportProgressState(
+        active: Boolean,
+        showOverlay: Boolean = false,
+        titleRes: Int = R.string.export_progress_baking_title,
+        subtitle: String = ""
+    ) {
+        binding.exportButton.isEnabled = !active
+        binding.exportButton.setImageDrawable(
+            if (active) null else ContextCompat.getDrawable(this, R.drawable.ic_export_24)
+        )
+        binding.exportButtonSpinner.visibility = if (active) View.VISIBLE else View.GONE
+        val overlay = binding.exportProgressOverlay
+        overlay.animate().cancel()
+        if (active && showOverlay) {
+            binding.exportProgressTitle.setText(titleRes)
+            binding.exportProgressSubtitle.text = subtitle
+            overlay.alpha = 0f
+            overlay.visibility = View.VISIBLE
+            overlay.animate().alpha(1f).setDuration(EXPORT_OVERLAY_FADE_MS).withEndAction(null).start()
+        } else if (overlay.visibility == View.VISIBLE) {
+            overlay.animate()
+                .alpha(0f)
+                .setDuration(EXPORT_OVERLAY_FADE_MS)
+                .withEndAction { overlay.visibility = View.GONE }
+                .start()
+        }
+    }
+
     private fun bakeEditedPhoto(entity: PhotoEntity, graph: EditGraph) {
         val displayEntityName = entity.name ?: getString(R.string.photo_default_name)
-        showInlineFeedback(getString(R.string.toast_baking_export, displayEntityName))
+        setExportProgressState(
+            active = true,
+            showOverlay = true,
+            titleRes = R.string.export_progress_baking_title,
+            subtitle = getString(R.string.export_progress_baking_detail_named, displayEntityName)
+        )
         lifecycleScope.launch {
-            val sink = EditorHostRegistry.gallerySink ?: gallerySink
-            val result = BakeExporter(this@MainActivity, sink, filesDir).bake(
-                BakeRequest(
-                    sourcePath = entity.path,
-                    displayName = makeOutputName(entity.name, "_edited"),
-                    isRaw = isRawPath(entity.path),
-                    graph = graph
+            try {
+                val sink = EditorHostRegistry.gallerySink ?: gallerySink
+                val result = BakeExporter(this@MainActivity, sink, filesDir).bake(
+                    BakeRequest(
+                        sourcePath = entity.path,
+                        displayName = makeOutputName(entity.name, "_edited"),
+                        isRaw = isRawPath(entity.path),
+                        graph = graph
+                    )
                 )
-            )
-            when (result) {
-                is BakeResult.Success -> {
-                    result.uri?.let { uri ->
-                        try {
-                            dao.updateUriString(entity.id, uri.toString())
-                        } catch (e: Exception) {
-                            Timber.w(e, "Failed to persist baked uriString for photo id=%d", entity.id)
+                when (result) {
+                    is BakeResult.Success -> {
+                        result.uri?.let { uri ->
+                            try {
+                                dao.updateUriString(entity.id, uri.toString())
+                            } catch (e: Exception) {
+                                Timber.w(e, "Failed to persist baked uriString for photo id=%d", entity.id)
+                            }
                         }
+                        showInlineFeedback(getString(R.string.toast_baked_saved, result.displayName))
                     }
-                    showInlineFeedback(getString(R.string.toast_baked_saved, result.displayName))
+                    is BakeResult.Failure -> {
+                        Timber.w(result.cause, "Bake export failed: %s", result.reason)
+                        showInlineFeedback(getString(R.string.toast_bake_failed))
+                    }
                 }
-                is BakeResult.Failure -> {
-                    Timber.w(result.cause, "Bake export failed: %s", result.reason)
-                    showInlineFeedback(getString(R.string.toast_bake_failed))
-                }
+            } finally {
+                setExportProgressState(active = false)
             }
         }
     }
@@ -1368,9 +1394,21 @@ class MainActivity : AppCompatActivity() {
             return
         }
         val displayEntityName = entity.name ?: getString(R.string.photo_default_name)
-        showInlineFeedback(getString(R.string.toast_exporting, displayEntityName))
+        val isRaw = isRawPath(entity.path)
+        setExportProgressState(
+            active = true,
+            showOverlay = isRaw,
+            titleRes = R.string.export_progress_original_title,
+            subtitle = displayEntityName
+        )
         lifecycleScope.launch(Dispatchers.IO) {
-            exportOriginalInBackground(entity)
+            try {
+                exportOriginalInBackground(entity)
+            } finally {
+                withContext(Dispatchers.Main) {
+                    setExportProgressState(active = false)
+                }
+            }
         }
     }
 

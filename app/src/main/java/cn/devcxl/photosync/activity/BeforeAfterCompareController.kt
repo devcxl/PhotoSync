@@ -41,6 +41,12 @@ internal class BeforeAfterCompareController(
         }
     }
 
+    /** Ends any active comparison unconditionally (e.g. on page change). */
+    fun clear() {
+        val active = comparingPath ?: return
+        endCompare(active)
+    }
+
     private fun beginCompare(path: String) {
         if (comparingPath == path) return
         val cached = cache.get(path)

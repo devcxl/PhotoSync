@@ -106,16 +106,7 @@
     <string name="quick_strip_no_preset">None</string>
     <string name="quick_strip_live_tether">⚡ Live Tether</string>
     <string name="quick_strip_live_tether_active">⚡ Live·%1$s</string>
-    <string name="quick_strip_copy">Copy</string>
-    <string name="quick_strip_paste">Paste</string>
-    <string name="quick_strip_select">Select</string>
-    <string name="quick_strip_select_done">Done</string>
-    <string name="quick_strip_copied">Edits copied</string>
-    <string name="quick_strip_copied_masked">Edits copied (custom mask)</string>
-    <string name="quick_strip_copy_unedited">Current photo has no edits to copy</string>
-    <string name="quick_strip_pasted">Pasted edits to %1$d photos</string>
-    <string name="quick_strip_paste_empty">Clipboard is empty; copy edits first</string>
-    <string name="quick_strip_paste_unchanged">Target photos already match these edits</string>
+    <string name="quick_strip_compare_hold">Hold to compare original</string>
     <string name="quick_strip_preset_applied_named">Applied \"%1$s\" to current photo</string>
     <string name="quick_strip_preset_cleared">Cleared preset on current photo</string>
     <string name="quick_strip_apply_failed">Failed to apply preset</string>
@@ -126,31 +117,11 @@
     <string name="quick_strip_live_picker_turn_off">Turn Off Live Tether</string>
     <string name="quick_strip_menu_set_live">Set as Live Tether Preset</string>
     <string name="quick_strip_menu_clear_live">Clear Live Tether Preset</string>
-    <string name="quick_strip_selected_count">%1$d selected</string>
 
     <string name="compare_original_pill">Original (Before)</string>
 
-    <string name="batch_bake_preparing">Preparing export…</string>
-    <string name="batch_bake_running">Exporting %1$d/%2$d…</string>
-    <string name="batch_bake_finished">Exported %1$d/%2$d</string>
-    <string name="batch_bake_finished_with_failures">Exported %1$d/%2$d (%3$d failed)</string>
-    <string name="batch_bake_cancelled">Batch export cancelled</string>
-    <string name="batch_bake_title">Batch Bake Export</string>
-    <string name="batch_bake_cancel">Cancel</string>
-    <string name="batch_bake_queued">Queued %1$d photos for batch export</string>
-    <string name="batch_bake_no_selection">Select photos to export first</string>
-    <string name="export_menu_batch">Batch Export…</string>
-
-    <string name="copy_mask_title">Copy Adjustments</string>
-    <string name="copy_mask_base_look">RAW Base Look</string>
-    <string name="copy_mask_tone">Tone (Exposure / Contrast / Highlights…)</string>
-    <string name="copy_mask_color">Color (WB / HSL / Curve / LUT)</string>
-    <string name="copy_mask_detail">Detail (Sharpen / NR / Clarity)</string>
-    <string name="copy_mask_effects">Effects (Grain / Vignette / CA)</string>
-    <string name="copy_mask_portrait_skin">Portrait Skin Smoothing</string>
-    <string name="copy_mask_geometry">Geometry (Crop / Rotate / Perspective)</string>
-    <string name="copy_mask_liquify">Liquify Mesh</string>
-    <string name="copy_mask_portrait_warp">Face &amp; Body Reshape</string>
-    <string name="copy_mask_confirm">Copy</string>
-    <string name="filmstrip_selected_mark">✓</string>
+    <string name="export_progress_baking_title">Baking Export</string>
+    <string name="export_progress_baking_detail">Rendering at full resolution and saving to gallery…</string>
+    <string name="export_progress_baking_detail_named">%1$s · Rendering at full resolution…</string>
+    <string name="export_progress_original_title">Exporting Original</string>
 </resources>

@@ -44,7 +44,6 @@ internal class EditorExportCoordinator(
             return
         }
         onExportingChanged(true)
-        Toast.makeText(context, R.string.editor_exporting, Toast.LENGTH_SHORT).show()
         scope.launch {
             val result = BakeExporter(context, sink, filesDir).bake(
                 BakeRequest(

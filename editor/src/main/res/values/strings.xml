@@ -19,7 +19,8 @@
     <string name="editor_source_missing">源文件已清理，请重新连接相机同步</string>
     <string name="editor_save_failed">保存编辑失败，请检查存储空间</string>
     <string name="editor_export">导出</string>
-    <string name="editor_exporting">正在烘焙导出…</string>
+    <string name="editor_exporting">正在烘焙导出</string>
+    <string name="editor_exporting_detail">正在全分辨率渲染并写入系统相册，请稍候…</string>
     <string name="editor_export_done">已导出成片到相册</string>
     <string name="editor_export_failed">烘焙导出失败，请检查存储空间</string>
     <string name="editor_export_no_sink">导出服务不可用，请回到主界面重试</string>

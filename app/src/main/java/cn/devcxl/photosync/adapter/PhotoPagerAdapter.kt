@@ -169,9 +169,7 @@ class PhotoPagerAdapter(
     private val isCurrentPageProvider: (Int) -> Boolean,
     private val isJpegProvider: (String) -> Boolean,
     private val onPhotoScaleChanged: (String, Int, Float, Float) -> Unit,
-    private val onPhotoTap: () -> Unit = {},
-    private val canCompareProvider: (String) -> Boolean = { false },
-    private val onCompareChanged: (String, Boolean) -> Unit = { _, _ -> }
+    private val onPhotoTap: () -> Unit = {}
 ) : RecyclerView.Adapter<PhotoPagerAdapter.VH>() {
     companion object {
         private val PAYLOAD_IMAGE_STATE = Any()
@@ -182,12 +180,12 @@ class PhotoPagerAdapter(
     private var currentPrimaryPosition: Int = RecyclerView.NO_POSITION
     private val handler = Handler(Looper.getMainLooper())
 
-    /** Path and bitmap of the unedited original currently shown by a press-and-hold compare. */
+    /** Path and bitmap of the unedited original currently shown by the hold-to-compare button. */
     private var overridePath: String? = null
     private var overrideBitmap: Bitmap? = null
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
-        val container = CompareAwareFrameLayout(parent.context).apply {
+        val container = FrameLayout(parent.context).apply {
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
@@ -261,11 +259,6 @@ class PhotoPagerAdapter(
         super.onBindViewHolder(holder, position, payloads)
     }
 
-    override fun onViewRecycled(holder: VH) {
-        holder.releaseCompareGesture()
-        super.onViewRecycled(holder)
-    }
-
     private fun bindHolder(holder: VH, entity: PhotoEntity, position: Int) {
         val override = overrideFor(entity.path)
         val viewerMode = if (override != null) {
@@ -281,9 +274,7 @@ class PhotoPagerAdapter(
             isCurrentPage = isCurrentPageProvider(position),
             jpegSourceInfo = jpegSourceInfoProvider(entity.path),
             onPhotoScaleChanged = onPhotoScaleChanged,
-            onPhotoTap = onPhotoTap,
-            canCompare = canCompareProvider(entity.path),
-            onCompareChanged = onCompareChanged
+            onPhotoTap = onPhotoTap
         )
     }
 
@@ -364,8 +355,6 @@ class PhotoPagerAdapter(
         private var currentViewerMode: PhotoViewerMode = PhotoViewerMode.PHOTO_VIEW
         private var currentJpegPreviewStage: PhotoRenderStage = PhotoRenderStage.EMPTY
         private var currentJpegSourceMode: JpegTiledSourceMode? = null
-        private var compareBoundPath: String? = null
-        private var compareBoundEnabled: Boolean = false
         private var showingOverride: Boolean = false
         private var displayedBitmap: Bitmap? = null
 
@@ -377,11 +366,8 @@ class PhotoPagerAdapter(
             isCurrentPage: Boolean,
             jpegSourceInfo: JpegSourceInfo?,
             onPhotoScaleChanged: (String, Int, Float, Float) -> Unit,
-            onPhotoTap: () -> Unit,
-            canCompare: Boolean,
-            onCompareChanged: (String, Boolean) -> Unit
+            onPhotoTap: () -> Unit
         ) {
-            bindCompareGesture(path, canCompare, onCompareChanged)
             if (viewerMode == PhotoViewerMode.JPEG_TILED) {
                 showingOverride = false
                 bindJpegTiled(
@@ -395,36 +381,6 @@ class PhotoPagerAdapter(
                 return
             }
             bindPhotoView(path, renderState, overrideBitmap, onPhotoScaleChanged, onPhotoTap)
-        }
-
-        fun releaseCompareGesture() {
-            val container = itemView as? CompareAwareFrameLayout ?: return
-            container.detector?.release()
-            container.detector = null
-            compareBoundPath = null
-            compareBoundEnabled = false
-        }
-
-        private fun bindCompareGesture(
-            path: String,
-            canCompare: Boolean,
-            onCompareChanged: (String, Boolean) -> Unit
-        ) {
-            if (compareBoundPath == path && compareBoundEnabled == canCompare) return
-            val container = itemView as? CompareAwareFrameLayout ?: return
-            container.detector?.release()
-            compareBoundPath = path
-            compareBoundEnabled = canCompare
-            if (!canCompare) {
-                container.detector = null
-                return
-            }
-            val slop = itemView.resources.displayMetrics.density * COMPARE_TOUCH_SLOP_DP
-            container.detector = PressAndHoldDetector(
-                touchSlopPx = slop,
-                onHoldStarted = { onCompareChanged(path, true) },
-                onHoldEnded = { onCompareChanged(path, false) }
-            )
         }
 
         private fun bindPhotoView(
@@ -661,9 +617,6 @@ class PhotoPagerAdapter(
         }
 
         companion object {
-            /** Movement beyond which a press-and-hold becomes a pan and is cancelled. */
-            const val COMPARE_TOUCH_SLOP_DP = 8.0f
-
             fun testIsZoomed(scale: Float, minScale: Float): Boolean {
                 return minScale > 0f && scale > minScale * 1.02f
             }

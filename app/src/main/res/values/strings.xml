@@ -107,22 +107,13 @@
     <string name="filmstrip_edited_mark">✎</string>
     <string name="edit_photo">编辑照片</string>
 
-    <!-- Tethered darkroom quick strip, compare and batch bake (Ticket #10) -->
+    <!-- Tethered darkroom quick strip, compare and export progress -->
     <string name="quick_strip_expand">▴ 快捷预设</string>
     <string name="quick_strip_collapse">▾ 收起快捷预设</string>
     <string name="quick_strip_no_preset">无预设</string>
     <string name="quick_strip_live_tether">⚡ 联机套用</string>
     <string name="quick_strip_live_tether_active">⚡ 联机·%1$s</string>
-    <string name="quick_strip_copy">复制参数</string>
-    <string name="quick_strip_paste">粘贴参数</string>
-    <string name="quick_strip_select">多选</string>
-    <string name="quick_strip_select_done">完成</string>
-    <string name="quick_strip_copied">已复制参数</string>
-    <string name="quick_strip_copied_masked">已复制参数（自定义范围）</string>
-    <string name="quick_strip_copy_unedited">当前照片未编辑，无可复制参数</string>
-    <string name="quick_strip_pasted">已粘贴参数到 %1$d 张照片</string>
-    <string name="quick_strip_paste_empty">剪贴板为空，请先复制参数</string>
-    <string name="quick_strip_paste_unchanged">目标照片参数已一致，无需更改</string>
+    <string name="quick_strip_compare_hold">按住对比未编辑原图</string>
     <string name="quick_strip_preset_applied_named">已对当前照片套用「%1$s」</string>
     <string name="quick_strip_preset_cleared">已清除当前照片预设</string>
     <string name="quick_strip_apply_failed">预设应用失败</string>
@@ -134,31 +125,11 @@
     <string name="quick_strip_menu_set_live">设为联机预设</string>
     <string name="quick_strip_menu_clear_live">取消联机预设</string>
     <string name="quick_strip_live_badge" translatable="false">⚡ %1$s</string>
-    <string name="quick_strip_selected_count">已选 %1$d 张</string>
 
     <string name="compare_original_pill">未编辑原图 (Before)</string>
 
-    <string name="batch_bake_preparing">正在准备导出…</string>
-    <string name="batch_bake_running">正在导出 %1$d/%2$d…</string>
-    <string name="batch_bake_finished">已导出 %1$d/%2$d</string>
-    <string name="batch_bake_finished_with_failures">已导出 %1$d/%2$d（失败 %3$d 张）</string>
-    <string name="batch_bake_cancelled">已取消批量导出</string>
-    <string name="batch_bake_title">批量烘焙导出</string>
-    <string name="batch_bake_cancel">取消</string>
-    <string name="batch_bake_queued">已加入批量导出队列：%1$d 张</string>
-    <string name="batch_bake_no_selection">请先选择要导出的照片</string>
-    <string name="export_menu_batch">批量导出…</string>
-
-    <string name="copy_mask_title">复制参数范围</string>
-    <string name="copy_mask_base_look">RAW 基准观感</string>
-    <string name="copy_mask_tone">影调（曝光 / 对比 / 高光阴影…）</string>
-    <string name="copy_mask_color">色彩（白平衡 / HSL / 曲线 / LUT）</string>
-    <string name="copy_mask_detail">细节（锐化 / 降噪 / 清晰度）</string>
-    <string name="copy_mask_effects">效果（颗粒 / 晕影 / 色散）</string>
-    <string name="copy_mask_portrait_skin">人像美肤</string>
-    <string name="copy_mask_geometry">构图（裁切 / 旋转 / 拉直 / 透视）</string>
-    <string name="copy_mask_liquify">液化笔刷</string>
-    <string name="copy_mask_portrait_warp">面部与美体重塑</string>
-    <string name="copy_mask_confirm">复制</string>
-    <string name="filmstrip_selected_mark">✓</string>
+    <string name="export_progress_baking_title">正在烘焙导出</string>
+    <string name="export_progress_baking_detail">正在全分辨率渲染并写入系统相册，请稍候…</string>
+    <string name="export_progress_baking_detail_named">%1$s · 全分辨率渲染中…</string>
+    <string name="export_progress_original_title">正在导出原图</string>
 </resources>
