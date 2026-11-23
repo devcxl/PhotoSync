@@ -85,6 +85,9 @@ android {
     buildFeatures {
         viewBinding = true
     }
+    testOptions {
+        unitTests.includeAndroidResources = true
+    }
 }
 dependencies {
     implementation project(':editor')
@@ -107,6 +110,7 @@ dependencies {
     implementation libs.timber
 
     testImplementation libs.junit
+    testImplementation libs.robolectric
     androidTestImplementation libs.androidx.junit
     androidTestImplementation libs.androidx.espresso.core
 

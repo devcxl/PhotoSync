@@ -72,6 +72,7 @@
 
     <string name="decoding_raw_preview">Decoding RAW preview…</string>
     <string name="loading_photo_preview">Loading preview…</string>
+    <string name="edited_preview_unavailable">Edited preview unavailable. Open the editor and save again.</string>
     <string name="sync_transfer_in_progress">Syncing photo</string>
     <string name="sync_transfer_percent">%1$d%%</string>
     <string name="feedback_camera_disconnected">Camera disconnected</string>

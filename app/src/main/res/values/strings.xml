@@ -74,6 +74,7 @@
     <!-- Immersive viewer, loading & transfer feedback (Issue #25) -->
     <string name="decoding_raw_preview">正在解码 RAW 预览…</string>
     <string name="loading_photo_preview">正在加载预览…</string>
+    <string name="edited_preview_unavailable">编辑预览不可用，请打开编辑器重新保存</string>
     <string name="sync_transfer_in_progress">正在同步照片</string>
     <string name="sync_transfer_percent">%1$d%%</string>
     <string name="feedback_camera_disconnected">相机连接已断开</string>

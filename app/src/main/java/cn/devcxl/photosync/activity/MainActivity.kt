@@ -60,8 +60,10 @@ import cn.devcxl.photosync.App
 import cn.devcxl.photosync.R
 import cn.devcxl.photosync.adapter.FilmstripAdapter
 import cn.devcxl.photosync.adapter.JpegSourceInfo
+import cn.devcxl.photosync.adapter.PhotoContentVersion
 import cn.devcxl.photosync.adapter.PhotoPagerAdapter
 import cn.devcxl.photosync.adapter.PhotoRenderState
+import cn.devcxl.photosync.adapter.PhotoViewerMode
 import cn.devcxl.photosync.data.AppDatabase
 import cn.devcxl.photosync.data.PhotoDao
 import cn.devcxl.photosync.data.entity.PhotoEntity
@@ -150,8 +152,8 @@ class MainActivity : AppCompatActivity() {
 
     private val thumbnailCache: LruCache<String, Bitmap> by lazy { createBitmapCache(16) }
     private val fullBitmapCache: LruCache<String, Bitmap> by lazy { createBitmapCache(8) }
-    private val inFlightThumbnailPaths = Collections.synchronizedSet(mutableSetOf<String>())
-    private val inFlightFullPaths = Collections.synchronizedSet(mutableSetOf<String>())
+    private val thumbnailDecodes = PreviewTaskRegistry()
+    private val fullPreviewDecodes = PreviewTaskRegistry()
     private val jpegSourceInfoCache = Collections.synchronizedMap(mutableMapOf<String, JpegSourceInfo>())
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -341,18 +343,18 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupAdapter() {
         adapter = PhotoPagerAdapter(
-            renderStateProvider = { path ->
-                PhotoRenderState(
-                    thumbnail = thumbnailCache.get(path),
-                    full = fullBitmapCache.get(path)
-                )
-            },
+            renderStateProvider = { path -> renderStateForPath(path) },
             onBindRequest = { path, position ->
                 ensurePhotoForPosition(path, position)
             },
             jpegSourceInfoProvider = { path -> getJpegSourceInfo(path) },
             isCurrentPageProvider = { position -> position == binding.viewPager.currentItem },
-            isJpegProvider = { path -> isJpegPath(path) && !hasEditPreviewForPath(path) },
+            isJpegProvider = { path ->
+                val entity = entityForPath(path)
+                entity != null &&
+                    resolveGalleryViewerMode(entity, editedPhotoMap, isJpegPath(path)) ==
+                    PhotoViewerMode.JPEG_TILED
+            },
             onPhotoScaleChanged = { _, position, scale, minScale ->
                 onCurrentPhotoScaleChanged(position, scale, minScale)
             },
@@ -404,7 +406,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupFilmstrip() {
         filmstripAdapter = FilmstripAdapter(
-            thumbnailProvider = { path -> thumbnailCache.get(path) },
+            thumbnailProvider = { path -> cachedThumbnailForPath(path) },
             onThumbnailRequest = { path -> ensureThumbnail(path) },
             onItemClick = { position ->
                 if (position in 0 until adapter.itemCount) {
@@ -1076,9 +1078,31 @@ class MainActivity : AppCompatActivity() {
         return ExtensionUtils.isRawExtension(ExtensionUtils.fileExtension(path))
     }
 
+    /**
+     * Resolves where a preview decode should read from.
+     *
+     * Must be called where the adapter list and [editedPhotoMap] are consistent (the main
+     * thread); the decode coroutine then works from this immutable snapshot only.
+     */
+    private fun snapshotPreviewDecodeSource(path: String): PreviewDecodeSource {
+        val decision = previewDisplayDecisionForPath(path)
+        return PreviewDecodeSource(
+            path = path,
+            previewOverridePath = decision?.previewPath,
+            isPreviewUnavailable = decision?.source == PreviewDisplaySource.UNAVAILABLE
+        )
+    }
+
     private fun ensureThumbnail(path: String) {
+        val source = snapshotPreviewDecodeSource(path)
+        if (source.isPreviewUnavailable) {
+            // The record owns this page: decoding the original would be exactly the fallback the
+            // edit is meant to hide, and cached bitmaps predate the current record.
+            discardCachedPreview(path)
+            return
+        }
         if (thumbnailCache.get(path) != null || fullBitmapCache.get(path) != null) return
-        if (!inFlightThumbnailPaths.add(path)) return
+        val task = thumbnailDecodes.begin(path) ?: return
         val isRaw = isRawPath(path)
         val dispatcher = if (isRaw) rawThumbnailDispatcher else Dispatchers.IO
         lifecycleScope.launch(dispatcher) {
@@ -1086,12 +1110,15 @@ class MainActivity : AppCompatActivity() {
                 if (isRaw) {
                     Timber.d("start RAW thumbnail decode: %s", path)
                 }
-                val bitmap = decodeThumbnailBitmap(path) ?: return@launch
+                val bitmap = decodeThumbnailBitmap(source) ?: return@launch
                 if (isRaw) {
                     Timber.d("decoded RAW thumbnail bitmap %dx%d: %s", bitmap.width, bitmap.height, path)
                 }
                 withContext(Dispatchers.Main) {
-                    thumbnailCache.put(path, bitmap)
+                    val published = thumbnailDecodes.publishIfCurrent(task) {
+                        thumbnailCache.put(path, bitmap)
+                    }
+                    if (!published) return@withContext
                     adapter.notifyPathChanged(path)
                     filmstripAdapter.notifyPathChanged(path)
                     if (infoDrawerOpen && infoTargetPath == path) {
@@ -1099,33 +1126,42 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             } finally {
-                inFlightThumbnailPaths.remove(path)
+                thumbnailDecodes.release(task)
             }
         }
     }
 
     private fun ensureFullPreview(path: String) {
+        val source = snapshotPreviewDecodeSource(path)
+        if (source.isPreviewUnavailable) {
+            discardCachedPreview(path)
+            return
+        }
         if (fullBitmapCache.get(path) != null) return
-        if (isRawPath(path) && !hasEditPreviewForPath(path)) return
-        if (!inFlightFullPaths.add(path)) return
+        if (isRawPath(path) && source.previewOverridePath == null) return
+        val task = fullPreviewDecodes.begin(path) ?: return
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val bitmap = decodeFullPreviewBitmap(path) ?: return@launch
+                val bitmap = decodeFullPreviewBitmap(source) ?: return@launch
                 withContext(Dispatchers.Main) {
-                    fullBitmapCache.put(path, bitmap)
-                    adapter.notifyPathChanged(path)
+                    val published = fullPreviewDecodes.publishIfCurrent(task) {
+                        fullBitmapCache.put(path, bitmap)
+                    }
+                    if (published) adapter.notifyPathChanged(path)
                 }
             } finally {
-                inFlightFullPaths.remove(path)
+                fullPreviewDecodes.release(task)
             }
         }
     }
 
-    private fun decodeThumbnailBitmap(path: String): Bitmap? {
-        val previewOverride = resolvePreviewOverridePath(path)
+    private fun decodeThumbnailBitmap(source: PreviewDecodeSource): Bitmap? {
+        if (source.isPreviewUnavailable) return null
+        val previewOverride = source.previewOverridePath
         if (previewOverride != null) {
             return decodeSampledBitmap(previewOverride, THUMBNAIL_MAX_EDGE_PX)
         }
+        val path = source.path
         val ext = ExtensionUtils.fileExtension(path)
         return try {
             when {
@@ -1146,13 +1182,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun decodeFullPreviewBitmap(path: String): Bitmap? {
-        val previewOverride = resolvePreviewOverridePath(path)
+    private fun decodeFullPreviewBitmap(source: PreviewDecodeSource): Bitmap? {
+        if (source.isPreviewUnavailable) return null
+        val previewOverride = source.previewOverridePath
         if (previewOverride != null) {
             val targetEdge = (previewLongEdgePx * FULL_PREVIEW_SCALE_FACTOR)
                 .coerceAtMost(FULL_PREVIEW_MAX_EDGE_PX)
             return decodeSampledBitmap(previewOverride, targetEdge)
         }
+        val path = source.path
         val ext = ExtensionUtils.fileExtension(path)
         return try {
             when {
@@ -1183,16 +1221,63 @@ class MainActivity : AppCompatActivity() {
         editorLauncher.launch(EditorActivity.createIntent(this, args))
     }
 
-    private fun resolvePreviewOverridePath(originalPath: String): String? {
-        val idx = adapter.indexOfPath(originalPath)
-        val entity = if (idx >= 0) adapter.getItem(idx) else null
-        if (entity == null) return null
-        val resolved = resolveEffectivePreviewPath(entity, editedPhotoMap)
-        return resolved.takeIf { it != originalPath }
+    /** Display decision for the library photo at [path], or `null` when it is not in the pager. */
+    private fun previewDisplayDecisionForPath(path: String): PreviewDisplayDecision? =
+        entityForPath(path)?.let { entity ->
+            resolvePreviewDisplayDecision(entity, editedPhotoMap)
+        }
+
+    private fun entityForPath(path: String): PhotoEntity? {
+        val index = adapter.indexOfPath(path)
+        return if (index >= 0) adapter.getItem(index) else null
     }
 
-    private fun hasEditPreviewForPath(originalPath: String): Boolean =
-        resolvePreviewOverridePath(originalPath) != null
+    /**
+     * Read state for one page.
+     *
+     * An unavailable preview must not read the bitmap caches: they may still hold the original or
+     * a pre-edit preview decoded before the record changed. The explicit flag makes the pager clear
+     * its surface and show the recovery message instead of either stale image.
+     */
+    private fun renderStateForPath(path: String): PhotoRenderState {
+        val decision = previewDisplayDecisionForPath(path)
+        // The record itself is the version source: it changes when an edit is saved, reset, or its
+        // preview file is lost, and it stays equal across the decodes of one unchanged edit.
+        val contentVersion = decision?.let(::resolvePhotoContentVersion)
+            ?: PhotoContentVersion.Unspecified
+        if (decision?.source == PreviewDisplaySource.UNAVAILABLE) {
+            discardCachedPreview(path)
+            return PhotoRenderState(
+                thumbnail = null,
+                full = null,
+                isPreviewUnavailable = true,
+                contentVersion = contentVersion
+            )
+        }
+        return PhotoRenderState(
+            thumbnail = thumbnailCache.get(path),
+            full = fullBitmapCache.get(path),
+            contentVersion = contentVersion
+        )
+    }
+
+    private fun cachedThumbnailForPath(path: String): Bitmap? {
+        if (previewDisplayDecisionForPath(path)?.source == PreviewDisplaySource.UNAVAILABLE) {
+            discardCachedPreview(path)
+            return null
+        }
+        return thumbnailCache.get(path)
+    }
+
+    private fun discardCachedPreview(path: String) {
+        discardPreviewArtifacts(
+            path = path,
+            thumbnailDecodes = thumbnailDecodes,
+            fullPreviewDecodes = fullPreviewDecodes,
+            thumbnailCache = thumbnailCache,
+            fullCache = fullBitmapCache
+        )
+    }
 
     private fun findPathByPhotoId(photoId: Long): String? {
         for (i in 0 until adapter.itemCount) {
@@ -1203,11 +1288,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun invalidateCachedBitmapsForPath(path: String) {
+        // Revoking the decodes first makes every already running decode for this path stale: it
+        // can neither publish its bitmap nor release the marker of the decode started below.
+        thumbnailDecodes.invalidate(path)
+        fullPreviewDecodes.invalidate(path)
         thumbnailCache.remove(path)
         fullBitmapCache.remove(path)
         originalPreviewCache.remove(path)
-        inFlightThumbnailPaths.remove(path)
-        inFlightFullPaths.remove(path)
         jpegSourceInfoCache.remove(path)
         val idx = adapter.indexOfPath(path)
         if (idx >= 0) {
@@ -1243,8 +1330,8 @@ class MainActivity : AppCompatActivity() {
      * Decodes the *original* pixels a press-and-hold compare shows.
      *
      * The pager normally displays the graded preview, so this deliberately bypasses
-     * [resolvePreviewOverridePath] and reads the source file at the same preview resolution. Blocking:
-     * called from an IO coroutine by [BeforeAfterCompareController].
+     * [snapshotPreviewDecodeSource] and reads the source file at the same preview resolution.
+     * Blocking: called from an IO coroutine by [BeforeAfterCompareController].
      */
     private fun decodeOriginalPreview(path: String): Bitmap? {
         val ext = ExtensionUtils.fileExtension(path)
@@ -1654,10 +1741,10 @@ class MainActivity : AppCompatActivity() {
         withContext(Dispatchers.IO) {
             try {
                 // Remove from cache
+                thumbnailDecodes.invalidate(entity.path)
+                fullPreviewDecodes.invalidate(entity.path)
                 thumbnailCache.remove(entity.path)
                 fullBitmapCache.remove(entity.path)
-                inFlightThumbnailPaths.remove(entity.path)
-                inFlightFullPaths.remove(entity.path)
                 jpegSourceInfoCache.remove(entity.path)
 
                 // Delete physical file and any rendered editor preview caches
