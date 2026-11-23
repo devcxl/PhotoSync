@@ -22,7 +22,9 @@ internal data class EffectsDrawParams(
     val ditherAmp: Float,
     val tileUv: TileUvTransform = TileUvTransform.IDENTITY,
     val pixelScaleX: Float = 1.0f,
-    val pixelScaleY: Float = 1.0f
+    val pixelScaleY: Float = 1.0f,
+    /** True only when presenting directly to the default screen framebuffer (`FBO 0`). */
+    val flipVerticalForScreen: Boolean = false
 )
 
 /**
@@ -87,7 +89,12 @@ internal class EffectsOutputGlProgram {
         GLES20.glUniform2f(uScaleLoc, params.scaleX, params.scaleY)
         GLES20.glUniform2f(uOffsetLoc, params.offsetX, params.offsetY)
         bindEffectUniforms(params)
-        quad.draw(aPositionLoc, aTexCoordLoc)
+        val orientation = if (params.flipVerticalForScreen) {
+            QuadOrientation.SCREEN
+        } else {
+            QuadOrientation.OFFSCREEN
+        }
+        quad.draw(aPositionLoc, aTexCoordLoc, orientation)
     }
 
     /** Logs driver diagnostics before the context goes away, then drops the program name. */

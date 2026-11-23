@@ -103,7 +103,8 @@ internal class EffectsOutputStage(private val exposureProgram: ExposureGlProgram
                     0.0f
                 } else {
                     PassDEffectsMath.DITHER_AMPLITUDE
-                }
+                },
+                flipVerticalForScreen = false
             )
         )
         stagingTarget.unbind()
@@ -148,7 +149,8 @@ internal class EffectsOutputStage(private val exposureProgram: ExposureGlProgram
                 effects = request.effects.withLutSize(lutTexture.sampleSize),
                 ditherAmp = PassDEffectsMath.DITHER_AMPLITUDE,
                 pixelScaleX = pixelScaleX.toFloat(),
-                pixelScaleY = pixelScaleY.toFloat()
+                pixelScaleY = pixelScaleY.toFloat(),
+                flipVerticalForScreen = true
             )
         )
     }

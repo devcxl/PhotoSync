@@ -26,7 +26,9 @@ internal data class ExposureDrawParams(
     val texelWidth: Int = 1,
     val texelHeight: Int = 1,
     /** Triangular dither amplitude in display units; `1/255` for 8-bit targets. */
-    val ditherAmp: Float = 0.0f
+    val ditherAmp: Float = 0.0f,
+    /** True only when presenting directly to the default screen framebuffer (`FBO 0`). */
+    val flipVerticalForScreen: Boolean = false
 )
 
 /**
@@ -135,7 +137,12 @@ internal class ExposureGlProgram {
         applyToneUniforms(params)
         applyColorUniforms(params)
 
-        quad.draw(aPositionLoc, aTexCoordLoc)
+        val orientation = if (params.flipVerticalForScreen) {
+            QuadOrientation.SCREEN
+        } else {
+            QuadOrientation.OFFSCREEN
+        }
+        quad.draw(aPositionLoc, aTexCoordLoc, orientation)
     }
 
     /** Releases the compiled shader program when tearing down an EGL context. */

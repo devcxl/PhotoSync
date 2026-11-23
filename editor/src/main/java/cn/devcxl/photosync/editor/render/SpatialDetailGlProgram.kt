@@ -120,7 +120,7 @@ internal class SpatialDetailGlProgram {
         GLES20.glUniform3f(uSkinParamsLoc, params.skinSmooth, params.skinTexture, params.skinEvenTone)
         GLES20.glUniform1f(uSkinBlurScaleLoc, params.skinBlurScale)
         GLES20.glUniform1f(uDitherAmpLoc, params.ditherAmp)
-        quad.draw(aPositionLoc, aTexCoordLoc)
+        quad.draw(aPositionLoc, aTexCoordLoc, QuadOrientation.OFFSCREEN)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
     }
 

@@ -18,8 +18,9 @@ import cn.devcxl.photosync.editor.domain.PrepassMath
  * percentile selection (brightest `0.1%` of the dark channel) exact instead of approximating it in a
  * fragment shader.
  *
- * The read-back is vertically flipped so the CPU buffers stay top-down like every other image buffer
- * in the editor, which is also what keeps [PrepassMath] usable from the preview cache writer.
+ * Because every offscreen FBO pass renders with [QuadOrientation.OFFSCREEN], row `0` of
+ * [sourceTarget] is already the image top, so `glReadPixels` yields top-down rows directly without
+ * needing a vertical flip.
  */
 internal class PrepassAnalyzer {
 
@@ -115,10 +116,9 @@ internal class PrepassAnalyzer {
     private fun toTopDownRgb(buffer: ByteBuffer, width: Int, height: Int): FloatArray {
         val display = FloatArray(width * height * CHANNELS)
         for (row in 0 until height) {
-            val glRow = height - 1 - row
             for (column in 0 until width) {
                 val target = (row * width + column) * CHANNELS
-                val source = (glRow * width + column) * BYTES_PER_PIXEL
+                val source = (row * width + column) * BYTES_PER_PIXEL
                 display[target] = byteAt(buffer, source)
                 display[target + 1] = byteAt(buffer, source + 1)
                 display[target + 2] = byteAt(buffer, source + 2)

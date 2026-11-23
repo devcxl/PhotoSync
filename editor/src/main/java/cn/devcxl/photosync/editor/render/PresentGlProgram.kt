@@ -55,7 +55,7 @@ internal class PresentGlProgram {
         GLES20.glUniform2f(uScaleLoc, scaleX, scaleY)
         GLES20.glUniform2f(uOffsetLoc, offsetX, offsetY)
         GLES20.glUniform1f(uDitherAmpLoc, ditherAmp)
-        quad.draw(aPositionLoc, aTexCoordLoc)
+        quad.draw(aPositionLoc, aTexCoordLoc, QuadOrientation.SCREEN)
     }
 
     /** Releases the program. Safe to call without a live context. */

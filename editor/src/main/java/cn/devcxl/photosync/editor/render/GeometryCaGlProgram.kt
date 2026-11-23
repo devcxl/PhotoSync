@@ -108,7 +108,7 @@ internal class GeometryCaGlProgram {
         )
         GLES20.glUniform4fv(uSrcSliceRectLoc, 1, params.srcSliceRect.toVec4(), 0)
         GLES20.glUniform4fv(uTileUvTransformLoc, 1, params.tileUv.toVec4(), 0)
-        quad.draw(aPositionLoc, aTexCoordLoc)
+        quad.draw(aPositionLoc, aTexCoordLoc, QuadOrientation.OFFSCREEN)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
     }
 

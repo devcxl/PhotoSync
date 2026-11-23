@@ -42,7 +42,8 @@ internal object PreviewDrawRequests {
             scaleY = scaleY,
             offsetX = request.canvas.offsetX,
             offsetY = request.canvas.offsetY,
-            ditherAmp = ditherAmp
+            ditherAmp = ditherAmp,
+            flipVerticalForScreen = true
         )
     }
 
@@ -72,7 +73,8 @@ internal object PreviewDrawRequests {
                 scaleY = 1.0f,
                 offsetX = 0.0f,
                 offsetY = 0.0f,
-                ditherAmp = 0.0f
+                ditherAmp = 0.0f,
+                flipVerticalForScreen = false
             ),
             pixelScaleX = targetWidth,
             pixelScaleY = targetHeight
@@ -93,7 +95,8 @@ internal object PreviewDrawRequests {
         scaleY = 1.0f,
         offsetX = 0.0f,
         offsetY = 0.0f,
-        ditherAmp = ditherAmp
+        ditherAmp = ditherAmp,
+        flipVerticalForScreen = false
     )
 
     /** Letterbox scale of the frame inside the viewport, including the user's canvas zoom. */
@@ -110,7 +113,8 @@ internal object PreviewDrawRequests {
         scaleY: Float,
         offsetX: Float,
         offsetY: Float,
-        ditherAmp: Float
+        ditherAmp: Float,
+        flipVerticalForScreen: Boolean
     ): ExposureDrawParams {
         val state = request.state
         return ExposureDrawParams(
@@ -128,7 +132,8 @@ internal object PreviewDrawRequests {
             curveTextureId = curveTextureId,
             texelWidth = frame.texelWidth,
             texelHeight = frame.texelHeight,
-            ditherAmp = ditherAmp
+            ditherAmp = ditherAmp,
+            flipVerticalForScreen = flipVerticalForScreen
         )
     }
 }

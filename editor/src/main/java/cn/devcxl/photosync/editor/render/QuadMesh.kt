@@ -7,26 +7,42 @@ import java.nio.FloatBuffer
 import android.opengl.GLES20
 
 /**
- * The interleaved `[x, y, u, v]` triangle strip that every editor pass rasterizes.
+ * Vertical texture-coordinate mapping of a full-frame quad.
  *
- * Texture coordinates are flipped in `v` because bitmap rows are uploaded top-down while GL
- * texture space starts at the bottom-left corner.
+ * Every 2D texture in the editor (uploaded bitmaps, linear RAW buffers, `uWarpTex`, `uSkinMaskTex`,
+ * `uPrepassTex`, and every `OffscreenColorTarget` FBO) uses a **top-down** row layout where
+ * `v = 0` is the image top and `v = 1` is the image bottom:
+ * - [OFFSCREEN] maps FBO row 0 (`gl_Position.y = -1`) to `v = 0` and row `H - 1` (`y = +1`) to
+ *   `v = 1`, so any chain of 0..N offscreen FBO passes keeps the image strictly top-down without
+ *   ever flipping vertically.
+ * - [SCREEN] flips `v` once at final presentation onto the default framebuffer (`FBO 0`), where
+ *   `y = +1` is the top of the screen and must sample `v = 0`.
+ */
+internal enum class QuadOrientation {
+    OFFSCREEN,
+    SCREEN
+}
+
+/**
+ * The interleaved `[x, y, u, v]` triangle strip that every editor pass rasterizes.
  */
 internal class QuadMesh {
 
-    private val buffer: FloatBuffer = ByteBuffer
-        .allocateDirect(VERTICES.size * BYTES_PER_FLOAT)
-        .order(ByteOrder.nativeOrder())
-        .asFloatBuffer()
-        .apply {
-            put(VERTICES)
-            position(0)
-        }
+    private val offscreenBuffer: FloatBuffer = allocateBuffer(OFFSCREEN_VERTICES)
+    private val screenBuffer: FloatBuffer = allocateBuffer(SCREEN_VERTICES)
 
     /**
-     * Binds the position and texture-coordinate attributes and draws the strip.
+     * Binds the position and texture-coordinate attributes and draws the strip with [orientation].
      */
-    fun draw(positionLocation: Int, texCoordLocation: Int) {
+    fun draw(
+        positionLocation: Int,
+        texCoordLocation: Int,
+        orientation: QuadOrientation
+    ) {
+        val buffer = when (orientation) {
+            QuadOrientation.OFFSCREEN -> offscreenBuffer
+            QuadOrientation.SCREEN -> screenBuffer
+        }
         buffer.position(0)
         GLES20.glEnableVertexAttribArray(positionLocation)
         GLES20.glVertexAttribPointer(
@@ -52,7 +68,7 @@ internal class QuadMesh {
         GLES20.glDisableVertexAttribArray(texCoordLocation)
     }
 
-    private companion object {
+    internal companion object {
         private const val POSITION_COMPONENTS = 2
         private const val TEX_COORD_COMPONENTS = 2
         private const val COMPONENTS_PER_VERTEX = POSITION_COMPONENTS + TEX_COORD_COMPONENTS
@@ -60,11 +76,35 @@ internal class QuadMesh {
         private const val BYTES_PER_FLOAT = 4
         private const val STRIDE_BYTES = COMPONENTS_PER_VERTEX * BYTES_PER_FLOAT
 
-        private val VERTICES = floatArrayOf(
+        /** Identity FBO layout: `y = -1 -> v = 0` (image top), `y = +1 -> v = 1` (image bottom). */
+        private val OFFSCREEN_VERTICES = floatArrayOf(
+            -1.0f, -1.0f, 0.0f, 0.0f,
+            1.0f, -1.0f, 1.0f, 0.0f,
+            -1.0f, 1.0f, 0.0f, 1.0f,
+            1.0f, 1.0f, 1.0f, 1.0f
+        )
+
+        /** Default framebuffer presentation: `y = +1 -> v = 0` (top), `y = -1 -> v = 1` (bottom). */
+        private val SCREEN_VERTICES = floatArrayOf(
             -1.0f, -1.0f, 0.0f, 1.0f,
             1.0f, -1.0f, 1.0f, 1.0f,
             -1.0f, 1.0f, 0.0f, 0.0f,
             1.0f, 1.0f, 1.0f, 0.0f
         )
+
+        /** Returns a copy of the interleaved vertex data for [orientation] (for unit tests). */
+        internal fun verticesFor(orientation: QuadOrientation): FloatArray = when (orientation) {
+            QuadOrientation.OFFSCREEN -> OFFSCREEN_VERTICES.copyOf()
+            QuadOrientation.SCREEN -> SCREEN_VERTICES.copyOf()
+        }
+
+        private fun allocateBuffer(vertices: FloatArray): FloatBuffer = ByteBuffer
+            .allocateDirect(vertices.size * BYTES_PER_FLOAT)
+            .order(ByteOrder.nativeOrder())
+            .asFloatBuffer()
+            .apply {
+                put(vertices)
+                position(0)
+            }
     }
 }
