@@ -367,6 +367,7 @@ class PhotoPagerAdapter(
         private var compareBoundPath: String? = null
         private var compareBoundEnabled: Boolean = false
         private var showingOverride: Boolean = false
+        private var displayedBitmap: Bitmap? = null
 
         fun bind(
             path: String,
@@ -475,9 +476,23 @@ class PhotoPagerAdapter(
             if (!decision.shouldApplyImmediately) {
                 if (wasComparing) {
                     val restore = renderState.full ?: renderState.thumbnail
-                    if (restore != null) photoView.setImageBitmap(restore)
+                    if (restore != null) applyBitmap(path, decision.stage, restore)
                 }
-                if (decision.stage == PhotoRenderStage.FULL &&
+                val replacement = when (decision.stage) {
+                    PhotoRenderStage.FULL -> renderState.full
+                    PhotoRenderStage.THUMBNAIL -> renderState.thumbnail
+                    PhotoRenderStage.EMPTY -> null
+                }
+                if (currentPath == path && replacement != null && replacement !== displayedBitmap) {
+                    if (!isZoomed()) {
+                        pendingFullPath = null
+                        pendingFullBitmap = null
+                        applyBitmap(path, decision.stage, replacement)
+                    } else if (decision.stage == PhotoRenderStage.FULL) {
+                        pendingFullPath = path
+                        pendingFullBitmap = replacement
+                    }
+                } else if (decision.stage == PhotoRenderStage.FULL &&
                     renderState.full != null &&
                     currentPath == path
                 ) {
@@ -502,6 +517,7 @@ class PhotoPagerAdapter(
                 PhotoRenderStage.EMPTY -> {
                     pendingFullPath = null
                     pendingFullBitmap = null
+                    displayedBitmap = null
                     currentPath = path
                     currentStage = PhotoRenderStage.EMPTY
                     photoView.setImageDrawable(null)
@@ -636,6 +652,7 @@ class PhotoPagerAdapter(
             if (bitmap == null) return
             currentPath = path
             currentStage = stage
+            displayedBitmap = bitmap
             photoView.setImageBitmap(bitmap)
         }
 

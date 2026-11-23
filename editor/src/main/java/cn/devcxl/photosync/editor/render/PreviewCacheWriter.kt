@@ -146,13 +146,13 @@ internal object PreviewCacheWriter {
         warpField: WarpDisplacementField?,
         lut: Lut3dSamples?,
         skinMask: FloatArray?
-    ): Bitmap? {
+    ): Bitmap {
         val sourceAspect = source.width.toFloat() / source.height.toFloat()
         val outputAspect = GeometryMath.outputAspect(graph.geometry, sourceAspect)
         val (width, height) = previewSize(outputAspect)
         val ca = graph.effects.ca
         val geometry = GeometryMath.buildPassAInverseMatrix(graph.geometry, sourceAspect)
-        val resampled = GeometryCpuResampler.resample(
+        val pixels = GeometryCpuResampler.resamplePixels(
             source = source,
             inverseMatrix = geometry,
             outputWidth = width,
@@ -161,28 +161,58 @@ internal object PreviewCacheWriter {
             caBlueK = GeometryMath.lateralCaKFromSlider(ca.blueYellow),
             warpField = warpField
         )
-        applyPassBToDisplayPixels(resampled, graph)
-        applyPassC(resampled, graph, minOf(source.width, source.height), skinMask)
-        applyPassDEffects(resampled, graph, lut)
-        return resampled
+        val graded = gradeDisplayPixels(
+            pixels = pixels,
+            width = width,
+            height = height,
+            graph = graph,
+            fullResolutionShortEdge = minOf(source.width, source.height),
+            lut = lut,
+            skinMask = skinMask
+        )
+        return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).apply {
+            setPixels(graded, 0, width, 0, 0, width, height)
+        }
     }
 
-    private fun applyPassC(
-        bitmap: Bitmap,
+    /**
+     * Runs Pass B + Pass C + Pass D on an ARGB [pixels] buffer without requiring an Android
+     * `Bitmap`, keeping the grading chain fast, mutable-safe, and directly JVM-testable.
+     */
+    internal fun gradeDisplayPixels(
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        graph: EditGraph,
+        fullResolutionShortEdge: Int,
+        lut: Lut3dSamples? = null,
+        skinMask: FloatArray? = null
+    ): IntArray {
+        applyPassBToPixels(pixels, width, height, graph)
+        val afterPassC = applyPassCToPixels(
+            pixels = pixels,
+            width = width,
+            height = height,
+            graph = graph,
+            fullResolutionShortEdge = fullResolutionShortEdge,
+            skinMask = skinMask
+        )
+        applyPassDEffectsToPixels(afterPassC, width, height, graph, lut)
+        return afterPassC
+    }
+
+    private fun applyPassCToPixels(
+        pixels: IntArray,
+        width: Int,
+        height: Int,
         graph: EditGraph,
         fullResolutionShortEdge: Int,
         skinMask: FloatArray?
-    ) {
-        if (SpatialDetailParams.from(graph).isZeroDrawCallShortCircuit &&
-            skinMask == null
-        ) {
-            return
+    ): IntArray {
+        if (SpatialDetailParams.from(graph).isZeroDrawCallShortCircuit && skinMask == null) {
+            return pixels
         }
-        val width = bitmap.width
-        val height = bitmap.height
-        val pixels = IntArray(width * height)
-        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
-        val detailed = PreviewDetailPass.apply(
+        return PreviewDetailPass.apply(
             pixels,
             width,
             height,
@@ -190,29 +220,25 @@ internal object PreviewCacheWriter {
             fullResolutionShortEdge = fullResolutionShortEdge,
             skinMask = skinMask
         )
-        bitmap.setPixels(detailed, 0, width, 0, 0, width, height)
     }
 
-    private fun applyPassDEffects(bitmap: Bitmap, graph: EditGraph, lut: Lut3dSamples?) {
-        val params = PassDEffectsParams.from(graph, bitmap.width.toFloat() / bitmap.height.toFloat())
+    private fun applyPassDEffectsToPixels(
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        graph: EditGraph,
+        lut: Lut3dSamples?
+    ) {
+        val params = PassDEffectsParams.from(graph, width.toFloat() / height.toFloat().coerceAtLeast(1.0f))
         if (params.isIdentity) return
-        val width = bitmap.width
-        val height = bitmap.height
-        val pixels = IntArray(width * height)
-        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
         PassDEffectsMath.applyDisplayEffects(pixels, width, height, params, lut)
-        bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
     }
 
-    private fun applyPassBToDisplayPixels(bitmap: Bitmap, graph: EditGraph) {
+    private fun applyPassBToPixels(pixels: IntArray, width: Int, height: Int, graph: EditGraph) {
         val toneParams = ToneShaderParams.from(graph)
         val colorParams = ColorGradingParams.from(graph)
         if (toneParams.isIdentity && colorParams.isIdentity) return
         val curveLut = if (colorParams.hasCurve) CurveLutBuilder.buildFloatLut(graph.color.curve) else null
-        val width = bitmap.width
-        val height = bitmap.height
-        val pixels = IntArray(width * height)
-        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
         val lumaMap = if (colorParams.defringe > 0.0f) buildLumaMap(pixels) else null
         val linear = FloatArray(CHANNELS_RGB)
         val display = FloatArray(CHANNELS_RGB)
@@ -226,7 +252,6 @@ internal object PreviewCacheWriter {
             PassBColorMath.apply(toneParams, colorParams, curveLut, linear, display, grad, scratch)
             pixels[index] = Srgb8Packer.packRgb(display[0], display[1], display[2], alphaBits = pixel)
         }
-        bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
     }
 
     private fun buildLumaMap(pixels: IntArray): FloatArray = FloatArray(pixels.size) { i ->

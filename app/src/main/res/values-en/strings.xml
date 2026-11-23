@@ -105,6 +105,7 @@
     <string name="quick_strip_collapse">▾ Hide Presets</string>
     <string name="quick_strip_no_preset">None</string>
     <string name="quick_strip_live_tether">⚡ Live Tether</string>
+    <string name="quick_strip_live_tether_active">⚡ Live·%1$s</string>
     <string name="quick_strip_copy">Copy</string>
     <string name="quick_strip_paste">Paste</string>
     <string name="quick_strip_select">Select</string>
@@ -115,10 +116,14 @@
     <string name="quick_strip_pasted">Pasted edits to %1$d photos</string>
     <string name="quick_strip_paste_empty">Clipboard is empty; copy edits first</string>
     <string name="quick_strip_paste_unchanged">Target photos already match these edits</string>
-    <string name="quick_strip_live_tether_on">Live Tether Preset enabled</string>
-    <string name="quick_strip_live_tether_off">Live Tether Preset disabled</string>
+    <string name="quick_strip_preset_applied_named">Applied \"%1$s\" to current photo</string>
+    <string name="quick_strip_preset_cleared">Cleared preset on current photo</string>
+    <string name="quick_strip_apply_failed">Failed to apply preset</string>
+    <string name="quick_strip_live_tether_on">Live Tether on: new synced photos will use \"%1$s\"</string>
+    <string name="quick_strip_live_tether_off">Live Tether auto-apply turned off</string>
     <string name="quick_strip_live_tether_needs_preset">Pick a preset to enable Live Tether</string>
-    <string name="quick_strip_live_picker_title">Choose Live Tether Preset</string>
+    <string name="quick_strip_live_picker_title">Live Tether Preset (Auto-grade New Photos)</string>
+    <string name="quick_strip_live_picker_turn_off">Turn Off Live Tether</string>
     <string name="quick_strip_menu_set_live">Set as Live Tether Preset</string>
     <string name="quick_strip_menu_clear_live">Clear Live Tether Preset</string>
     <string name="quick_strip_selected_count">%1$d selected</string>

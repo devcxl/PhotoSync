@@ -39,6 +39,35 @@ internal object GeometryCpuResampler {
     ): Bitmap {
         val width = outputWidth.coerceAtLeast(1)
         val height = outputHeight.coerceAtLeast(1)
+        val pixels = resamplePixels(
+            source = source,
+            inverseMatrix = inverseMatrix,
+            outputWidth = width,
+            outputHeight = height,
+            caRedK = caRedK,
+            caBlueK = caBlueK,
+            warpField = warpField
+        )
+        return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).apply {
+            setPixels(pixels, 0, width, 0, 0, width, height)
+        }
+    }
+
+    /**
+     * Resamples an 8-bit sRGB [source] bitmap into a freshly allocated ARGB [IntArray] so
+     * downstream CPU passes (Pass B / C / D) can mutate pixels in place without extra bitmap copies.
+     */
+    fun resamplePixels(
+        source: Bitmap,
+        inverseMatrix: Mat3,
+        outputWidth: Int,
+        outputHeight: Int,
+        caRedK: Float,
+        caBlueK: Float,
+        warpField: WarpDisplacementField? = null
+    ): IntArray {
+        val width = outputWidth.coerceAtLeast(1)
+        val height = outputHeight.coerceAtLeast(1)
         val sourceWidth = source.width
         val sourceHeight = source.height
         val sourcePixels = IntArray(sourceWidth * sourceHeight)
@@ -64,7 +93,7 @@ internal object GeometryCpuResampler {
                 )
             }
         }
-        return Bitmap.createBitmap(targetPixels, width, height, Bitmap.Config.ARGB_8888)
+        return targetPixels
     }
 
     /**

@@ -112,6 +112,7 @@
     <string name="quick_strip_collapse">▾ 收起快捷预设</string>
     <string name="quick_strip_no_preset">无预设</string>
     <string name="quick_strip_live_tether">⚡ 联机套用</string>
+    <string name="quick_strip_live_tether_active">⚡ 联机·%1$s</string>
     <string name="quick_strip_copy">复制参数</string>
     <string name="quick_strip_paste">粘贴参数</string>
     <string name="quick_strip_select">多选</string>
@@ -122,10 +123,14 @@
     <string name="quick_strip_pasted">已粘贴参数到 %1$d 张照片</string>
     <string name="quick_strip_paste_empty">剪贴板为空，请先复制参数</string>
     <string name="quick_strip_paste_unchanged">目标照片参数已一致，无需更改</string>
-    <string name="quick_strip_live_tether_on">已开启联机套用：新照片自动套用预设</string>
-    <string name="quick_strip_live_tether_off">已关闭联机套用</string>
+    <string name="quick_strip_preset_applied_named">已对当前照片套用「%1$s」</string>
+    <string name="quick_strip_preset_cleared">已清除当前照片预设</string>
+    <string name="quick_strip_apply_failed">预设应用失败</string>
+    <string name="quick_strip_live_tether_on">已开启联机套用：后续新拍同步照片将自动套用「%1$s」</string>
+    <string name="quick_strip_live_tether_off">已关闭联机自动套用</string>
     <string name="quick_strip_live_tether_needs_preset">请先选择一个预设开启联机套用</string>
-    <string name="quick_strip_live_picker_title">选择联机自动套用预设</string>
+    <string name="quick_strip_live_picker_title">联机自动套用（新拍照片自动调色）</string>
+    <string name="quick_strip_live_picker_turn_off">关闭联机自动套用</string>
     <string name="quick_strip_menu_set_live">设为联机预设</string>
     <string name="quick_strip_menu_clear_live">取消联机预设</string>
     <string name="quick_strip_live_badge" translatable="false">⚡ %1$s</string>

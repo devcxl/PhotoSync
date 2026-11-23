@@ -61,8 +61,13 @@ internal class TetheredDarkroomHost(
     /**
      * Renders the preview cache and persists [graph] for [photoId].
      */
-    fun applyPreset(photoId: Long, graph: EditGraph) {
-        persistWithRenderedPreview(photoId, graph)
+    fun applyPreset(photoId: Long, graph: EditGraph, presetName: String?) {
+        val successMessage = if (presetName != null) {
+            context.getString(R.string.quick_strip_preset_applied_named, presetName)
+        } else {
+            context.getString(R.string.quick_strip_preset_cleared)
+        }
+        persistWithRenderedPreview(photoId, graph, successFeedback = successMessage)
     }
 
     /**
@@ -168,7 +173,8 @@ internal class TetheredDarkroomHost(
     private fun persistWithRenderedPreview(
         photoId: Long,
         graph: EditGraph,
-        cloneLiquify: Boolean = false
+        cloneLiquify: Boolean = false,
+        successFeedback: String? = null
     ) {
         val currentStore = store ?: return
         scope.launch {
@@ -176,8 +182,9 @@ internal class TetheredDarkroomHost(
             withContext(Dispatchers.Main) {
                 if (saved) {
                     onGraphPersisted(photoId)
+                    if (successFeedback != null) onFeedback(successFeedback)
                 } else {
-                    onFeedback(context.getString(R.string.toast_save_failed))
+                    onFeedback(context.getString(R.string.quick_strip_apply_failed))
                 }
             }
         }

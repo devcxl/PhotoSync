@@ -156,19 +156,19 @@ internal class TetheredDarkroomCoordinator(
         BatchBakeState.CANCELLED -> context.getString(R.string.batch_bake_cancelled)
     }
 
-    private fun setLiveTetherPreset(presetId: String?) {
+    private fun setLiveTetherPreset(presetId: String?, presetName: String?) {
         val store = EditorHostRegistry.editStore
         if (store == null || (presetId == null && store.getLiveTetherPresetId() == null)) {
             onFeedback(context.getString(R.string.quick_strip_live_tether_needs_preset))
             return
         }
         store.setLiveTetherPresetId(presetId)
-        val messageRes = if (presetId == null) {
-            R.string.quick_strip_live_tether_off
+        val message = if (presetId == null) {
+            context.getString(R.string.quick_strip_live_tether_off)
         } else {
-            R.string.quick_strip_live_tether_on
+            context.getString(R.string.quick_strip_live_tether_on, presetName ?: presetId)
         }
-        onFeedback(context.getString(messageRes))
+        onFeedback(message)
     }
 
     /** Public entry for the filmstrip's selection callback. */
@@ -182,10 +182,11 @@ internal class TetheredDarkroomCoordinator(
     }
 
     private inner class QuickStripHost : TetheredQuickStripController.Host {
-        override fun onQuickPresetSelected(photoId: Long, graph: EditGraph) =
-            darkroom.applyPreset(photoId, graph)
+        override fun onQuickPresetSelected(photoId: Long, graph: EditGraph, presetName: String?) =
+            darkroom.applyPreset(photoId, graph, presetName)
 
-        override fun onLiveTetherToggled(presetId: String?) = setLiveTetherPreset(presetId)
+        override fun onLiveTetherToggled(presetId: String?, presetName: String?) =
+            setLiveTetherPreset(presetId, presetName)
 
         override fun onQuickCopyRequested() = darkroom.copyCurrent(includeChecklist = false)
 
