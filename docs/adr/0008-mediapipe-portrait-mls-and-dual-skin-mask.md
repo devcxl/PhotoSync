@@ -58,6 +58,10 @@
 
 MediaPipe 只在进入「人像」面板时跑一次（512px 代理），`Mutex` 串行化「首次分析」与「模型升级后重分析」，避免重复推理。滑杆变化只重算 MLS/美体网格（`Dispatchers.Default`，单张 64×64 MLS 求解 < 2 ms），`EditorPortraitHost` 用 `portrait.reshape/body` 的签名守卫把色调、色彩、几何拖杆完全排除在求解之外。
 
+MediaPipe Tasks 1.2.3 的 `BitmapImageBuilder` 包装原 Bitmap，关闭 `MPImage` 时会回收它。
+因此 `PortraitAnalyzer` 必须在推理前读取肤色门控所需像素，推理后不能再访问输入 Bitmap；
+调用方仍在 `finally` 中回收未被 MediaPipe 消耗的输入，以覆盖初始化失败等路径。
+
 ### 10. UI 与撤销边界
 
 - `EditorGroup.PORTRAIT` 下三个工具、三个撤销桶：`PORTRAIT_SKIN`、`PORTRAIT_RESHAPE`、`PORTRAIT_BODY`（含腰线/髋线拖动）。
@@ -73,6 +77,7 @@ MediaPipe 只在进入「人像」面板时跑一次（512px 代理），`Mutex`
 | 三源逐格相加、半精度上传契约 | `PortraitWarpComposerTest` |
 | 眉眼唇保护、在线/离线一致性、严格门控、频率分离与 `(1−mask)` 抑制 | `SkinMaskMathTest` |
 | SHA-256 不匹配拒绝并清理、Range 续传、服务端忽略 Range、已缓存复用 | `ModelDownloadManagerTest` |
+| MediaPipe 关闭 Bitmap 后仍能完成人像掩码生成 | `PortraitAnalyzerBitmapTest` |
 | Stage 0 计划顺序、无蒙版时丢弃、Portrait 工具/撤销桶隔离 | `SpatialDetailPlannerTest`、`PortraitToolCatalogTest` |
 
 ## 后果与风险

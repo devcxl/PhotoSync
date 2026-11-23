@@ -108,7 +108,10 @@ class MediaPipePortraitEngine(
         return true
     }
 
-    /** Runs the landmarker and the active segmenter on [bitmap]. */
+    /**
+     * Runs the landmarker and the active segmenter on [bitmap].
+     * Closing the MediaPipe image recycles [bitmap]; callers must not use it afterward.
+     */
     fun analyze(bitmap: Bitmap): PortraitEngineResult? {
         if (!ensureInitialized()) return null
         val image = BitmapImageBuilder(bitmap).build()

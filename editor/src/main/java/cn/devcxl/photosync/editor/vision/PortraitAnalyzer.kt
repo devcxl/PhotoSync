@@ -18,17 +18,22 @@ import cn.devcxl.photosync.editor.domain.SkinMaskMath
  * resolution; mapping it back to the frame is a plain normalized-coordinate transform, which the
  * CPU solvers and the `GL_R8` mask texture both understand.
  */
-class PortraitAnalyzer(private val engine: MediaPipePortraitEngine) {
+class PortraitAnalyzer internal constructor(private val analyzeImage: (Bitmap) -> PortraitEngineResult?) {
+
+    constructor(engine: MediaPipePortraitEngine) : this(engine::analyze)
 
     /**
      * Analyses [bitmap], which the caller should hand over at a modest proxy size (a 512 px long
-     * edge is plenty for a 256 px segmentation pass).
+     * edge is plenty for a 256 px segmentation pass). MediaPipe may recycle it during analysis;
+     * the caller must not use it afterward.
      *
      * @param body Persisted `portrait.body` values, so the returned guides already honour the
      *   user's dragged waist / hip lines.
      */
     fun analyze(bitmap: Bitmap, body: BodyOps = BodyOps()): PortraitAnalysis? {
-        val result = engine.analyze(bitmap)
+        // Closing MediaPipe's Bitmap-backed MPImage recycles the input, so read colours first.
+        val colours = readProxyColours(bitmap) ?: return null
+        val result = analyzeImage(bitmap)
         if (result == null) {
             Timber.w("Portrait analysis produced no result")
             return null
@@ -36,7 +41,6 @@ class PortraitAnalyzer(private val engine: MediaPipePortraitEngine) {
         val faces = FaceMlsSolver.selectFaces(
             result.faces.sortedByDescending { it.boundingBoxArea() }
         )
-        val colours = readProxyColours(bitmap) ?: return null
         val holeMask = SkinMaskMath.holeMask(faces)
         val masks = result.confidenceMasks
         val personMask = if (masks != null) personFromClasses(masks) else result.personMask
@@ -77,7 +81,8 @@ class PortraitAnalyzer(private val engine: MediaPipePortraitEngine) {
     }
 
     private fun readProxyColours(bitmap: Bitmap): FloatArray? {
-        val scaled = if (bitmap.width == MASK_SIZE && bitmap.height == MASK_SIZE && !bitmap.isRecycled) {
+        if (bitmap.isRecycled) return null
+        val scaled = if (bitmap.width == MASK_SIZE && bitmap.height == MASK_SIZE) {
             bitmap
         } else {
             Bitmap.createScaledBitmap(bitmap, MASK_SIZE, MASK_SIZE, true)
