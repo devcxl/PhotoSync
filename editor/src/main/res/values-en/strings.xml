@@ -245,6 +245,8 @@
 
     <!-- Built-in preset display names -->
     <string name="editor_preset_builtin_clean_portrait">Clean Portrait</string>
+    <string name="editor_portrait_analyzing">Analyzing portrait…</string>
+    <string name="editor_portrait_preview_unavailable">Portrait analysis failed. Portrait effects cannot be previewed.</string>
     <string name="editor_preset_builtin_film_chrome">Film Chrome</string>
     <string name="editor_preset_builtin_warm_sunset">Warm Sunset</string>
     <string name="editor_preset_builtin_cool_nordic">Cool Nordic</string>

@@ -227,6 +227,8 @@
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent">
 
+        <include android:id="@+id/portraitPreviewStatus" layout="@layout/editor_portrait_preview_status" />
+
         <!-- Tier 1: Parameter Header & DialSeekBar -->
         <LinearLayout
             android:layout_width="match_parent"

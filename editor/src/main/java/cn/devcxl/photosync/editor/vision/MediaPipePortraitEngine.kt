@@ -3,14 +3,12 @@ package cn.devcxl.photosync.editor.vision
 import java.io.File
 import java.io.FileInputStream
 import java.io.IOException
-import java.nio.ByteOrder
 import java.nio.channels.FileChannel
 
 import android.content.Context
 import android.graphics.Bitmap
 
 import com.google.mediapipe.framework.image.BitmapImageBuilder
-import com.google.mediapipe.framework.image.ByteBufferExtractor
 import com.google.mediapipe.framework.image.MPImage
 import com.google.mediapipe.tasks.components.containers.NormalizedLandmark
 import com.google.mediapipe.tasks.core.BaseOptions
@@ -54,7 +52,6 @@ class MediaPipePortraitEngine(
     private var faceLandmarker: FaceLandmarker? = null
     private var segmenter: ImageSegmenter? = null
     private var multiclassSegmenter: ImageSegmenter? = null
-    private var maskBuffer: FloatArray? = null
 
     /** True when both the landmarker and at least one segmenter are alive. */
     val isReady: Boolean
@@ -121,7 +118,9 @@ class MediaPipePortraitEngine(
             if (multiclass != null) {
                 PortraitEngineResult(
                     faces = faces,
-                    confidenceMasks = readConfidenceMasks(multiclass, image),
+                    confidenceMasks = readPortraitMasks(
+                        image, PortraitBundledModels.MULTICLASS_CHANNEL_COUNT, multiclass::segment
+                    ),
                     personMask = null,
                     usesMulticlass = true
                 )
@@ -129,7 +128,7 @@ class MediaPipePortraitEngine(
                 PortraitEngineResult(
                     faces = faces,
                     confidenceMasks = null,
-                    personMask = segmenter?.let { readPersonMask(it, image) },
+                    personMask = segmenter?.let { readPortraitMasks(image, 1, it::segment)?.single() },
                     usesMulticlass = false
                 )
             }
@@ -178,51 +177,6 @@ class MediaPipePortraitEngine(
             points[offset + 2] = landmark.z()
         }
         return FaceLandmarks(points)
-    }
-
-    private fun readConfidenceMasks(segmenter: ImageSegmenter, image: MPImage): List<FloatArray>? {
-        val result = segmenter.segment(image)
-        val masks = result.confidenceMasks().orElse(null) ?: return null
-        if (masks.size < PortraitBundledModels.MULTICLASS_CHANNEL_COUNT) {
-            Timber.w("Multiclass model returned %d masks; expected 6", masks.size)
-            return null
-        }
-        return masks.mapNotNull { maskImage -> readFloatMask(maskImage) }
-            .takeIf { it.size == PortraitBundledModels.MULTICLASS_CHANNEL_COUNT }
-    }
-
-    private fun readPersonMask(segmenter: ImageSegmenter, image: MPImage): FloatArray? {
-        val result = segmenter.segment(image)
-        val masks = result.confidenceMasks().orElse(null) ?: return null
-        return masks.firstOrNull()?.let { readFloatMask(it) }
-    }
-
-    /**
-     * Reads one `H x W` float mask.
-     *
-     * MediaPipe hands the masks out as `MPImage`s whose storage is a `float32` plane; the extractor
-     * is the only supported way to reach it and throws when the driver built a different layout, so
-     * a `null` here simply disables skin smoothing instead of crashing the editor.
-     */
-    private fun readFloatMask(maskImage: MPImage): FloatArray? {
-        return try {
-            val width = maskImage.width
-            val height = maskImage.height
-            if (width <= 0 || height <= 0) return null
-            val buffer = ByteBufferExtractor.extract(maskImage, MPImage.IMAGE_FORMAT_VEC32F1)
-            buffer.rewind()
-            val floats = buffer.order(ByteOrder.nativeOrder()).asFloatBuffer()
-            val required = width * height
-            if (floats.remaining() < required) return null
-            val reused = maskBuffer?.takeIf { it.size == required } ?: FloatArray(required).also {
-                maskBuffer = it
-            }
-            floats.get(reused, 0, required)
-            reused.copyOf()
-        } catch (e: RuntimeException) {
-            Timber.w(e, "A MediaPipe mask could not be read; skin smoothing stays disabled")
-            null
-        }
     }
 
     private fun createFaceLandmarker(delegate: Delegate): FaceLandmarker {

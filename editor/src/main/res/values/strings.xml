@@ -253,6 +253,8 @@
 
     <!-- Built-in preset display names -->
     <string name="editor_preset_builtin_clean_portrait">干净人像</string>
+    <string name="editor_portrait_analyzing">正在分析人像…</string>
+    <string name="editor_portrait_preview_unavailable">人像分析未完成，无法预览人像效果</string>
     <string name="editor_preset_builtin_film_chrome">富士胶片</string>
     <string name="editor_preset_builtin_warm_sunset">暖阳日落</string>
     <string name="editor_preset_builtin_cool_nordic">冷调北欧</string>

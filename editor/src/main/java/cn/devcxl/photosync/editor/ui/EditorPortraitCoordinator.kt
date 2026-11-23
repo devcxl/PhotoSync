@@ -26,6 +26,8 @@ import cn.devcxl.photosync.editor.vision.MediaPipePortraitEngine
 import cn.devcxl.photosync.editor.vision.ModelDownloadManager
 import cn.devcxl.photosync.editor.vision.PortraitAnalyzer
 
+internal enum class PortraitPreviewStatus { Idle, Analyzing, Unavailable }
+
 /**
  * Owns the asynchronous Portrait work of one editor session:
  *
@@ -45,7 +47,8 @@ internal class EditorPortraitCoordinator(
     private val renderer: EditorGlRenderer,
     private val scope: CoroutineScope,
     private val currentGraph: () -> EditGraph,
-    private val onWarpsPublished: () -> Unit
+    private val onWarpsPublished: () -> Unit,
+    private val onPreviewStatus: (PortraitPreviewStatus) -> Unit
 ) {
 
     private val delegatePolicy = MediaPipeDelegatePolicy(context)
@@ -66,6 +69,7 @@ internal class EditorPortraitCoordinator(
     private var downloadJob: Job? = null
     private var analysisJob: Job? = null
     private var warpJob: Job? = null
+    private var analysisRequested = false
     private var released = false
 
     /** The live analysis, or `null` while the first pass is still running. */
@@ -79,9 +83,16 @@ internal class EditorPortraitCoordinator(
      * for [source] if it has not happened yet.
      */
     fun onPortraitEntered(source: EditorSource?) {
-        this.source = source
+        if (analysisRequested && analysis == null) startAnalysis() else requestAnalysis(source)
         startDownload()
-        if (source != null && analysis == null) startAnalysis()
+    }
+
+    /** Starts the bundled analysis even when a preset or a saved graph is shown outside the Portrait tab. */
+    fun requestAnalysis(source: EditorSource?) {
+        if (source == null || analysisRequested || released) return
+        this.source = source
+        analysisRequested = true
+        startAnalysis()
     }
 
     /**
@@ -152,7 +163,7 @@ internal class EditorPortraitCoordinator(
     }
 
     private fun startAnalysis() {
-        if (analysisJob?.isActive == true) return
+        if (released || analysisJob?.isActive == true) return
         analysisJob = scope.launch {
             analysisMutex.withLock {
                 if (released) return@withLock
@@ -162,6 +173,7 @@ internal class EditorPortraitCoordinator(
     }
 
     private suspend fun analyzeLocked() {
+        if (analysis == null) onPreviewStatus(PortraitPreviewStatus.Analyzing)
         try {
             val bitmap = withContext(Dispatchers.Default) { analysisBitmap() } ?: return
             val result = withContext(Dispatchers.Default) {
@@ -177,32 +189,18 @@ internal class EditorPortraitCoordinator(
             }
             analysis = result
             renderer.setSkinMask(result.skinMask)
-            applyCurrentWarps(result)
             onWarpsPublished()
+            // Use the same cancellable solve as slider updates, so an older solve cannot replace a newer drag.
+            onGraphChanged(currentGraph())
         } finally {
+            if (!released) {
+                val status = if (analysis == null) PortraitPreviewStatus.Unavailable else PortraitPreviewStatus.Idle
+                onPreviewStatus(status)
+            }
             if (parkedRelease.getAndSet(false)) {
                 engine.release()
             }
         }
-    }
-
-    /**
-     * Solves the meshes for the sliders that are already non-neutral and publishes them.
-     *
-     * Runs on [Dispatchers.Default]: a five-face MLS solve is cheap but not free, and it must never
-     * land on the frame the editor is about to draw.
-     */
-    private suspend fun applyCurrentWarps(current: PortraitAnalysis) {
-        val graph = currentGraph()
-        val reshape = graph.portrait.reshape
-        val body = graph.portrait.body
-        val faceWarp = withContext(Dispatchers.Default) {
-            if (reshape.isIdentity()) null else current.faceWarp(reshape)
-        }
-        val bodyWarp = withContext(Dispatchers.Default) {
-            if (body.isIdentity()) null else current.bodyWarp(body)
-        }
-        renderer.setPortraitWarp(faceWarp, bodyWarp)
     }
 
     private fun analysisBitmap(): Bitmap? {

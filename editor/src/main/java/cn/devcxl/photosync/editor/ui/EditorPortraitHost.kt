@@ -31,6 +31,7 @@ internal class EditorPortraitHost(
     private val panelProvider: () -> EditorPanelController,
     private val sourceProvider: () -> EditorSource?,
     onWarpsPublished: () -> Unit,
+    onPreviewStatus: (PortraitPreviewStatus) -> Unit,
     private val onGraphEdited: () -> Unit,
     private val onGraphCommitted: () -> Unit
 ) {
@@ -41,7 +42,8 @@ internal class EditorPortraitHost(
         renderer = renderer,
         scope = scope,
         currentGraph = { undoController.currentGraph },
-        onWarpsPublished = onWarpsPublished
+        onWarpsPublished = onWarpsPublished,
+        onPreviewStatus = onPreviewStatus
     )
 
     private var lastGroup: EditorGroup? = null
@@ -99,6 +101,7 @@ internal class EditorPortraitHost(
      * The signature guard keeps a tone or colour drag from paying for an MLS solve.
      */
     fun syncWarps(graph: EditGraph) {
+        if (!graph.portrait.isIdentity()) coordinator.requestAnalysis(sourceProvider())
         val signature = 31 * graph.portrait.reshape.hashCode() + graph.portrait.body.hashCode()
         if (signature == lastSignature) return
         lastSignature = signature

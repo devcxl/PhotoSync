@@ -138,6 +138,7 @@ class EditorActivity : AppCompatActivity(),
             panelProvider = { panel },
             sourceProvider = { previewSession.source },
             onWarpsPublished = { binding.glSurfaceView.requestRender() },
+            onPreviewStatus = ::renderPortraitPreviewStatus,
             onGraphEdited = { renderCoordinator.renderCurrentGraph(useProxy = true) },
             onGraphCommitted = {
                 renderCoordinator.renderCurrentGraph(useProxy = false)
@@ -340,6 +341,17 @@ class EditorActivity : AppCompatActivity(),
             renderCoordinator.renderCurrentGraph(useProxy = false)
             renderCoordinator.updateHistoryButtons()
         }
+    }
+
+    private fun renderPortraitPreviewStatus(status: PortraitPreviewStatus) {
+        val row = binding.portraitPreviewStatus
+        row.root.visibility = if (status == PortraitPreviewStatus.Idle) View.GONE else View.VISIBLE
+        row.portraitPreviewSpinner.visibility =
+            if (status == PortraitPreviewStatus.Analyzing) View.VISIBLE else View.GONE
+        row.portraitPreviewMessage.setText(
+            if (status == PortraitPreviewStatus.Unavailable) R.string.editor_portrait_preview_unavailable
+            else R.string.editor_portrait_analyzing
+        )
     }
 
     companion object {
