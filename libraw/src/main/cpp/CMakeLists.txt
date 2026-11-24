@@ -23,24 +23,31 @@ target_include_directories(lcms2_static PRIVATE
 
 target_compile_options(lcms2_static PRIVATE -O3)
 
+# --- LibRaw as an independent shared library for LGPL-2.1 §6 ------------------------------
+# LibRaw is LGPL-2.1 and must stay replaceable. Build it — with the MIT Little-CMS linked in
+# statically — as its own `libraw.so`, so a user can rebuild that library from the bundled
+# submodule and swap the file inside the APK without touching the JNI bridge.
 file(GLOB_RECURSE LIBRAW_SOURCES "${LIBRAW_ROOT}/src/*.cpp")
 list(FILTER LIBRAW_SOURCES EXCLUDE REGEX ".*_ph\\.cpp$")
 
-add_library(libraw_static STATIC ${LIBRAW_SOURCES})
+add_library(raw SHARED ${LIBRAW_SOURCES})
 
-target_include_directories(libraw_static PUBLIC
+target_include_directories(raw PUBLIC
     ${LIBRAW_ROOT}/
     ${LIBRAW_ROOT}/libraw/
 )
-target_include_directories(libraw_static PRIVATE
+target_include_directories(raw PRIVATE
     ${LCMS2_ROOT}/include/
 )
-target_compile_definitions(libraw_static PRIVATE
-    LIBRAW_NODLL
+target_compile_definitions(raw PRIVATE
     USE_LCMS2
 )
-target_compile_options(libraw_static PRIVATE -O3 -fopenmp)
-target_link_libraries(libraw_static PRIVATE lcms2_static)
+target_compile_options(raw PRIVATE -O3 -fopenmp)
+# Static OpenMP inside libraw.so, with its runtime symbols exported: libraw_wrapper.so calls
+# __kmpc_* too, and resolving them from libraw.so keeps exactly one OpenMP thread pool in the
+# process. A dynamic libomp.so would work as well, but AGP does not package the NDK's copy.
+target_link_options(raw PRIVATE -fopenmp -static-openmp)
+target_link_libraries(raw PRIVATE lcms2_static)
 
 # --- libjpeg-turbo (static, ARM NEON SIMD) ------------------------------------------------
 # Upstream refuses add_subdirectory() integration (CMakeLists.txt:69-71), so the encoder is
@@ -96,19 +103,17 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     ${LIBRAW_ROOT}/libraw/
 )
-target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
-    LIBRAW_NODLL
-)
 target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE -O3 -fopenmp)
-target_link_options(${CMAKE_PROJECT_NAME} PRIVATE -fopenmp -static-openmp -Wl,--exclude-libs,ALL)
+# OpenMP pragmas compile against libraw.so's runtime, but nothing is linked here: the __kmpc_*
+# symbols resolve through the libraw.so dependency, so the process keeps a single thread pool.
+target_link_options(${CMAKE_PROJECT_NAME} PRIVATE -Wl,--exclude-libs,ALL)
 
 find_library(log_lib log)
 find_library(android_lib android)
 find_library(jnigraphics_lib jnigraphics)
 
 target_link_libraries(${CMAKE_PROJECT_NAME}
-    libraw_static
-    lcms2_static
+    raw
     jpeg_static
     ${log_lib}
     ${android_lib}

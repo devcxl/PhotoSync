@@ -103,5 +103,6 @@ Release AAB is at `app/build/outputs/bundle/release/app-release.aab`.
 
 ## License
 
-Released under the [MIT license](LICENSE). Third-party components (LibRaw, Little CMS) keep
-their own licenses; see the license files under `libraw/src/main/cpp/third_party/`.
+Released under the [MIT license](LICENSE). Third-party components (LibRaw, Little CMS,
+libjpeg-turbo and others) keep their own licenses; the full notices, source locations and the
+LibRaw (LGPL-2.1) replacement instructions live in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

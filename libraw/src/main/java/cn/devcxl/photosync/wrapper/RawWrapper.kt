@@ -7,6 +7,11 @@ import android.util.Log
 object RawWrapper {
     private const val TAG = "RawWrapper"
     init {
+        // libraw.so is the independently replaceable LGPL-2.1 component; c++_shared and libomp are
+        // its runtime dependencies. Load them explicitly in dependency order: some vendor system
+        // loaders do not resolve DT_NEEDED from the app's nativeLibraryDir early enough.
+        System.loadLibrary("c++_shared")
+        System.loadLibrary("raw")
         System.loadLibrary("raw_wrapper")
     }
 

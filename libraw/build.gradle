@@ -17,8 +17,9 @@ android {
         externalNativeBuild {
             cmake {
                 cppFlags "-std=c++17"
-                // 使用静态 STL，避免与 OpenCV 的 libc++_shared.so 冲突
-                arguments "-DANDROID_STL=c++_static"
+                // libraw.so and libraw_wrapper.so pass C++ objects across the .so boundary, so
+                // both must share one STL runtime instead of embedding a private static copy.
+                arguments "-DANDROID_STL=c++_shared"
             }
         }
     }
