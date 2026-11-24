@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/detailPanelsRoot"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="4dp"
+    android:visibility="gone">
+
+    <cn.devcxl.photosync.editor.ui.widgets.SharpenPanelView
+        android:id="@+id/sharpenPanelView"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:visibility="gone" />
+
+    <cn.devcxl.photosync.editor.ui.widgets.NoiseReductionPanelView
+        android:id="@+id/noiseReductionPanelView"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:visibility="gone" />
+
+</FrameLayout>

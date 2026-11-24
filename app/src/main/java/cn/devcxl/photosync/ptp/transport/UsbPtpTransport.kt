@@ -9,6 +9,8 @@ import android.hardware.usb.UsbManager
 import cn.devcxl.photosync.ptp.protocol.PtpContainer
 import cn.devcxl.photosync.ptp.protocol.PtpContainerHeader
 import cn.devcxl.photosync.ptp.protocol.PtpTransportException
+import kotlinx.coroutines.delay
+import timber.log.Timber
 
 /**
  * PTP-over-USB transport for one device.
@@ -37,6 +39,24 @@ internal class UsbPtpTransport private constructor(
     ) { dest, offset, length, timeoutMs ->
         connection.bulkTransfer(bulkIn, dest, offset, length, timeoutMs)
     }
+
+    private val recoveryControl = PtpRecoveryControl(
+        PtpControlTransfer { requestType, request, buffer, length, timeoutMs ->
+            connection.controlTransfer(
+                requestType, request, 0, usbInterface.id, buffer, length, timeoutMs
+            )
+        }
+    )
+
+    private val recovery = PtpUsbRecovery(
+        recoveryControl = recoveryControl,
+        drain = { drainPendingInput() },
+        reset = ::sendClassDeviceReset,
+        clearHalt = {
+            clearHalt(bulkOut)
+            clearHalt(bulkIn)
+        },
+    )
 
     override fun writeContainer(bytes: ByteArray) {
         var written = 0
@@ -84,9 +104,25 @@ internal class UsbPtpTransport private constructor(
 
     override fun openBody(length: Int): PtpBody = BulkBody(length)
 
-    override fun resetDevice() {
-        bulkReader.clear()
-        connection.controlTransfer(
+    override fun drainPendingInput(): Int {
+        val drained = bulkReader.drain(
+            timeoutMs = DRAIN_TIMEOUT_MS,
+            maxBytes = MAX_DRAIN_BYTES,
+            maxDurationMs = MAX_DRAIN_DURATION_MS,
+        )
+        if (drained > 0) {
+            Timber.w("Drained %d stale bytes from USB Bulk-IN pipe", drained)
+        }
+        return drained
+    }
+
+    override fun resetDevice() = recovery.resetDevice()
+
+    override fun cancelAndResetDevice(transactionId: Int?) =
+        recovery.cancelAndResetDevice(transactionId)
+
+    private fun sendClassDeviceReset() {
+        val result = connection.controlTransfer(
             // bmRequestType: host-to-device, class, interface recipient (0x21) per USB
             // Still Image Capture Class Spec 1.0 section 5.1.
             UsbConstants.USB_DIR_OUT or UsbConstants.USB_TYPE_CLASS or RECIPIENT_INTERFACE,
@@ -97,10 +133,9 @@ internal class UsbPtpTransport private constructor(
             0,
             COMMAND_TIMEOUT_MS,
         )
-        // The reset should have cleared these already, but a halt that survives it would
-        // break every later transfer, and clearing one costs a single control request.
-        clearHalt(bulkOut)
-        clearHalt(bulkIn)
+        if (result < 0) {
+            Timber.w("PTP DeviceReset (0x66) control transfer returned %d", result)
+        }
     }
 
     override fun close() {
@@ -116,8 +151,8 @@ internal class UsbPtpTransport private constructor(
      * by value 0.
      */
     private fun clearHalt(endpoint: UsbEndpoint) {
-        runCatching {
-            connection.controlTransfer(
+        try {
+            val result = connection.controlTransfer(
                 // bmRequestType: host-to-device, standard, endpoint recipient. UsbConstants
                 // exposes the direction and type bits but no recipient constants.
                 RECIPIENT_ENDPOINT,
@@ -128,6 +163,9 @@ internal class UsbPtpTransport private constructor(
                 0,
                 COMMAND_TIMEOUT_MS,
             )
+            if (result < 0) Timber.w("PTP clear endpoint halt failed (result=%d)", result)
+        } catch (error: RuntimeException) {
+            Timber.w(error, "PTP clear endpoint halt failed")
         }
     }
 
@@ -157,6 +195,9 @@ internal class UsbPtpTransport private constructor(
          */
         private const val COMMAND_TIMEOUT_MS = 5_000
         private const val DATA_TIMEOUT_MS = 15_000
+        private const val DRAIN_TIMEOUT_MS = 50
+        private const val MAX_DRAIN_BYTES = 8 * 1024 * 1024
+        private const val MAX_DRAIN_DURATION_MS = 1_500L
         private const val READ_CHUNK_BYTES = 16 * 1024
         private const val MAX_DATASET_BYTES = 16 * 1024 * 1024
 
@@ -168,12 +209,45 @@ internal class UsbPtpTransport private constructor(
         private const val INTERFACE_CLASS_STILL_IMAGE = 6
 
         /**
+         * Delays before re-opening a device, in order. A killed process can leave the USB service
+         * releasing the old connection for a moment; the whole budget stays below one second so a
+         * genuinely missing permission still fails fast.
+         */
+        private val OPEN_RETRY_DELAYS_MS = longArrayOf(300L, 600L)
+
+        /**
          * Opens [device] and claims its PTP interface.
          *
+         * A process that was killed while a session was open can leave the USB service releasing
+         * the old file descriptor; opening immediately then fails with a null device or a refused
+         * claim. Retrying with a short backoff reuses the same device instead of reporting a
+         * permanent connect failure that only a replug would clear.
+         *
          * @throws PtpTransportException when the device cannot be opened, exposes no usable
-         *   interface, or refuses to be claimed
+         *   interface, or refuses to be claimed on every attempt
          */
-        fun open(usbManager: UsbManager, device: UsbDevice): UsbPtpTransport {
+        suspend fun open(usbManager: UsbManager, device: UsbDevice): UsbPtpTransport {
+            var lastError: PtpTransportException? = null
+            for (attempt in OPEN_RETRY_DELAYS_MS.indices) {
+                try {
+                    return openOnce(usbManager, device)
+                } catch (e: PtpTransportException) {
+                    lastError = e
+                    if (attempt == OPEN_RETRY_DELAYS_MS.lastIndex) break
+                    Timber.w(
+                        e,
+                        "USB open attempt %d/%d failed; retrying in %dms",
+                        attempt + 1,
+                        OPEN_RETRY_DELAYS_MS.size,
+                        OPEN_RETRY_DELAYS_MS[attempt],
+                    )
+                    delay(OPEN_RETRY_DELAYS_MS[attempt])
+                }
+            }
+            throw lastError ?: PtpTransportException("Unable to open USB device ${device.deviceName}")
+        }
+
+        private fun openOnce(usbManager: UsbManager, device: UsbDevice): UsbPtpTransport {
             val connection = usbManager.openDevice(device)
                 ?: throw PtpTransportException("Unable to open USB device ${device.deviceName}")
 
@@ -269,6 +343,40 @@ internal class PtpBulkInReader(
         bufferEnd = 0
     }
 
+    /**
+     * Discards the buffered tail and drains unread packets until several consecutive empty reads
+     * or [maxBytes] / [maxDurationMs] is reached. A single USB timeout does not prove the device
+     * has finished sending an interrupted transfer; later bytes could otherwise corrupt the next
+     * container header.
+     *
+     * Every read submitted to [readUsb] stays packet-aligned so Android/Linux host controllers
+     * never fail the drain itself with `EOVERFLOW`.
+     */
+    fun drain(
+        timeoutMs: Int,
+        maxBytes: Int,
+        maxDurationMs: Long,
+        clockMs: () -> Long = { System.nanoTime() / 1_000_000L },
+    ): Int {
+        var totalDrained = bufferedCount
+        clear()
+        if (maxBytes <= 0) return totalDrained
+        val scratch = ByteArray(alignedChunkBytes)
+        val startedAt = clockMs()
+        var emptyReads = 0
+        while (totalDrained < maxBytes && (clockMs() - startedAt) < maxDurationMs) {
+            val got = readUsb(scratch, 0, scratch.size, timeoutMs)
+            if (got > 0) {
+                totalDrained += got
+                emptyReads = 0
+            } else {
+                emptyReads++
+                if (emptyReads >= MAX_DRAIN_EMPTY_READS) break
+            }
+        }
+        return totalDrained
+    }
+
     fun readHeader(timeoutMs: Int): PtpContainerHeader {
         val header = ByteArray(PtpContainer.HEADER_BYTES)
         var filled = drainBuffered(header, 0, header.size)
@@ -347,6 +455,7 @@ internal class PtpBulkInReader(
 
     private companion object {
         const val DEFAULT_READ_CHUNK_BYTES = 16 * 1024
+        const val MAX_DRAIN_EMPTY_READS = 3
         const val MAX_ZERO_PACKETS = 2
     }
 }

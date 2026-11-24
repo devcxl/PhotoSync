@@ -1,0 +1,263 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="editor_done">完成</string>
+    <string name="editor_undo">撤销</string>
+    <string name="editor_redo">重做</string>
+    <string name="editor_compare">对比</string>
+    <string name="editor_comparing_original">未编辑原图 (Before)</string>
+    <string name="editor_tab_preset">预设</string>
+    <string name="editor_tab_geometry">几何</string>
+    <string name="editor_tab_tone">影调</string>
+    <string name="editor_tab_color">色彩</string>
+    <string name="editor_tab_detail">细节</string>
+    <string name="editor_tab_portrait">人像</string>
+    <string name="editor_tool_exposure">曝光</string>
+    <string name="editor_tool_exposure_modified">曝光 •</string>
+    <string name="editor_exposure_value_fmt">%1$+.2f EV</string>
+    <string name="editor_double_tap_reset_hint">双击标签重置</string>
+    <string name="editor_tool_coming_soon">该工具组将在后续迭代开放</string>
+    <string name="editor_source_missing">源文件已清理，请重新连接相机同步</string>
+    <string name="editor_save_failed">保存编辑失败，请检查存储空间</string>
+    <string name="editor_export">导出</string>
+    <string name="editor_exporting">正在烘焙导出</string>
+    <string name="editor_exporting_detail">正在全分辨率渲染并写入系统相册，请稍候…</string>
+    <string name="editor_export_done">已导出成片到相册</string>
+    <string name="editor_export_failed">烘焙导出失败，请检查存储空间</string>
+    <string name="editor_export_no_sink">导出服务不可用，请回到主界面重试</string>
+    <string name="editor_base_look_label">RAW:</string>
+    <string name="editor_base_look_camera_default">默认观感</string>
+    <string name="editor_base_look_linear_neutral">线性中性</string>
+    <string name="editor_base_look_separator">|</string>
+
+    <!-- Geometry sub-tools -->
+    <string name="editor_tool_crop">裁切</string>
+    <string name="editor_tool_crop_modified">裁切 •</string>
+    <string name="editor_tool_straighten">拉直</string>
+    <string name="editor_tool_straighten_modified">拉直 •</string>
+    <string name="editor_tool_rotate90">旋转 90°</string>
+    <string name="editor_tool_rotate90_modified">旋转 90° •</string>
+    <string name="editor_tool_rotate_flip">旋转</string>
+    <string name="editor_tool_rotate_flip_modified">旋转 •</string>
+    <string name="editor_rotate_ccw">逆时针旋转 90°</string>
+    <string name="editor_rotate_cw">顺时针旋转 90°</string>
+    <string name="editor_rotate_reset">重置方向</string>
+    <string name="editor_orientation_flip_h_tag">水平翻转</string>
+    <string name="editor_orientation_flip_v_tag">垂直翻转</string>
+    <string name="editor_tool_flip_horizontal">水平翻转</string>
+    <string name="editor_tool_flip_horizontal_modified">水平翻转 •</string>
+    <string name="editor_tool_flip_vertical">垂直翻转</string>
+    <string name="editor_tool_flip_vertical_modified">垂直翻转 •</string>
+    <string name="editor_tool_perspective">透视</string>
+    <string name="editor_tool_perspective_modified">透视 •</string>
+
+    <!-- Tone sub-tools -->
+    <string name="editor_tool_brightness">亮度</string>
+    <string name="editor_tool_brightness_modified">亮度 •</string>
+    <string name="editor_tool_contrast">对比度</string>
+    <string name="editor_tool_contrast_modified">对比度 •</string>
+    <string name="editor_tool_highlights">高光</string>
+    <string name="editor_tool_highlights_modified">高光 •</string>
+    <string name="editor_tool_shadows">阴影</string>
+    <string name="editor_tool_shadows_modified">阴影 •</string>
+    <string name="editor_tool_whites">白色色阶</string>
+    <string name="editor_tool_whites_modified">白色色阶 •</string>
+    <string name="editor_tool_blacks">黑色色阶</string>
+    <string name="editor_tool_blacks_modified">黑色色阶 •</string>
+    <string name="editor_tool_glow">光感</string>
+    <string name="editor_tool_glow_modified">光感 •</string>
+
+    <!-- Colour sub-tools -->
+    <string name="editor_tool_temperature">色温</string>
+    <string name="editor_tool_temperature_modified">色温 •</string>
+    <string name="editor_tool_tint">色调</string>
+    <string name="editor_tool_tint_modified">色调 •</string>
+    <string name="editor_tool_saturation">饱和度</string>
+    <string name="editor_tool_saturation_modified">饱和度 •</string>
+    <string name="editor_tool_vibrance">自然饱和度</string>
+    <string name="editor_tool_vibrance_modified">自然饱和度 •</string>
+    <string name="editor_tool_curve">曲线</string>
+    <string name="editor_tool_curve_modified">曲线 •</string>
+    <string name="editor_tool_hsl" translatable="false">HSL</string>
+    <string name="editor_tool_hsl_modified">HSL •</string>
+    <string name="editor_tool_split_toning">色调分离</string>
+    <string name="editor_tool_split_toning_modified">色调分离 •</string>
+    <string name="editor_tool_fade">褪色</string>
+    <string name="editor_tool_fade_modified">褪色 •</string>
+
+    <!-- Curve editor -->
+    <string name="editor_curve_channel_rgb" translatable="false">RGB</string>
+    <string name="editor_curve_channel_r" translatable="false">R</string>
+    <string name="editor_curve_channel_g" translatable="false">G</string>
+    <string name="editor_curve_channel_b" translatable="false">B</string>
+    <string name="editor_curve_reset">重置曲线</string>
+    <string name="editor_value_curve_modified">已调整</string>
+    <string name="editor_value_curve_linear">线性</string>
+
+    <!-- HSL panel -->
+    <string name="editor_hsl_hue">色相</string>
+    <string name="editor_hsl_saturation">饱和度</string>
+    <string name="editor_hsl_luminance">明度</string>
+    <string name="editor_hsl_band_red">红</string>
+    <string name="editor_hsl_band_orange">橙</string>
+    <string name="editor_hsl_band_yellow">黄</string>
+    <string name="editor_hsl_band_green">绿</string>
+    <string name="editor_hsl_band_aqua">青</string>
+    <string name="editor_hsl_band_blue">蓝</string>
+    <string name="editor_hsl_band_purple">紫</string>
+    <string name="editor_hsl_band_magenta">洋红</string>
+    <string name="editor_value_hsl_modified">已调色</string>
+    <string name="editor_value_hsl_none">—</string>
+
+    <!-- Split toning panel -->
+    <string name="editor_split_highlights">高光</string>
+    <string name="editor_split_shadows">阴影</string>
+    <string name="editor_split_hue">色相</string>
+    <string name="editor_split_saturation">饱和度</string>
+    <string name="editor_split_balance">平衡</string>
+    <string name="editor_value_split_modified">已着色</string>
+    <string name="editor_value_split_none">—</string>
+
+    <!-- Detail sub-tools -->
+    <string name="editor_tool_clarity">清晰度</string>
+    <string name="editor_tool_clarity_modified">清晰度 •</string>
+    <string name="editor_tool_texture">纹理</string>
+    <string name="editor_tool_texture_modified">纹理 •</string>
+    <string name="editor_tool_dehaze">去雾</string>
+    <string name="editor_tool_dehaze_modified">去雾 •</string>
+    <string name="editor_tool_sharpen">锐化</string>
+    <string name="editor_tool_sharpen_modified">锐化 •</string>
+    <string name="editor_tool_noise_reduction">降噪</string>
+    <string name="editor_tool_noise_reduction_modified">降噪 •</string>
+    <string name="editor_sharpen_amount">数量</string>
+    <string name="editor_sharpen_radius">半径</string>
+    <string name="editor_sharpen_threshold">阈值</string>
+    <string name="editor_sharpen_masking">蒙版</string>
+    <string name="editor_nr_luma">明亮度</string>
+    <string name="editor_nr_chroma">颜色</string>
+    <string name="editor_nr_detail">细节</string>
+    <string name="editor_value_sharpen_modified">已锐化</string>
+    <string name="editor_value_nr_modified">已降噪</string>
+    <string name="editor_tool_ca_red_cyan">色散 R/C</string>
+    <string name="editor_tool_ca_red_cyan_modified">色散 R/C •</string>
+    <string name="editor_tool_ca_blue_yellow">色散 B/Y</string>
+    <string name="editor_tool_ca_blue_yellow_modified">色散 B/Y •</string>
+    <string name="editor_tool_defringe">去紫边</string>
+    <string name="editor_tool_defringe_modified">去紫边 •</string>
+    <string name="editor_tool_grain">颗粒</string>
+    <string name="editor_tool_grain_modified">颗粒 •</string>
+    <string name="editor_tool_vignette">晕影</string>
+    <string name="editor_tool_vignette_modified">晕影 •</string>
+
+    <!-- 3D LUT sub-tool and panel -->
+    <string name="editor_tool_lut" translatable="false">3D LUT</string>
+    <string name="editor_tool_lut_modified" translatable="false">3D LUT •</string>
+    <string name="editor_lut_import">＋ 导入 .cube</string>
+    <string name="editor_lut_none">无</string>
+    <string name="editor_lut_strength">强度</string>
+    <string name="editor_lut_importing">正在导入 LUT…</string>
+    <string name="editor_lut_imported">已导入 LUT</string>
+    <string name="editor_lut_import_failed">LUT 导入失败，请重新选择 .cube 文件</string>
+    <string name="editor_value_lut_modified">已应用</string>
+    <string name="editor_value_lut_none">—</string>
+    <string name="editor_value_preset_modified">已套用</string>
+
+    <!-- Film grain panel -->
+    <string name="editor_grain_amount">数量</string>
+    <string name="editor_grain_size">大小</string>
+    <string name="editor_grain_roughness">粗糙度</string>
+
+    <!-- Post-crop vignette panel -->
+    <string name="editor_vignette_amount">数量</string>
+    <string name="editor_vignette_midpoint">中点</string>
+    <string name="editor_vignette_feather">羽化</string>
+    <string name="editor_vignette_roundness">圆度</string>
+
+    <!-- Liquify tool -->
+    <string name="editor_tool_liquify">液化</string>
+    <string name="editor_tool_liquify_modified">液化 •</string>
+    <string name="editor_liquify_mode_push">推拉</string>
+    <string name="editor_liquify_mode_restore">恢复</string>
+    <string name="editor_liquify_size_label">笔刷大小</string>
+    <string name="editor_liquify_strength_label">强度</string>
+    <string name="editor_liquify_reset">重置液化</string>
+    <string name="editor_value_liquify_modified">已涂抹</string>
+    <string name="editor_value_liquify_none">—</string>
+
+    <!-- Portrait group -->
+    <string name="editor_tool_skin_smooth">美肤</string>
+    <string name="editor_tool_skin_smooth_modified">美肤 •</string>
+    <string name="editor_tool_face_reshape">面部重塑</string>
+    <string name="editor_tool_face_reshape_modified">面部重塑 •</string>
+    <string name="editor_tool_body_reshape">美体</string>
+    <string name="editor_tool_body_reshape_modified">美体 •</string>
+    <string name="editor_skin_smooth">平滑</string>
+    <string name="editor_skin_texture">纹理</string>
+    <string name="editor_skin_even_tone">匀肤</string>
+    <string name="editor_reshape_face">瘦脸</string>
+    <string name="editor_reshape_eyes">大眼</string>
+    <string name="editor_reshape_nose">缩鼻</string>
+    <string name="editor_reshape_chin">下巴</string>
+    <string name="editor_reshape_forehead">额头</string>
+    <string name="editor_reshape_smile">微笑</string>
+    <string name="editor_body_waist">瘦腰</string>
+    <string name="editor_body_legs">拉腿</string>
+    <string name="editor_value_skin_modified">已磨皮</string>
+    <string name="editor_value_reshape_modified">已重塑</string>
+    <string name="editor_value_body_modified">已塑形</string>
+
+    <!-- Value formats -->
+    <string name="editor_value_degrees_fmt">%1$+.1f°</string>
+    <string name="editor_value_plain_degrees_fmt">%1$.0f°</string>
+    <string name="editor_value_signed_fmt">%1$+.0f</string>
+    <string name="editor_value_unsigned_fmt">%1$.0f</string>
+    <string name="editor_value_aspect_fmt">%1$.2f : 1</string>
+    <string name="editor_value_radius_fmt">%1$.1f px</string>
+    <string name="editor_value_scalar_none">—</string>
+    <string name="editor_value_on">开</string>
+    <string name="editor_value_off">关</string>
+
+    <!-- Aspect-ratio lock chips -->
+    <string name="editor_aspect_free">自由</string>
+    <string name="editor_aspect_original">原比例</string>
+    <string name="editor_aspect_square">1:1</string>
+    <string name="editor_aspect_four_three">4:3</string>
+    <string name="editor_aspect_sixteen_nine">16:9</string>
+
+    <!-- Preset panel -->
+    <string name="editor_tool_preset">预设</string>
+    <string name="editor_tool_preset_modified">预设 •</string>
+    <string name="editor_preset_save_current">＋ 保存当前为预设</string>
+    <string name="editor_preset_none">无预设</string>
+    <string name="editor_preset_saved">已保存预设「%1$s」</string>
+    <string name="editor_preset_save_failed">预设保存失败，请检查存储空间</string>
+    <string name="editor_preset_save_title">保存为预设</string>
+    <string name="editor_preset_save_hint">输入预设名称</string>
+    <string name="editor_preset_rename_title">重命名预设</string>
+    <string name="editor_preset_menu_rename">重命名</string>
+    <string name="editor_preset_menu_delete">删除</string>
+    <string name="editor_preset_menu_set_live">设为联机预设</string>
+    <string name="editor_preset_menu_clear_live">取消联机预设</string>
+    <string name="editor_preset_delete_title">删除预设「%1$s」？</string>
+    <string name="editor_preset_delete_confirm">删除</string>
+    <string name="editor_hint_confirm">确定</string>
+    <string name="editor_hint_cancel">取消</string>
+    <string name="editor_preset_live_badge" translatable="false">⚡</string>
+    <string name="editor_preset_live_on">已设为联机预设：新同步照片自动套用</string>
+    <string name="editor_preset_live_off">已取消联机预设</string>
+    <string name="editor_preset_applied">已套用预设「%1$s」</string>
+    <string name="editor_preset_cleared">已恢复原始外观</string>
+    <string name="editor_preset_already_clear">已是原始外观</string>
+    <string name="editor_preset_empty">暂无预设，点击上方按钮保存当前调色</string>
+
+    <!-- Tethered ingest pill -->
+    <string name="editor_new_photos_pill">+%1$d 新照片</string>
+
+    <!-- Built-in preset display names -->
+    <string name="editor_preset_builtin_clean_portrait">干净人像</string>
+    <string name="editor_portrait_analyzing">正在分析人像…</string>
+    <string name="editor_portrait_preview_unavailable">人像分析未完成，无法预览人像效果</string>
+    <string name="editor_preset_builtin_film_chrome">富士胶片</string>
+    <string name="editor_preset_builtin_warm_sunset">暖阳日落</string>
+    <string name="editor_preset_builtin_cool_nordic">冷调北欧</string>
+    <string name="editor_preset_builtin_mono_silver">银盐黑白</string>
+</resources>

@@ -1,0 +1,255 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="editor_done">Done</string>
+    <string name="editor_undo">Undo</string>
+    <string name="editor_redo">Redo</string>
+    <string name="editor_compare">Compare</string>
+    <string name="editor_comparing_original">Original (Before)</string>
+    <string name="editor_tab_preset">Presets</string>
+    <string name="editor_tab_geometry">Geometry</string>
+    <string name="editor_tab_tone">Tone</string>
+    <string name="editor_tab_color">Color</string>
+    <string name="editor_tab_detail">Detail</string>
+    <string name="editor_tab_portrait">Portrait</string>
+    <string name="editor_tool_exposure">Exposure</string>
+    <string name="editor_tool_exposure_modified">Exposure •</string>
+    <string name="editor_exposure_value_fmt">%1$+.2f EV</string>
+    <string name="editor_double_tap_reset_hint">Double-tap chip to reset</string>
+    <string name="editor_tool_coming_soon">This tool group will be available soon</string>
+    <string name="editor_source_missing">Source file missing — reconnect camera to re-sync</string>
+    <string name="editor_save_failed">Failed to save edits; check available storage</string>
+    <string name="editor_export">Export</string>
+    <string name="editor_exporting">Baking Export</string>
+    <string name="editor_exporting_detail">Rendering at full resolution and saving to gallery…</string>
+    <string name="editor_export_done">Exported to gallery</string>
+    <string name="editor_export_failed">Bake export failed; check available storage</string>
+    <string name="editor_export_no_sink">Export service unavailable; return to gallery and retry</string>
+    <string name="editor_base_look_label">RAW:</string>
+    <string name="editor_base_look_camera_default">Default Look</string>
+    <string name="editor_base_look_linear_neutral">Linear Neutral</string>
+    <string name="editor_base_look_separator">|</string>
+
+    <!-- Geometry sub-tools -->
+    <string name="editor_tool_crop">Crop</string>
+    <string name="editor_tool_crop_modified">Crop •</string>
+    <string name="editor_tool_straighten">Straighten</string>
+    <string name="editor_tool_straighten_modified">Straighten •</string>
+    <string name="editor_tool_rotate90">Rotate 90°</string>
+    <string name="editor_tool_rotate90_modified">Rotate 90° •</string>
+    <string name="editor_tool_rotate_flip">Rotate</string>
+    <string name="editor_tool_rotate_flip_modified">Rotate •</string>
+    <string name="editor_rotate_ccw">Rotate 90° CCW</string>
+    <string name="editor_rotate_cw">Rotate 90° CW</string>
+    <string name="editor_rotate_reset">Reset Orientation</string>
+    <string name="editor_orientation_flip_h_tag">Flip H</string>
+    <string name="editor_orientation_flip_v_tag">Flip V</string>
+    <string name="editor_tool_flip_horizontal">Flip H</string>
+    <string name="editor_tool_flip_horizontal_modified">Flip H •</string>
+    <string name="editor_tool_flip_vertical">Flip V</string>
+    <string name="editor_tool_flip_vertical_modified">Flip V •</string>
+    <string name="editor_tool_perspective">Perspective</string>
+    <string name="editor_tool_perspective_modified">Perspective •</string>
+
+    <!-- Tone sub-tools -->
+    <string name="editor_tool_brightness">Brightness</string>
+    <string name="editor_tool_brightness_modified">Brightness •</string>
+    <string name="editor_tool_contrast">Contrast</string>
+    <string name="editor_tool_contrast_modified">Contrast •</string>
+    <string name="editor_tool_highlights">Highlights</string>
+    <string name="editor_tool_highlights_modified">Highlights •</string>
+    <string name="editor_tool_shadows">Shadows</string>
+    <string name="editor_tool_shadows_modified">Shadows •</string>
+    <string name="editor_tool_whites">Whites</string>
+    <string name="editor_tool_whites_modified">Whites •</string>
+    <string name="editor_tool_blacks">Blacks</string>
+    <string name="editor_tool_blacks_modified">Blacks •</string>
+    <string name="editor_tool_glow">Glow</string>
+    <string name="editor_tool_glow_modified">Glow •</string>
+
+    <!-- Colour sub-tools -->
+    <string name="editor_tool_temperature">Temp</string>
+    <string name="editor_tool_temperature_modified">Temp •</string>
+    <string name="editor_tool_tint">Tint</string>
+    <string name="editor_tool_tint_modified">Tint •</string>
+    <string name="editor_tool_saturation">Saturation</string>
+    <string name="editor_tool_saturation_modified">Saturation •</string>
+    <string name="editor_tool_vibrance">Vibrance</string>
+    <string name="editor_tool_vibrance_modified">Vibrance •</string>
+    <string name="editor_tool_curve">Curve</string>
+    <string name="editor_tool_curve_modified">Curve •</string>
+    <string name="editor_tool_hsl_modified">HSL •</string>
+    <string name="editor_tool_split_toning">Split Tone</string>
+    <string name="editor_tool_split_toning_modified">Split Tone •</string>
+    <string name="editor_tool_fade">Fade</string>
+    <string name="editor_tool_fade_modified">Fade •</string>
+
+    <!-- Curve editor -->
+    <string name="editor_curve_reset">Reset Curve</string>
+    <string name="editor_value_curve_modified">Adjusted</string>
+    <string name="editor_value_curve_linear">Linear</string>
+
+    <!-- HSL panel -->
+    <string name="editor_hsl_hue">Hue</string>
+    <string name="editor_hsl_saturation">Saturation</string>
+    <string name="editor_hsl_luminance">Luminance</string>
+    <string name="editor_hsl_band_red">Red</string>
+    <string name="editor_hsl_band_orange">Orange</string>
+    <string name="editor_hsl_band_yellow">Yellow</string>
+    <string name="editor_hsl_band_green">Green</string>
+    <string name="editor_hsl_band_aqua">Aqua</string>
+    <string name="editor_hsl_band_blue">Blue</string>
+    <string name="editor_hsl_band_purple">Purple</string>
+    <string name="editor_hsl_band_magenta">Magenta</string>
+    <string name="editor_value_hsl_modified">Graded</string>
+    <string name="editor_value_hsl_none">—</string>
+
+    <!-- Split toning panel -->
+    <string name="editor_split_highlights">Highlights</string>
+    <string name="editor_split_shadows">Shadows</string>
+    <string name="editor_split_hue">Hue</string>
+    <string name="editor_split_saturation">Saturation</string>
+    <string name="editor_split_balance">Balance</string>
+    <string name="editor_value_split_modified">Toned</string>
+    <string name="editor_value_split_none">—</string>
+
+    <!-- Detail sub-tools -->
+    <string name="editor_tool_clarity">Clarity</string>
+    <string name="editor_tool_clarity_modified">Clarity •</string>
+    <string name="editor_tool_texture">Texture</string>
+    <string name="editor_tool_texture_modified">Texture •</string>
+    <string name="editor_tool_dehaze">Dehaze</string>
+    <string name="editor_tool_dehaze_modified">Dehaze •</string>
+    <string name="editor_tool_sharpen">Sharpen</string>
+    <string name="editor_tool_sharpen_modified">Sharpen •</string>
+    <string name="editor_tool_noise_reduction">NR</string>
+    <string name="editor_tool_noise_reduction_modified">NR •</string>
+    <string name="editor_sharpen_amount">Amount</string>
+    <string name="editor_sharpen_radius">Radius</string>
+    <string name="editor_sharpen_threshold">Threshold</string>
+    <string name="editor_sharpen_masking">Masking</string>
+    <string name="editor_nr_luma">Luminance</string>
+    <string name="editor_nr_chroma">Color</string>
+    <string name="editor_nr_detail">Detail</string>
+    <string name="editor_value_sharpen_modified">Sharpened</string>
+    <string name="editor_value_nr_modified">Denoised</string>
+    <string name="editor_tool_ca_red_cyan">CA R/C</string>
+    <string name="editor_tool_ca_red_cyan_modified">CA R/C •</string>
+    <string name="editor_tool_ca_blue_yellow">CA B/Y</string>
+    <string name="editor_tool_ca_blue_yellow_modified">CA B/Y •</string>
+    <string name="editor_tool_defringe">Defringe</string>
+    <string name="editor_tool_defringe_modified">Defringe •</string>
+    <string name="editor_tool_grain">Grain</string>
+    <string name="editor_tool_grain_modified">Grain •</string>
+    <string name="editor_tool_vignette">Vignette</string>
+    <string name="editor_tool_vignette_modified">Vignette •</string>
+
+    <!-- 3D LUT sub-tool and panel -->
+    <string name="editor_lut_import">+ Import .cube</string>
+    <string name="editor_lut_none">None</string>
+    <string name="editor_lut_strength">Strength</string>
+    <string name="editor_lut_importing">Importing LUT…</string>
+    <string name="editor_lut_imported">LUT imported</string>
+    <string name="editor_lut_import_failed">LUT import failed; select a valid .cube file</string>
+    <string name="editor_value_lut_modified">Applied</string>
+    <string name="editor_value_lut_none">—</string>
+    <string name="editor_value_preset_modified">Applied</string>
+
+    <!-- Film grain panel -->
+    <string name="editor_grain_amount">Amount</string>
+    <string name="editor_grain_size">Size</string>
+    <string name="editor_grain_roughness">Roughness</string>
+
+    <!-- Post-crop vignette panel -->
+    <string name="editor_vignette_amount">Amount</string>
+    <string name="editor_vignette_midpoint">Midpoint</string>
+    <string name="editor_vignette_feather">Feather</string>
+    <string name="editor_vignette_roundness">Roundness</string>
+
+    <!-- Liquify tool -->
+    <string name="editor_tool_liquify">Liquify</string>
+    <string name="editor_tool_liquify_modified">Liquify •</string>
+    <string name="editor_liquify_mode_push">Push</string>
+    <string name="editor_liquify_mode_restore">Restore</string>
+    <string name="editor_liquify_size_label">Brush Size</string>
+    <string name="editor_liquify_strength_label">Strength</string>
+    <string name="editor_liquify_reset">Reset Liquify</string>
+    <string name="editor_value_liquify_modified">Warped</string>
+    <string name="editor_value_liquify_none">—</string>
+
+    <!-- Portrait group -->
+    <string name="editor_tool_skin_smooth">Skin</string>
+    <string name="editor_tool_skin_smooth_modified">Skin •</string>
+    <string name="editor_tool_face_reshape">Face</string>
+    <string name="editor_tool_face_reshape_modified">Face •</string>
+    <string name="editor_tool_body_reshape">Body</string>
+    <string name="editor_tool_body_reshape_modified">Body •</string>
+    <string name="editor_skin_smooth">Smooth</string>
+    <string name="editor_skin_texture">Texture</string>
+    <string name="editor_skin_even_tone">Even Tone</string>
+    <string name="editor_reshape_face">Slim Face</string>
+    <string name="editor_reshape_eyes">Eyes</string>
+    <string name="editor_reshape_nose">Nose</string>
+    <string name="editor_reshape_chin">Chin</string>
+    <string name="editor_reshape_forehead">Forehead</string>
+    <string name="editor_reshape_smile">Smile</string>
+    <string name="editor_body_waist">Waist</string>
+    <string name="editor_body_legs">Legs</string>
+    <string name="editor_value_skin_modified">Smoothed</string>
+    <string name="editor_value_reshape_modified">Reshaped</string>
+    <string name="editor_value_body_modified">Shaped</string>
+
+    <!-- Value formats -->
+    <string name="editor_value_degrees_fmt">%1$+.1f°</string>
+    <string name="editor_value_plain_degrees_fmt">%1$.0f°</string>
+    <string name="editor_value_signed_fmt">%1$+.0f</string>
+    <string name="editor_value_unsigned_fmt">%1$.0f</string>
+    <string name="editor_value_aspect_fmt">%1$.2f : 1</string>
+    <string name="editor_value_radius_fmt">%1$.1f px</string>
+    <string name="editor_value_scalar_none">—</string>
+    <string name="editor_value_on">On</string>
+    <string name="editor_value_off">Off</string>
+
+    <!-- Aspect-ratio lock chips -->
+    <string name="editor_aspect_free">Free</string>
+    <string name="editor_aspect_original">Original</string>
+    <string name="editor_aspect_square">1:1</string>
+    <string name="editor_aspect_four_three">4:3</string>
+    <string name="editor_aspect_sixteen_nine">16:9</string>
+
+    <!-- Preset panel -->
+    <string name="editor_tool_preset">Presets</string>
+    <string name="editor_tool_preset_modified">Presets •</string>
+    <string name="editor_preset_save_current">+ Save Current as Preset</string>
+    <string name="editor_preset_none">None</string>
+    <string name="editor_preset_saved">Saved preset \"%1$s\"</string>
+    <string name="editor_preset_save_failed">Failed to save preset; check available storage</string>
+    <string name="editor_preset_save_title">Save as Preset</string>
+    <string name="editor_preset_save_hint">Enter preset name</string>
+    <string name="editor_preset_rename_title">Rename Preset</string>
+    <string name="editor_preset_menu_rename">Rename</string>
+    <string name="editor_preset_menu_delete">Delete</string>
+    <string name="editor_preset_menu_set_live">Set as Live Tether Preset</string>
+    <string name="editor_preset_menu_clear_live">Clear Live Tether Preset</string>
+    <string name="editor_preset_delete_title">Delete preset \"%1$s\"?</string>
+    <string name="editor_preset_delete_confirm">Delete</string>
+    <string name="editor_hint_confirm">OK</string>
+    <string name="editor_hint_cancel">Cancel</string>
+    <string name="editor_preset_live_on">Live Tether Preset enabled for new synced photos</string>
+    <string name="editor_preset_live_off">Live Tether Preset turned off</string>
+    <string name="editor_preset_applied">Applied preset \"%1$s\"</string>
+    <string name="editor_preset_cleared">Restored the original look</string>
+    <string name="editor_preset_already_clear">Already unedited</string>
+    <string name="editor_preset_empty">No presets yet. Tap above to save current adjustments.</string>
+
+    <!-- Tethered ingest pill -->
+    <string name="editor_new_photos_pill">+%1$d new photos</string>
+
+    <!-- Built-in preset display names -->
+    <string name="editor_preset_builtin_clean_portrait">Clean Portrait</string>
+    <string name="editor_portrait_analyzing">Analyzing portrait…</string>
+    <string name="editor_portrait_preview_unavailable">Portrait analysis failed. Portrait effects cannot be previewed.</string>
+    <string name="editor_preset_builtin_film_chrome">Film Chrome</string>
+    <string name="editor_preset_builtin_warm_sunset">Warm Sunset</string>
+    <string name="editor_preset_builtin_cool_nordic">Cool Nordic</string>
+    <string name="editor_preset_builtin_mono_silver">Silver Mono</string>
+</resources>

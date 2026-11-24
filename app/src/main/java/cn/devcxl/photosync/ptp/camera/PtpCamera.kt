@@ -17,7 +17,7 @@ import cn.devcxl.photosync.ptp.protocol.PtpObjectInfo
 import cn.devcxl.photosync.ptp.protocol.PtpOp
 import cn.devcxl.photosync.ptp.protocol.PtpProtocolException
 import cn.devcxl.photosync.ptp.protocol.PtpResponsePacket
-import cn.devcxl.photosync.ptp.protocol.PtpStatus
+import cn.devcxl.photosync.ptp.protocol.PtpSessionException
 import cn.devcxl.photosync.ptp.protocol.PtpStorageInfo
 import cn.devcxl.photosync.ptp.protocol.PtpTransportException
 import cn.devcxl.photosync.ptp.transport.PtpTransport
@@ -26,7 +26,6 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -83,10 +82,22 @@ internal class PtpCamera private constructor(
     /**
      * Opens a PTP session, including the recovery for a camera that still holds one.
      *
+     * A camera whose previous host process was killed may refuse the session takeover even after
+     * the connect handshake; resetting the pipe once and retrying turns that dead-session refusal
+     * into a normal connect instead of a failure the user can only clear by replugging.
+     *
      * @throws cn.devcxl.photosync.ptp.protocol.PtpException when the camera refuses
      */
     internal suspend fun openSession() = locked {
-        session.open(supportsCloseSession = deviceInfo?.supportsOperation(PtpOp.CLOSE_SESSION) ?: true)
+        val supportsCloseSession = deviceInfo?.supportsOperation(PtpOp.CLOSE_SESSION) ?: true
+        try {
+            session.open(supportsCloseSession = supportsCloseSession)
+        } catch (e: PtpSessionException) {
+            Timber.w(e, "OpenSession rejected; resetting the device and retrying once")
+            session.abandon()
+            transport.cancelAndResetDevice(null)
+            session.open(supportsCloseSession = supportsCloseSession)
+        }
         profile.onSessionStart(session)
         Timber.i("PTP session opened on %s (%s)", modelName, profile.name)
     }
@@ -101,10 +112,17 @@ internal class PtpCamera private constructor(
     internal suspend fun close() = withContext(NonCancellable) {
         mutex.withLock {
             withContext(ioDispatcher) {
-                try {
-                    session.closeSession()
-                } catch (e: PtpException) {
-                    Timber.w(e, "CloseSession failed during teardown")
+                if (linkBroken) {
+                    Timber.i("Skipping CloseSession on broken USB link; cancelling and resetting device")
+                    runCatching { transport.cancelAndResetDevice(session.inFlightTransactionId) }
+                        .onFailure { Timber.w(it, "cancelAndResetDevice failed during broken-link teardown") }
+                } else {
+                    try {
+                        session.closeSession()
+                    } catch (e: PtpException) {
+                        Timber.w(e, "CloseSession failed during teardown; cancelling and resetting device")
+                        runCatching { transport.cancelAndResetDevice(session.inFlightTransactionId) }
+                    }
                 }
                 session.abandon()
                 transport.close()
@@ -382,11 +400,20 @@ internal class PtpCamera private constructor(
         if (linkBroken) {
             throw PtpTransportException("The USB link is unusable after a failed transfer; reconnect the camera")
         }
-        withContext(ioDispatcher) { block() }
+        withContext(ioDispatcher) {
+            try {
+                block()
+            } catch (e: PtpTransportException) {
+                linkBroken = true
+                throw e
+            } catch (e: PtpProtocolException) {
+                linkBroken = true
+                throw e
+            }
+        }
     }
 
     companion object {
-        private const val RESET_SETTLE_MS = 300L
         private const val READ_BUFFER_BYTES = 64 * 1024
         private const val WRITE_BUFFER_BYTES = 64 * 1024
         private const val PROGRESS_STEP_BYTES = 256 * 1024
@@ -403,14 +430,29 @@ internal class PtpCamera private constructor(
             ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
         ): PtpCamera = withContext(ioDispatcher) {
             val transport = UsbPtpTransport.open(usbManager, device)
-            val camera = PtpCamera(
+            connectWithTransport(
                 usbDevice = device,
                 transport = transport,
                 profile = profileFor(device.vendorId),
                 ioDispatcher = ioDispatcher,
             )
+        }
+
+        internal suspend fun connectWithTransport(
+            usbDevice: UsbDevice?,
+            transport: PtpTransport,
+            profile: VendorProfile = GenericProfile,
+            ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+            settleDelaysMs: LongArray = PtpCameraInitializer.DEFAULT_SETTLE_DELAYS_MS,
+        ): PtpCamera = withContext(ioDispatcher) {
+            val camera = PtpCamera(
+                usbDevice = usbDevice,
+                transport = transport,
+                profile = profile,
+                ioDispatcher = ioDispatcher,
+            )
             try {
-                camera.initialise()
+                camera.initialise(settleDelaysMs)
             } catch (e: Exception) {
                 transport.close()
                 throw e
@@ -426,77 +468,16 @@ internal class PtpCamera private constructor(
         }
     }
 
-    private suspend fun initialise() {
-        transport.resetDevice()
-        // A body needs a moment after a device reset before it answers on the bulk pipe;
-        // without it the first GetDeviceInfo tends to come back as a timeout.
-        delay(RESET_SETTLE_MS)
-        val info = readDeviceInfo()
-        deviceInfo = info
-        Timber.i(
-            "Connected to %s %s (fw %s, vendor extension 0x%04x, %d operations, %d events)",
-            info.manufacturer,
-            info.model,
-            info.deviceVersion,
-            info.vendorExtensionId,
-            info.operationsSupported.size,
-            info.eventsSupported.size,
-        )
-    }
-}
-
-/** The handles one or more storages report, and whether every storage answered. */
-internal data class ObjectHandles(
-    val handles: List<Int>,
-    val complete: Boolean,
-)
-
-/** Storage for the handles a device has already imported, owned by the caller. */
-internal interface ImportedHandleStore {
-    /** Previously imported handles, or null when this device has no record. */
-    suspend fun load(): List<Int>?
-
-    /** Replaces the record with [handles]. */
-    suspend fun save(handles: List<Int>)
-}
-
-/**
- * The handles this session already imported.
- *
- * Kept out of the sync loop so the delete path can remove a handle at once: handles are
- * reused by cameras, and a deleted handle left in the set would make the next photo on
- * that handle look imported.
- */
-internal class HandledObjects {
-    @Volatile
-    private var handles: List<Int> = emptyList()
-
-    @Synchronized
-    fun snapshot(): List<Int> = handles
-
-    @Synchronized
-    fun replace(next: List<Int>) {
-        handles = next
-    }
-
-    @Synchronized
-    fun add(handle: Int): Boolean {
-        val current = handles
-        if (handle in current) {
-            return false
-        }
-        handles = current + handle
-        return true
-    }
-
-    @Synchronized
-    fun remove(handle: Int): Boolean {
-        val current = handles
-        val next = current.filter { it != handle }
-        if (next.size == current.size) {
-            return false
-        }
-        handles = next
-        return true
+    /**
+     * Runs the connect handshake; [PtpCameraInitializer] owns the reset/retry policy.
+     * The device info it reads is published back into [info].
+     */
+    private suspend fun initialise(settleDelaysMs: LongArray) {
+        PtpCameraInitializer(
+            transport = transport,
+            session = session,
+            readDeviceInfo = ::readDeviceInfo,
+            onDeviceInfo = { deviceInfo = it },
+        ).initialise(settleDelaysMs)
     }
 }

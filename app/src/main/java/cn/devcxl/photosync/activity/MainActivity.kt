@@ -3,16 +3,13 @@ package cn.devcxl.photosync.activity
 import kotlin.math.roundToInt
 
 import java.io.File
-import java.io.FileOutputStream
 import java.io.IOException
-import java.io.OutputStream
 import java.text.SimpleDateFormat
 import java.util.Collections
 import java.util.Date
 import java.util.Locale
 
 import android.Manifest
-import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
@@ -23,17 +20,17 @@ import android.hardware.usb.UsbManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.Environment
 import android.os.Handler
 import android.os.Looper
-import android.provider.MediaStore
 import android.util.LruCache
 import android.view.View
 import android.view.ViewGroup
 import android.widget.CheckBox
+import android.widget.PopupMenu
 import android.widget.TextView
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.VisibleForTesting
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -63,12 +60,26 @@ import cn.devcxl.photosync.App
 import cn.devcxl.photosync.R
 import cn.devcxl.photosync.adapter.FilmstripAdapter
 import cn.devcxl.photosync.adapter.JpegSourceInfo
+import cn.devcxl.photosync.adapter.PhotoContentVersion
 import cn.devcxl.photosync.adapter.PhotoPagerAdapter
 import cn.devcxl.photosync.adapter.PhotoRenderState
+import cn.devcxl.photosync.adapter.PhotoViewerMode
 import cn.devcxl.photosync.data.AppDatabase
 import cn.devcxl.photosync.data.PhotoDao
 import cn.devcxl.photosync.data.entity.PhotoEntity
 import cn.devcxl.photosync.databinding.ActivityMainBinding
+import cn.devcxl.photosync.editor.contract.EditorHostRegistry
+import cn.devcxl.photosync.editor.contract.EditorLaunchArgs
+import cn.devcxl.photosync.editor.contract.GallerySink
+import cn.devcxl.photosync.editor.contract.PhotoEditRecord
+import cn.devcxl.photosync.editor.domain.EditGraph
+import cn.devcxl.photosync.editor.domain.EditGraphJsonCodec
+import cn.devcxl.photosync.editor.export.BakeExporter
+import cn.devcxl.photosync.editor.export.BakeRequest
+import cn.devcxl.photosync.editor.export.BakeResult
+import cn.devcxl.photosync.editor.export.ExifCopier
+import cn.devcxl.photosync.editor.ui.EditorActivity
+import cn.devcxl.photosync.export.MediaStoreGallerySink
 import cn.devcxl.photosync.ptp.manager.UsbPtpConnectionState
 import cn.devcxl.photosync.ptp.manager.cameraDeleteBlockedBy
 import cn.devcxl.photosync.utils.ExtensionUtils
@@ -80,17 +91,23 @@ class MainActivity : AppCompatActivity() {
         (application as App).usbPtpConnectionController
     }
 
+    private val gallerySink: GallerySink by lazy {
+        MediaStoreGallerySink(contentResolver)
+    }
+
     companion object {
         private const val REQ_WRITE_STORAGE = 2001
         private const val THUMBNAIL_MAX_EDGE_PX = 512
         private const val RAW_PREVIEW_MAX_EDGE_PX = 1200
         private const val FULL_PREVIEW_SCALE_FACTOR = 2
         private const val FULL_PREVIEW_MAX_EDGE_PX = 4096
-        private const val JPEG_MIME = "image/jpeg"
+        private const val JPEG_MIME = GallerySink.JPEG_MIME
         private const val JPEG_EXPORT_QUALITY = 95
-        private const val GALLERY_DIR_NAME = "PhotoSync"
         private const val PREFS_NAME = "photosync_prefs"
         private const val PREF_DELETE_ON_CAMERA = "delete_on_camera"
+        private const val MENU_EXPORT_BAKED = 1
+        private const val MENU_EXPORT_ORIGINAL = 2
+        private const val EXPORT_OVERLAY_FADE_MS = 180L
         private val exportDateFormat = ThreadLocal.withInitial {
             SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
         }
@@ -98,12 +115,20 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var adapter: PhotoPagerAdapter
     private lateinit var filmstripAdapter: FilmstripAdapter
+    private lateinit var darkroom: TetheredDarkroomCoordinator
+    private val originalPreviewCache = OriginalPreviewCache()
     private var pendingExportIndex: Int? = null
+    private var pendingExportBake: Boolean = false
 
     private lateinit var binding: ActivityMainBinding
 
     private lateinit var dao: PhotoDao
-    private var pendingRevealPath: String? = null
+    private val knownPhotoIds = mutableSetOf<Long>()
+    private var photoListInitialized: Boolean = false
+    private val lastViewedPhoto: LastViewedPhotoStore by lazy {
+        LastViewedPhotoStore(getSharedPreferences(PREFS_NAME, MODE_PRIVATE))
+    }
+    private var restoredLastViewedPhoto: Boolean = false
 
     private var connectionState: UsbPtpConnectionState = UsbPtpConnectionState.Idle
     private var cameraPresent: Boolean = false
@@ -115,13 +140,24 @@ class MainActivity : AppCompatActivity() {
     private var pendingNewPhotoCount: Int = 0
     private var filmstripCollapsed: Boolean = false
     private var lastBottomInsetPx: Int = 0
+    @Volatile
+    private var editedPhotoMap: Map<Long, PhotoEditRecord> = emptyMap()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val hideFeedbackRunnable = Runnable { hideInlineFeedback() }
 
+    private val editorLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val editedPath = result.data?.getStringExtra(EditorActivity.EXTRA_SOURCE_PATH)
+        if (!editedPath.isNullOrBlank()) {
+            invalidateCachedBitmapsForPath(editedPath)
+        }
+    }
+
     private val thumbnailCache: LruCache<String, Bitmap> by lazy { createBitmapCache(16) }
     private val fullBitmapCache: LruCache<String, Bitmap> by lazy { createBitmapCache(8) }
-    private val inFlightThumbnailPaths = Collections.synchronizedSet(mutableSetOf<String>())
-    private val inFlightFullPaths = Collections.synchronizedSet(mutableSetOf<String>())
+    private val thumbnailDecodes = PreviewTaskRegistry()
+    private val fullPreviewDecodes = PreviewTaskRegistry()
     private val jpegSourceInfoCache = Collections.synchronizedMap(mutableMapOf<String, JpegSourceInfo>())
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -146,12 +182,46 @@ class MainActivity : AppCompatActivity() {
         setupAdapter()
         setupViewPager()
         setupFilmstrip()
+        setupTetheredDarkroom()
         observeDatabase()
         observeConnectionState()
         setupButtons()
         configureConnectionController()
         applySystemBarVisibility(showOverlays = true)
         connectionController.refreshAvailableCameras()
+    }
+
+    /**
+     * Wires the quick preset strip, the batch bake card and the press-and-hold compare.
+     *
+     * Must run after the adapters exist: the strip's callbacks read the pager's current graph, and the
+     * compare controller pushes bitmaps into the pager.
+     */
+    private fun setupTetheredDarkroom() {
+        darkroom = TetheredDarkroomCoordinator(
+            context = this,
+            binding = binding,
+            owner = this,
+            scope = lifecycleScope,
+            dao = dao,
+            adapter = adapter,
+            originalPreviewCache = originalPreviewCache,
+            currentIndex = { binding.viewPager.currentItem },
+            editedMap = { editedPhotoMap },
+            decodeOriginal = ::decodeOriginalPreview,
+            onEditPersisted = ::onEditPersisted,
+            onFeedback = { message -> showInlineFeedback(message) }
+        ).also { it.bind() }
+        darkroom.observeTransferState()
+    }
+
+    /** Re-reads the edited record of [photoId] and repaints the pager, filmstrip and strip. */
+    private fun onEditPersisted(photoId: Long) {
+        val path = findPathByPhotoId(photoId)
+        if (path != null) {
+            invalidateCachedBitmapsForPath(path)
+        }
+        darkroom.refreshQuickStrip()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -271,24 +341,31 @@ class MainActivity : AppCompatActivity() {
         connectionController.refreshAvailableCameras()
     }
 
+    override fun onPause() {
+        super.onPause()
+        // Covers the session where the user never swiped: the pager callback alone would not record
+        // the photo that was restored on launch.
+        adapter.getItem(binding.viewPager.currentItem)?.id?.let(lastViewedPhoto::save)
+    }
+
     private fun setupDao() {
         dao = AppDatabase.getInstance(this).photoDao()
     }
 
     private fun setupAdapter() {
         adapter = PhotoPagerAdapter(
-            renderStateProvider = { path ->
-                PhotoRenderState(
-                    thumbnail = thumbnailCache.get(path),
-                    full = fullBitmapCache.get(path)
-                )
-            },
+            renderStateProvider = { path -> renderStateForPath(path) },
             onBindRequest = { path, position ->
                 ensurePhotoForPosition(path, position)
             },
             jpegSourceInfoProvider = { path -> getJpegSourceInfo(path) },
             isCurrentPageProvider = { position -> position == binding.viewPager.currentItem },
-            isJpegProvider = { path -> isJpegPath(path) },
+            isJpegProvider = { path ->
+                val entity = entityForPath(path)
+                entity != null &&
+                    resolveGalleryViewerMode(entity, editedPhotoMap, isJpegPath(path)) ==
+                    PhotoViewerMode.JPEG_TILED
+            },
             onPhotoScaleChanged = { _, position, scale, minScale ->
                 onCurrentPhotoScaleChanged(position, scale, minScale)
             },
@@ -306,6 +383,8 @@ class MainActivity : AppCompatActivity() {
         }
         binding.viewPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
             override fun onPageSelected(position: Int) {
+                adapter.getItem(position)?.id?.let(lastViewedPhoto::save)
+                darkroom.endCompare()
                 currentPageZoomed = false
                 binding.zoomBadge.visibility = View.GONE
                 if (position >= adapter.itemCount - 1) {
@@ -320,19 +399,33 @@ class MainActivity : AppCompatActivity() {
                 renderPhotoChrome()
                 renderNewPhotoBanner()
                 updateOverlaysVisibility()
+                darkroom.refreshQuickStrip(darkroomGraphFor(position))
             }
         })
     }
 
+    /**
+     * Graph of the page at [position], as the quick strip needs it.
+     *
+     * Reading through the edited map keeps the strip in sync with the pager without a second store
+     * query per swipe.
+     */
+    private fun darkroomGraphFor(position: Int): EditGraph {
+        val entity = adapter.getItem(position) ?: return EditGraph()
+        val json = editedPhotoMap[entity.id]?.graphJson ?: return EditGraph()
+        return EditGraphJsonCodec.decode(json) ?: EditGraph()
+    }
+
     private fun setupFilmstrip() {
         filmstripAdapter = FilmstripAdapter(
-            thumbnailProvider = { path -> thumbnailCache.get(path) },
+            thumbnailProvider = { path -> cachedThumbnailForPath(path) },
             onThumbnailRequest = { path -> ensureThumbnail(path) },
             onItemClick = { position ->
                 if (position in 0 until adapter.itemCount) {
                     binding.viewPager.setCurrentItem(position, true)
                 }
-            }
+            },
+            hasEditPreviewProvider = { photoId -> editedPhotoMap.containsKey(photoId) }
         )
         binding.filmstripRecyclerView.apply {
             layoutManager = LinearLayoutManager(this@MainActivity, RecyclerView.HORIZONTAL, false)
@@ -484,6 +577,18 @@ class MainActivity : AppCompatActivity() {
             .start()
     }
 
+    /**
+     * Jumps to the photo the previous session was showing.
+     *
+     * Runs once per process on the first list emission, so a later import can never drag the pager
+     * back to an old photo. A saved id that no longer exists leaves the pager at its default.
+     */
+    private fun restoreLastViewedPhoto(items: List<PhotoEntity>) {
+        val index = restoreIndexForPhoto(lastViewedPhoto.load(), items.map { it.id }) ?: return
+        if (index == binding.viewPager.currentItem) return
+        binding.viewPager.setCurrentItem(index, false)
+    }
+
     private fun observeDatabase() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -493,18 +598,29 @@ class MainActivity : AppCompatActivity() {
                     val itemsCopy = list.toList()
                     adapter.updateItems(itemsCopy)
                     filmstripAdapter.updateItems(itemsCopy)
+                    if (!restoredLastViewedPhoto) {
+                        restoredLastViewedPhoto = true
+                        restoreLastViewedPhoto(itemsCopy)
+                    }
                     evictCachesForRemovedItems(list)
-                    pendingRevealPath?.let { target ->
-                        val idx = list.indexOfFirst { it.path == target }
-                        if (idx >= 0) {
-                            val wasLatest = isViewingLatestPhoto(previousIndex, previousCount)
-                            if (shouldAutoAdvanceOnNewPhoto(autoFollowEnabled, currentPageZoomed, wasLatest)) {
-                                binding.viewPager.setCurrentItem(idx, previousCount > 0)
-                                pendingNewPhotoCount = 0
-                            } else {
-                                pendingNewPhotoCount++
-                            }
-                            pendingRevealPath = null
+                    val newlyAdded = if (!photoListInitialized) {
+                        knownPhotoIds.addAll(list.map { it.id })
+                        photoListInitialized = true
+                        emptyList()
+                    } else {
+                        val added = list.filter { it.id !in knownPhotoIds }
+                        knownPhotoIds.clear()
+                        knownPhotoIds.addAll(list.map { it.id })
+                        added
+                    }
+                    if (newlyAdded.isNotEmpty()) {
+                        val targetIdx = list.indexOfLast { it.id == newlyAdded.last().id }
+                        val wasLatest = isViewingLatestPhoto(previousIndex, previousCount)
+                        if (targetIdx >= 0 && shouldAutoAdvanceOnNewPhoto(autoFollowEnabled, currentPageZoomed, wasLatest)) {
+                            binding.viewPager.setCurrentItem(targetIdx, previousCount > 0)
+                            pendingNewPhotoCount = 0
+                        } else {
+                            pendingNewPhotoCount += newlyAdded.size
                         }
                     }
                     if (list.isNotEmpty()) {
@@ -523,6 +639,27 @@ class MainActivity : AppCompatActivity() {
                     renderPhotoChrome()
                     renderNewPhotoBanner()
                     updateOverlaysVisibility()
+                }
+            }
+        }
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                EditorHostRegistry.editStore?.observeEditedPhotoMap()?.collect { newMap ->
+                    val oldMap = editedPhotoMap
+                    editedPhotoMap = newMap
+                    val changedPhotoIds = (oldMap.keys + newMap.keys).filter { id ->
+                        oldMap[id] != newMap[id]
+                    }
+                    for (photoId in changedPhotoIds) {
+                        val path = findPathByPhotoId(photoId)
+                        if (path != null) {
+                            invalidateCachedBitmapsForPath(path)
+                        }
+                    }
+                    renderPhotoChrome()
+                    if (adapter.itemCount > 0) {
+                        darkroom.refreshQuickStrip(darkroomGraphFor(binding.viewPager.currentItem))
+                    }
                 }
             }
         }
@@ -616,6 +753,8 @@ class MainActivity : AppCompatActivity() {
         binding.photoMetaPill.visibility = if (hasPhotos) View.VISIBLE else View.GONE
         binding.infoToggleButton.visibility = if (hasPhotos) View.VISIBLE else View.GONE
         binding.topBarSpacer.visibility = if (hasPhotos) View.GONE else View.VISIBLE
+        binding.editButton.isEnabled = hasPhotos
+        binding.editButton.alpha = if (hasPhotos) 1.0f else 0.35f
         binding.exportButton.isEnabled = hasPhotos
         binding.exportButton.alpha = if (hasPhotos) 1.0f else 0.35f
         binding.deleteButton.isEnabled = hasPhotos
@@ -632,45 +771,26 @@ class MainActivity : AppCompatActivity() {
         val index = binding.viewPager.currentItem.coerceIn(0, count - 1)
         val item = adapter.getItem(index) ?: return
         binding.photoCounterText.text = formatPhotoCounter(index, count)
-        binding.photoNameText.text = item.name ?: getString(R.string.photo_default_name)
 
         val exported = isPhotoExported(item.uriString)
+        val edited = isPhotoMarkedEdited(item, editedPhotoMap)
+        binding.photoEditedBadge.visibility = if (edited) View.VISIBLE else View.GONE
         binding.photoExportedBadge.visibility = if (exported) View.VISIBLE else View.GONE
-        if (exported) {
-            binding.exportButton.setBackgroundResource(R.drawable.bg_glass_icon_btn_exported)
-            binding.exportButton.setImageResource(R.drawable.ic_check_24)
-            ImageViewCompat.setImageTintList(
-                binding.exportButton,
-                ColorStateList.valueOf(ContextCompat.getColor(this, R.color.exported_text))
-            )
-        } else {
-            binding.exportButton.setBackgroundResource(R.drawable.bg_glass_icon_btn)
-            binding.exportButton.setImageResource(R.drawable.ic_export_24)
-            ImageViewCompat.setImageTintList(
-                binding.exportButton,
-                ColorStateList.valueOf(ContextCompat.getColor(this, R.color.darkroom_text_primary))
-            )
-        }
-
-        when (resolvePhotoFormatBadge(item.path)) {
-            PhotoFormatBadge.RAW -> {
-                binding.photoFormatBadge.visibility = View.VISIBLE
-                binding.photoFormatBadge.setText(R.string.format_raw)
-                binding.photoFormatBadge.setBackgroundResource(R.drawable.bg_badge_raw)
-                binding.photoFormatBadge.setTextColor(
-                    ContextCompat.getColor(this, R.color.badge_raw_text)
+        if (binding.exportButtonSpinner.visibility != View.VISIBLE) {
+            if (exported) {
+                binding.exportButton.setBackgroundResource(R.drawable.bg_glass_icon_btn_exported)
+                binding.exportButton.setImageResource(R.drawable.ic_check_24)
+                ImageViewCompat.setImageTintList(
+                    binding.exportButton,
+                    ColorStateList.valueOf(ContextCompat.getColor(this, R.color.exported_text))
                 )
-            }
-            PhotoFormatBadge.JPEG -> {
-                binding.photoFormatBadge.visibility = View.VISIBLE
-                binding.photoFormatBadge.setText(R.string.format_jpeg)
-                binding.photoFormatBadge.setBackgroundResource(R.drawable.bg_badge_jpg)
-                binding.photoFormatBadge.setTextColor(
-                    ContextCompat.getColor(this, R.color.badge_jpg_text)
+            } else {
+                binding.exportButton.setBackgroundResource(R.drawable.bg_glass_icon_btn)
+                binding.exportButton.setImageResource(R.drawable.ic_export_24)
+                ImageViewCompat.setImageTintList(
+                    binding.exportButton,
+                    ColorStateList.valueOf(ContextCompat.getColor(this, R.color.darkroom_text_primary))
                 )
-            }
-            PhotoFormatBadge.OTHER -> {
-                binding.photoFormatBadge.visibility = View.GONE
             }
         }
         updateInfoToggleAppearance()
@@ -679,14 +799,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateInfoToggleAppearance() {
         binding.infoToggleButton.setBackgroundResource(
-            if (infoDrawerOpen) R.drawable.bg_toggle_pill_on else R.drawable.bg_toggle_pill
+            if (infoDrawerOpen) R.drawable.bg_toggle_pill_on else R.drawable.bg_glass_icon_btn
         )
         val colorRes = if (infoDrawerOpen) {
-            R.color.darkroom_text_primary
+            R.color.toggle_on_text
         } else {
             R.color.darkroom_text_secondary
         }
-        binding.infoToggleLabel.setTextColor(ContextCompat.getColor(this, colorRes))
+        binding.infoToggleButton.imageTintList =
+            ColorStateList.valueOf(ContextCompat.getColor(this, colorRes))
     }
 
     private fun alignInfoDrawerToToggle() {
@@ -740,6 +861,28 @@ class MainActivity : AppCompatActivity() {
         binding.infoHandleText.text = handleText
 
         val formatBadge = resolvePhotoFormatBadge(item.path)
+        binding.infoFileNameText.text = item.name ?: getString(R.string.photo_default_name)
+        when (formatBadge) {
+            PhotoFormatBadge.RAW -> {
+                binding.infoFormatBadge.visibility = View.VISIBLE
+                binding.infoFormatBadge.setText(R.string.format_raw)
+                binding.infoFormatBadge.setBackgroundResource(R.drawable.bg_badge_raw)
+                binding.infoFormatBadge.setTextColor(
+                    ContextCompat.getColor(this, R.color.badge_raw_text)
+                )
+            }
+            PhotoFormatBadge.JPEG -> {
+                binding.infoFormatBadge.visibility = View.VISIBLE
+                binding.infoFormatBadge.setText(R.string.format_jpeg)
+                binding.infoFormatBadge.setBackgroundResource(R.drawable.bg_badge_jpg)
+                binding.infoFormatBadge.setTextColor(
+                    ContextCompat.getColor(this, R.color.badge_jpg_text)
+                )
+            }
+            PhotoFormatBadge.OTHER -> {
+                binding.infoFormatBadge.visibility = View.GONE
+            }
+        }
         binding.infoResolutionText.text = getString(R.string.info_unknown_value)
         binding.infoFormatSizeText.text = formatPhotoFormatAndSize(formatBadge, 0L)
 
@@ -765,7 +908,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupButtons() {
+        binding.editButton.setOnClickListener { openEditorForCurrentPhoto() }
         binding.exportButton.setOnClickListener { exportCurrent() }
+        binding.exportButton.setOnLongClickListener {
+            showExportMenu()
+            true
+        }
         binding.deleteButton.setOnClickListener { showDeleteConfirmDialog() }
         binding.connectButton.setOnClickListener { onConnectButtonClick() }
         binding.emptyActionButton.setOnClickListener {
@@ -822,7 +970,8 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         mainHandler.removeCallbacks(hideFeedbackRunnable)
         connectionController.setFileTransferListener(null)
-        connectionController.setFileDownloadedListener(null)
+        // The download sink belongs to `App`, not to this activity: clearing it here would stop the
+        // tethered ingest pipeline as soon as the gallery is recreated.
         // The session belongs to the process, not to this activity (docs/adr/0001):
         // a system-driven recreate must not tear down a healthy session, so only a real
         // exit releases the camera.
@@ -833,8 +982,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun configureConnectionController() {
-        connectionController.setFileDownloadPath(externalCacheDir?.absolutePath)
         connectionController.setFileTransferListener { _, totalByteLength, transterByteLength ->
+            (application as App).notifyTransferStarted()
             val progressPercent = resolveTransferPercent(transterByteLength, totalByteLength)
             lifecycleScope.launch(Dispatchers.Main) {
                 if (binding.transferStatusCard.visibility != View.VISIBLE) {
@@ -845,23 +994,16 @@ class MainActivity : AppCompatActivity() {
                 binding.progressBar.progress = progressPercent
             }
         }
-        connectionController.setFileDownloadedListener { fileHandle, localFile, timeduring ->
-            Timber.v("file downloaded at %s, time: %sms", localFile.absolutePath, timeduring)
-            lifecycleScope.launch(Dispatchers.Main) {
-                binding.transferStatusCard.visibility = View.GONE
-            }
-
-            val ext = localFile.extension.lowercase(Locale.ROOT)
-            val isRaw = ExtensionUtils.isRawExtension(ext)
-            val isJpeg = ExtensionUtils.isJpegExtension(ext)
-            Timber.d("file downloaded: %s ext=%s raw=%b jpeg=%b",
-                localFile.name, ext, isRaw, isJpeg)
-            if (isRaw || isJpeg) {
-                insertItemAndReveal(localFile, fileHandle)
-            }
-        }
+        // The download sink belongs to `App`: an import that finishes while the editor is in front must
+        // still be committed with its `LiveTetherPreset`.
     }
 
+    /**
+     * Reacts to photos `App` committed: dismisses the transfer card and reveals the newest one.
+     *
+     * Subscribing instead of installing a second `FileDownloadedListener` is what keeps the tethered
+     * ingest single-owner — the listener had to move to `App` so a background sync still lands.
+     */
     private fun renderUsbConnectionState(
         state: UsbPtpConnectionState,
         previousState: UsbPtpConnectionState?
@@ -873,6 +1015,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             is UsbPtpConnectionState.Disconnected -> {
+                (application as App).clearTransferActive()
                 binding.transferStatusCard.visibility = View.GONE
                 if (state.reason == "no_device" && previousState !is UsbPtpConnectionState.Disconnected) {
                     showInlineFeedback(getString(R.string.toast_no_usb_device))
@@ -883,6 +1026,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             is UsbPtpConnectionState.Error -> {
+                (application as App).clearTransferActive()
                 binding.transferStatusCard.visibility = View.GONE
                 if (state.reason == "permission_denied") {
                     showInlineFeedback(getString(R.string.usb_permission_denied))
@@ -895,23 +1039,6 @@ class MainActivity : AppCompatActivity() {
             is UsbPtpConnectionState.Connecting,
             is UsbPtpConnectionState.Disconnecting,
             UsbPtpConnectionState.Idle -> Unit
-        }
-    }
-
-    private fun insertItemAndReveal(localFile: File, objectHandle: Int) {
-        val entity = PhotoEntity(
-            path = localFile.absolutePath,
-            name = localFile.name,
-            uriString = null,
-            objectHandle = objectHandle
-        )
-        pendingRevealPath = entity.path
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                dao.insert(entity)
-            } catch (e: Exception) {
-                Timber.e(e, "DB insert failed")
-            }
         }
     }
 
@@ -932,7 +1059,10 @@ class MainActivity : AppCompatActivity() {
      */
     private fun evictCachesForRemovedItems(currentItems: List<PhotoEntity>) {
         val livePaths = currentItems.mapTo(mutableSetOf()) { it.path }
+        val removed = jpegSourceInfoCache.keys.filter { it !in livePaths }
+        removed.forEach { originalPreviewCache.remove(it) }
         jpegSourceInfoCache.keys.retainAll(livePaths)
+        if (currentItems.isEmpty()) originalPreviewCache.clear()
     }
 
     private fun ensurePhotoForPosition(path: String, position: Int) {
@@ -976,9 +1106,31 @@ class MainActivity : AppCompatActivity() {
         return ExtensionUtils.isRawExtension(ExtensionUtils.fileExtension(path))
     }
 
+    /**
+     * Resolves where a preview decode should read from.
+     *
+     * Must be called where the adapter list and [editedPhotoMap] are consistent (the main
+     * thread); the decode coroutine then works from this immutable snapshot only.
+     */
+    private fun snapshotPreviewDecodeSource(path: String): PreviewDecodeSource {
+        val decision = previewDisplayDecisionForPath(path)
+        return PreviewDecodeSource(
+            path = path,
+            previewOverridePath = decision?.previewPath,
+            isPreviewUnavailable = decision?.source == PreviewDisplaySource.UNAVAILABLE
+        )
+    }
+
     private fun ensureThumbnail(path: String) {
+        val source = snapshotPreviewDecodeSource(path)
+        if (source.isPreviewUnavailable) {
+            // The record owns this page: decoding the original would be exactly the fallback the
+            // edit is meant to hide, and cached bitmaps predate the current record.
+            discardCachedPreview(path)
+            return
+        }
         if (thumbnailCache.get(path) != null || fullBitmapCache.get(path) != null) return
-        if (!inFlightThumbnailPaths.add(path)) return
+        val task = thumbnailDecodes.begin(path) ?: return
         val isRaw = isRawPath(path)
         val dispatcher = if (isRaw) rawThumbnailDispatcher else Dispatchers.IO
         lifecycleScope.launch(dispatcher) {
@@ -986,12 +1138,15 @@ class MainActivity : AppCompatActivity() {
                 if (isRaw) {
                     Timber.d("start RAW thumbnail decode: %s", path)
                 }
-                val bitmap = decodeThumbnailBitmap(path) ?: return@launch
+                val bitmap = decodeThumbnailBitmap(source) ?: return@launch
                 if (isRaw) {
                     Timber.d("decoded RAW thumbnail bitmap %dx%d: %s", bitmap.width, bitmap.height, path)
                 }
                 withContext(Dispatchers.Main) {
-                    thumbnailCache.put(path, bitmap)
+                    val published = thumbnailDecodes.publishIfCurrent(task) {
+                        thumbnailCache.put(path, bitmap)
+                    }
+                    if (!published) return@withContext
                     adapter.notifyPathChanged(path)
                     filmstripAdapter.notifyPathChanged(path)
                     if (infoDrawerOpen && infoTargetPath == path) {
@@ -999,29 +1154,42 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             } finally {
-                inFlightThumbnailPaths.remove(path)
+                thumbnailDecodes.release(task)
             }
         }
     }
 
     private fun ensureFullPreview(path: String) {
+        val source = snapshotPreviewDecodeSource(path)
+        if (source.isPreviewUnavailable) {
+            discardCachedPreview(path)
+            return
+        }
         if (fullBitmapCache.get(path) != null) return
-        if (isRawPath(path)) return
-        if (!inFlightFullPaths.add(path)) return
+        if (isRawPath(path) && source.previewOverridePath == null) return
+        val task = fullPreviewDecodes.begin(path) ?: return
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val bitmap = decodeFullPreviewBitmap(path) ?: return@launch
+                val bitmap = decodeFullPreviewBitmap(source) ?: return@launch
                 withContext(Dispatchers.Main) {
-                    fullBitmapCache.put(path, bitmap)
-                    adapter.notifyPathChanged(path)
+                    val published = fullPreviewDecodes.publishIfCurrent(task) {
+                        fullBitmapCache.put(path, bitmap)
+                    }
+                    if (published) adapter.notifyPathChanged(path)
                 }
             } finally {
-                inFlightFullPaths.remove(path)
+                fullPreviewDecodes.release(task)
             }
         }
     }
 
-    private fun decodeThumbnailBitmap(path: String): Bitmap? {
+    private fun decodeThumbnailBitmap(source: PreviewDecodeSource): Bitmap? {
+        if (source.isPreviewUnavailable) return null
+        val previewOverride = source.previewOverridePath
+        if (previewOverride != null) {
+            return decodeSampledBitmap(previewOverride, THUMBNAIL_MAX_EDGE_PX)
+        }
+        val path = source.path
         val ext = ExtensionUtils.fileExtension(path)
         return try {
             when {
@@ -1042,7 +1210,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun decodeFullPreviewBitmap(path: String): Bitmap? {
+    private fun decodeFullPreviewBitmap(source: PreviewDecodeSource): Bitmap? {
+        if (source.isPreviewUnavailable) return null
+        val previewOverride = source.previewOverridePath
+        if (previewOverride != null) {
+            val targetEdge = (previewLongEdgePx * FULL_PREVIEW_SCALE_FACTOR)
+                .coerceAtMost(FULL_PREVIEW_MAX_EDGE_PX)
+            return decodeSampledBitmap(previewOverride, targetEdge)
+        }
+        val path = source.path
         val ext = ExtensionUtils.fileExtension(path)
         return try {
             when {
@@ -1058,6 +1234,103 @@ class MainActivity : AppCompatActivity() {
             Timber.w(e, "decodeFullPreviewBitmap failed for path=%s", path)
             null
         }
+    }
+
+    private fun openEditorForCurrentPhoto() {
+        if (adapter.itemCount == 0) return
+        val index = binding.viewPager.currentItem.coerceIn(0, adapter.itemCount - 1)
+        val entity = adapter.getItem(index) ?: return
+        val args = EditorLaunchArgs(
+            photoId = entity.id,
+            sourcePath = entity.path,
+            displayName = entity.name,
+            isRaw = isRawPath(entity.path)
+        )
+        editorLauncher.launch(EditorActivity.createIntent(this, args))
+    }
+
+    /** Display decision for the library photo at [path], or `null` when it is not in the pager. */
+    private fun previewDisplayDecisionForPath(path: String): PreviewDisplayDecision? =
+        entityForPath(path)?.let { entity ->
+            resolvePreviewDisplayDecision(entity, editedPhotoMap)
+        }
+
+    private fun entityForPath(path: String): PhotoEntity? {
+        val index = adapter.indexOfPath(path)
+        return if (index >= 0) adapter.getItem(index) else null
+    }
+
+    /**
+     * Read state for one page.
+     *
+     * An unavailable preview must not read the bitmap caches: they may still hold the original or
+     * a pre-edit preview decoded before the record changed. The explicit flag makes the pager clear
+     * its surface and show the recovery message instead of either stale image.
+     */
+    private fun renderStateForPath(path: String): PhotoRenderState {
+        val decision = previewDisplayDecisionForPath(path)
+        // The record itself is the version source: it changes when an edit is saved, reset, or its
+        // preview file is lost, and it stays equal across the decodes of one unchanged edit.
+        val contentVersion = decision?.let(::resolvePhotoContentVersion)
+            ?: PhotoContentVersion.Unspecified
+        if (decision?.source == PreviewDisplaySource.UNAVAILABLE) {
+            discardCachedPreview(path)
+            return PhotoRenderState(
+                thumbnail = null,
+                full = null,
+                isPreviewUnavailable = true,
+                contentVersion = contentVersion
+            )
+        }
+        return PhotoRenderState(
+            thumbnail = thumbnailCache.get(path),
+            full = fullBitmapCache.get(path),
+            contentVersion = contentVersion
+        )
+    }
+
+    private fun cachedThumbnailForPath(path: String): Bitmap? {
+        if (previewDisplayDecisionForPath(path)?.source == PreviewDisplaySource.UNAVAILABLE) {
+            discardCachedPreview(path)
+            return null
+        }
+        return thumbnailCache.get(path)
+    }
+
+    private fun discardCachedPreview(path: String) {
+        discardPreviewArtifacts(
+            path = path,
+            thumbnailDecodes = thumbnailDecodes,
+            fullPreviewDecodes = fullPreviewDecodes,
+            thumbnailCache = thumbnailCache,
+            fullCache = fullBitmapCache
+        )
+    }
+
+    private fun findPathByPhotoId(photoId: Long): String? {
+        for (i in 0 until adapter.itemCount) {
+            val item = adapter.getItem(i)
+            if (item != null && item.id == photoId) return item.path
+        }
+        return null
+    }
+
+    private fun invalidateCachedBitmapsForPath(path: String) {
+        // Revoking the decodes first makes every already running decode for this path stale: it
+        // can neither publish its bitmap nor release the marker of the decode started below.
+        thumbnailDecodes.invalidate(path)
+        fullPreviewDecodes.invalidate(path)
+        thumbnailCache.remove(path)
+        fullBitmapCache.remove(path)
+        originalPreviewCache.remove(path)
+        jpegSourceInfoCache.remove(path)
+        val idx = adapter.indexOfPath(path)
+        if (idx >= 0) {
+            ensurePhotoForPosition(path, idx)
+        }
+        adapter.notifyPathChanged(path)
+        filmstripAdapter.notifyPathChanged(path)
+        renderPhotoChrome()
     }
 
     private fun decodeSampledBitmap(path: String, targetLongEdge: Int): Bitmap? {
@@ -1081,12 +1354,62 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Decodes the *original* pixels a press-and-hold compare shows.
+     *
+     * The pager normally displays the graded preview, so this deliberately bypasses
+     * [snapshotPreviewDecodeSource] and reads the source file at the same preview resolution.
+     * Blocking: called from an IO coroutine by [BeforeAfterCompareController].
+     */
+    private fun decodeOriginalPreview(path: String): Bitmap? {
+        val ext = ExtensionUtils.fileExtension(path)
+        return try {
+            when {
+                ExtensionUtils.isRawExtension(ext) -> RawWrapper.decodeThumbnailBitmap(path)
+                ExtensionUtils.isJpegExtension(ext) -> {
+                    val targetEdge = (previewLongEdgePx * FULL_PREVIEW_SCALE_FACTOR)
+                        .coerceAtMost(FULL_PREVIEW_MAX_EDGE_PX)
+                    decodeSampledBitmap(path, targetEdge)
+                }
+                else -> null
+            }
+        } catch (oom: OutOfMemoryError) {
+            Timber.w(oom, "decodeOriginalPreview OOM for path=%s", path)
+            null
+        }
+    }
+
     private fun exportCurrent() {
         if (adapter.itemCount == 0) {
             showInlineFeedback(getString(R.string.toast_no_exportable_photos))
             return
         }
         val index = binding.viewPager.currentItem.coerceIn(0, adapter.itemCount - 1)
+        val hasRealEdit = editedGraphFor(index)?.let { !it.isIdentity() } == true
+        requestExport(index, bakeEdited = hasRealEdit)
+    }
+
+    private fun showExportMenu() {
+        if (adapter.itemCount == 0) {
+            showInlineFeedback(getString(R.string.toast_no_exportable_photos))
+            return
+        }
+        val index = binding.viewPager.currentItem.coerceIn(0, adapter.itemCount - 1)
+        val hasRealEdit = editedGraphFor(index)?.let { !it.isIdentity() } == true
+        val menu = PopupMenu(this, binding.exportButton)
+        menu.menu.add(0, MENU_EXPORT_BAKED, 0, R.string.export_menu_edited).isEnabled = hasRealEdit
+        menu.menu.add(0, MENU_EXPORT_ORIGINAL, 1, R.string.export_menu_original)
+        menu.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                MENU_EXPORT_BAKED -> requestExport(index, bakeEdited = true)
+                MENU_EXPORT_ORIGINAL -> requestExport(index, bakeEdited = false)
+            }
+            true
+        }
+        menu.show()
+    }
+
+    private fun requestExport(index: Int, bakeEdited: Boolean) {
         if (Build.VERSION.SDK_INT <= 28) {
             val granted = ContextCompat.checkSelfPermission(
                 this,
@@ -1094,6 +1417,7 @@ class MainActivity : AppCompatActivity() {
             ) == PackageManager.PERMISSION_GRANTED
             if (!granted) {
                 pendingExportIndex = index
+                pendingExportBake = bakeEdited
                 ActivityCompat.requestPermissions(
                     this,
                     arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
@@ -1102,70 +1426,162 @@ class MainActivity : AppCompatActivity() {
                 return
             }
         }
-        exportIndex(index)
+        exportIndex(index, bakeEdited)
     }
 
-    private fun exportIndex(index: Int) {
-        val entity = adapter.getItem(index) ?: return
+    private fun editedGraphFor(index: Int): EditGraph? {
+        val entity = adapter.getItem(index) ?: return null
+        val record = editedPhotoMap[entity.id] ?: return null
+        return EditGraphJsonCodec.decode(record.graphJson)
+    }
+
+    private fun setExportProgressState(
+        active: Boolean,
+        showOverlay: Boolean = false,
+        titleRes: Int = R.string.export_progress_baking_title,
+        subtitle: String = ""
+    ) {
+        binding.exportButton.isEnabled = !active
+        binding.exportButton.setImageDrawable(
+            if (active) null else ContextCompat.getDrawable(this, R.drawable.ic_export_24)
+        )
+        binding.exportButtonSpinner.visibility = if (active) View.VISIBLE else View.GONE
+        val overlay = binding.exportProgressOverlay
+        overlay.animate().cancel()
+        if (active && showOverlay) {
+            binding.exportProgressTitle.setText(titleRes)
+            binding.exportProgressSubtitle.text = subtitle
+            overlay.alpha = 0f
+            overlay.visibility = View.VISIBLE
+            overlay.animate().alpha(1f).setDuration(EXPORT_OVERLAY_FADE_MS).withEndAction(null).start()
+        } else if (overlay.visibility == View.VISIBLE) {
+            overlay.animate()
+                .alpha(0f)
+                .setDuration(EXPORT_OVERLAY_FADE_MS)
+                .withEndAction { overlay.visibility = View.GONE }
+                .start()
+        }
+    }
+
+    private fun bakeEditedPhoto(entity: PhotoEntity, graph: EditGraph) {
         val displayEntityName = entity.name ?: getString(R.string.photo_default_name)
-        showInlineFeedback(getString(R.string.toast_exporting, displayEntityName))
-
-        lifecycleScope.launch(Dispatchers.IO) {
-            val path = entity.path
-            if (path.isEmpty()) {
-                withContext(Dispatchers.Main) {
-                    showInlineFeedback(getString(R.string.toast_export_failed_invalid_path))
+        setExportProgressState(
+            active = true,
+            showOverlay = true,
+            titleRes = R.string.export_progress_baking_title,
+            subtitle = getString(R.string.export_progress_baking_detail_named, displayEntityName)
+        )
+        lifecycleScope.launch {
+            try {
+                val sink = EditorHostRegistry.gallerySink ?: gallerySink
+                val result = BakeExporter(this@MainActivity, sink, filesDir).bake(
+                    BakeRequest(
+                        sourcePath = entity.path,
+                        displayName = makeOutputName(entity.name, "_edited"),
+                        isRaw = isRawPath(entity.path),
+                        graph = graph
+                    )
+                )
+                when (result) {
+                    is BakeResult.Success -> {
+                        result.uri?.let { uri ->
+                            try {
+                                dao.updateUriString(entity.id, uri.toString())
+                            } catch (e: Exception) {
+                                Timber.w(e, "Failed to persist baked uriString for photo id=%d", entity.id)
+                            }
+                        }
+                        showInlineFeedback(getString(R.string.toast_baked_saved, result.displayName))
+                    }
+                    is BakeResult.Failure -> {
+                        Timber.w(result.cause, "Bake export failed: %s", result.reason)
+                        showInlineFeedback(getString(R.string.toast_bake_failed))
+                    }
                 }
-                return@launch
+            } finally {
+                setExportProgressState(active = false)
             }
-            val ext = ExtensionUtils.fileExtension(path)
+        }
+    }
 
-            val displayName = makeExportName(entity.name)
-            val saved: Uri? = try {
-                if (ExtensionUtils.isJpegExtension(ext)) {
-                    // JPEG：直接复制原文件到相册，避免解码与重压缩
-                    saveFileToGalleryByCopying(File(path), displayName)
-                } else if (ExtensionUtils.isRawExtension(ext)) {
-                    // RAW：优先使用缓存Bitmap，否则直接原生解码为 ARGB_8888 Bitmap
-                    val cachedBmp = fullBitmapCache.get(path)
-                    val bmp = cachedBmp ?: withContext(rawExportDispatcher) {
-                        try {
-                            RawWrapper.decodeToBitmap(path)
-                        } catch (e: Exception) {
-                            Timber.w(e, "RAW decode failed for path=%s, falling back to null", path)
-                            null
-                        }
-                    }
-                    try {
-                        if (bmp != null) saveBitmapToGallery(bmp, displayName) else null
-                    } finally {
-                        if (cachedBmp == null) {
-                            bmp?.recycle()
-                        }
-                    }
-                } else {
-                    null
+    private fun exportIndex(index: Int, bakeEdited: Boolean = false) {
+        val entity = adapter.getItem(index) ?: return
+        if (bakeEdited) {
+            bakeEditedPhoto(entity, editedGraphFor(index) ?: EditGraph())
+            return
+        }
+        val displayEntityName = entity.name ?: getString(R.string.photo_default_name)
+        val isRaw = isRawPath(entity.path)
+        setExportProgressState(
+            active = true,
+            showOverlay = isRaw,
+            titleRes = R.string.export_progress_original_title,
+            subtitle = displayEntityName
+        )
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                exportOriginalInBackground(entity)
+            } finally {
+                withContext(Dispatchers.Main) {
+                    setExportProgressState(active = false)
                 }
+            }
+        }
+    }
+
+    private suspend fun exportOriginalInBackground(entity: PhotoEntity) {
+        val path = entity.path
+        if (path.isEmpty()) {
+            withContext(Dispatchers.Main) {
+                showInlineFeedback(getString(R.string.toast_export_failed_invalid_path))
+            }
+            return
+        }
+        val ext = ExtensionUtils.fileExtension(path)
+        val displayName = makeOutputName(entity.name, "_export")
+        val saved = exportOriginalUri(path, ext, displayName)
+        if (saved != null) {
+            try {
+                dao.updateUriString(entity.id, saved.toString())
             } catch (e: Exception) {
-                Timber.e(e, "exportIndex: save failed")
+                Timber.w(e, "Failed to persist exported uriString for photo id=%d", entity.id)
+            }
+        }
+        withContext(Dispatchers.Main) {
+            val msg = if (saved != null) {
+                getString(R.string.toast_saved_to_gallery, displayName)
+            } else {
+                getString(R.string.toast_save_failed)
+            }
+            showInlineFeedback(msg)
+        }
+    }
+
+    private suspend fun exportOriginalUri(path: String, ext: String, displayName: String): Uri? = try {
+        when {
+            ExtensionUtils.isJpegExtension(ext) -> saveFileToGalleryByCopying(File(path), displayName)
+            ExtensionUtils.isRawExtension(ext) -> exportOriginalRawUri(path, displayName)
+            else -> null
+        }
+    } catch (e: Exception) {
+        Timber.e(e, "exportOriginalUri: save failed")
+        null
+    }
+
+    private suspend fun exportOriginalRawUri(path: String, displayName: String): Uri? {
+        val cachedBmp = fullBitmapCache.get(path)
+        val bmp = cachedBmp ?: withContext(rawExportDispatcher) {
+            try {
+                RawWrapper.decodeToBitmap(path)
+            } catch (e: Exception) {
+                Timber.w(e, "RAW decode failed for path=%s, falling back to null", path)
                 null
             }
-
-            if (saved != null) {
-                try {
-                    dao.updateUriString(entity.id, saved.toString())
-                } catch (e: Exception) {
-                    Timber.w(e, "Failed to persist exported uriString for photo id=%d", entity.id)
-                }
-            }
-
-            withContext(Dispatchers.Main) {
-                if (saved != null) {
-                    showInlineFeedback(getString(R.string.toast_saved_to_gallery, displayName))
-                } else {
-                    showInlineFeedback(getString(R.string.toast_save_failed))
-                }
-            }
+        }
+        return try {
+            bmp?.let { saveBitmapToGallery(it, displayName, rawSourcePath = path) }
+        } finally {
+            if (cachedBmp == null) bmp?.recycle()
         }
     }
 
@@ -1175,101 +1591,78 @@ class MainActivity : AppCompatActivity() {
         if (requestCode == REQ_WRITE_STORAGE) {
             val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
             val idx = pendingExportIndex
+            val bakeEdited = pendingExportBake
             pendingExportIndex = null
+            pendingExportBake = false
             if (granted && idx != null) {
-                exportIndex(idx)
+                exportIndex(idx, bakeEdited)
             } else if (!granted) {
                 showInlineFeedback(getString(R.string.toast_storage_permission_denied))
             }
         }
     }
 
-    private fun makeExportName(name: String?): String {
+    private fun makeOutputName(name: String?, suffix: String): String {
         return if (!name.isNullOrBlank()) {
-            name.substringBeforeLast('.') + "_export.jpg"
+            name.substringBeforeLast('.') + "$suffix.jpg"
         } else {
-            val ts = exportDateFormat.get()!!.format(Date())
-            "IMG_${ts}.jpg"
+            val timestamp = exportDateFormat.get()?.format(Date()) ?: System.currentTimeMillis()
+            val tail = if (suffix == "_edited") "_edited" else ""
+            "IMG_$timestamp$tail.jpg"
         }
     }
 
-    private fun saveBitmapToGallery(bitmap: Bitmap, displayName: String): Uri? {
-        return saveToGallery(displayName, mime = JPEG_MIME) { out ->
-            if (!bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_EXPORT_QUALITY, out)) {
-                throw IOException("JPEG compress failed")
+    private fun saveBitmapToGallery(
+        bitmap: Bitmap,
+        displayName: String,
+        rawSourcePath: String? = null
+    ): Uri? {
+        val rawMetadata = rawSourcePath?.let { src ->
+            try {
+                RawWrapper.extractExifMetadata(src)
+            } catch (e: Exception) {
+                Timber.w(e, "Failed to extract RAW EXIF metadata")
+                null
             }
         }
+        val outWidth = bitmap.width
+        val outHeight = bitmap.height
+        return gallerySink.save(
+            displayName = displayName,
+            mime = JPEG_MIME,
+            write = { out ->
+                if (!bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_EXPORT_QUALITY, out)) {
+                    throw IOException("JPEG compress failed")
+                }
+            },
+            writeExif = if (rawMetadata != null) {
+                { exifWriter ->
+                    ExifCopier.applyFromRawMetadata(
+                        metadata = rawMetadata,
+                        target = exifWriter,
+                        outputWidth = outWidth,
+                        outputHeight = outHeight
+                    )
+                }
+            } else {
+                null
+            }
+        )
     }
 
     // 直接复制文件至相册（用于JPEG等已经是目标格式的文件）
-    private fun saveFileToGalleryByCopying(srcFile: File, displayName: String, mime: String = JPEG_MIME): Uri? {
-        return saveToGallery(displayName, mime) { out ->
-            srcFile.inputStream().use { input -> input.copyTo(out) }
-        }
-    }
-
-    /**
-     * Writes one image into the system gallery under Pictures/PhotoSync.
-     *
-     * On API 29+ the entry is inserted through MediaStore with `IS_PENDING` set, so a
-     * failed write never leaves a half-written image visible. Older versions write the
-     * file directly to external storage, then announce it to MediaStore and return that
-     * insert's result.
-     *
-     * @param displayName File name to publish in the gallery.
-     * @param mime MIME type to record in MediaStore.
-     * @param write Callback that writes the image bytes; returning normally means success,
-     *   throwing marks the entry as failed and it is removed again.
-     * @return The MediaStore [Uri] of the new entry, or null when saving failed.
-     */
-    private fun saveToGallery(displayName: String, mime: String, write: (OutputStream) -> Unit): Uri? {
-        return try {
-            if (Build.VERSION.SDK_INT >= 29) {
-                val values = ContentValues().apply {
-                    put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
-                    put(MediaStore.MediaColumns.MIME_TYPE, mime)
-                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/PhotoSync")
-                    put(MediaStore.Images.Media.IS_PENDING, 1)
-                }
-                val resolver = contentResolver
-                val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-                if (uri != null) {
-                    try {
-                        val stream = resolver.openOutputStream(uri)
-                            ?: throw IOException("openOutputStream returned null")
-                        stream.use { out ->
-                            write(out)
-                            out.flush()
-                        }
-                    } catch (e: Exception) {
-                        resolver.delete(uri, null, null)
-                        throw e
-                    }
-                    values.clear()
-                    values.put(MediaStore.Images.Media.IS_PENDING, 0)
-                    resolver.update(uri, values, null, null)
-                }
-                uri
-            } else {
-                val pictures = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
-                val dir = File(pictures, GALLERY_DIR_NAME).apply { if (!exists()) mkdirs() }
-                val file = File(dir, displayName)
-                FileOutputStream(file).use { out ->
-                    write(out)
-                    out.flush()
-                }
-                // Insert into MediaStore on older devices so it shows up in gallery
-                val values = ContentValues().apply {
-                    put(MediaStore.MediaColumns.DATA, file.absolutePath)
-                    put(MediaStore.MediaColumns.MIME_TYPE, mime)
-                    put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
-                }
-                contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+    private fun saveFileToGalleryByCopying(
+        srcFile: File,
+        displayName: String,
+        mime: String = JPEG_MIME
+    ): Uri? {
+        return gallerySink.save(
+            displayName = displayName,
+            mime = mime,
+            write = { out ->
+                srcFile.inputStream().use { input -> input.copyTo(out) }
             }
-        } catch (e: Exception) {
-            Timber.e(e, "saveToGallery failed for %s", displayName)
-            null
-        }
+        )
     }
 
     /**
@@ -1376,15 +1769,16 @@ class MainActivity : AppCompatActivity() {
         withContext(Dispatchers.IO) {
             try {
                 // Remove from cache
+                thumbnailDecodes.invalidate(entity.path)
+                fullPreviewDecodes.invalidate(entity.path)
                 thumbnailCache.remove(entity.path)
                 fullBitmapCache.remove(entity.path)
-                inFlightThumbnailPaths.remove(entity.path)
-                inFlightFullPaths.remove(entity.path)
                 jpegSourceInfoCache.remove(entity.path)
 
-                // Delete physical file
+                // Delete physical file and any rendered editor preview caches
                 val file = File(entity.path)
                 val fileDeleted = if (file.exists()) file.delete() else true
+                clearPhotoEditCacheDir(cacheDir, entity.id)
 
                 // Remove from database
                 dao.delete(entity)

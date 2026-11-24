@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PhotoSync</string>
+
+    <string name="toast_no_usb_device">No camera detected</string>
+    <string name="toast_device_connected">Camera connected; ready to sync photos</string>
+    <string name="toast_no_exportable_photos">No photos to export</string>
+    <string name="toast_exporting">Exporting %1$s</string>
+    <string name="toast_export_failed_invalid_path">Export failed: invalid path</string>
+    <string name="toast_saved_to_gallery">Saved to gallery: %1$s</string>
+    <string name="toast_save_failed">Export failed</string>
+    <string name="toast_baking_export">Baking export %1$s</string>
+    <string name="toast_baked_saved">Exported edited photo: %1$s</string>
+    <string name="toast_bake_failed">Bake export failed; check available storage</string>
+    <string name="export_menu_edited">Export Edited Photo</string>
+    <string name="export_menu_original">Export Unedited Original</string>
+    <string name="toast_storage_permission_denied">Storage permission denied; cannot export</string>
+    <string name="usb_inserted">Camera detected; tap Connect at top-left to start syncing</string>
+    <string name="usb_removed">Camera disconnected</string>
+    <string name="usb_permission_denied">USB permission denied</string>
+    <string name="photo_default_name">Photo</string>
+    <string name="export_to_gallery">Export to gallery</string>
+    <string name="delete_photo">Delete photo</string>
+    <string name="connect_camera">Connect camera</string>
+    <string name="camera_ready_to_connect">Ready · Tap to connect</string>
+    <string name="disconnect_camera">Disconnect camera</string>
+    <string name="camera_not_detected">No camera detected</string>
+    <string name="camera_connecting">Connecting…</string>
+    <string name="camera_waiting_permission">Waiting for USB permission…</string>
+    <string name="camera_disconnecting">Disconnecting…</string>
+    <string name="toast_no_deletable_photos">No photos to delete</string>
+    <string name="toast_deleting">Deleting %s</string>
+    <string name="toast_deleted">Deleted %s</string>
+    <string name="toast_delete_failed">Delete failed</string>
+    <string name="dialog_delete_title">Delete photo</string>
+    <string name="dialog_delete_message">Delete this photo? This action cannot be undone.</string>
+    <string name="delete_on_camera">Also delete original on camera</string>
+    <string name="delete_on_camera_unavailable_not_connected">Camera disconnected; only local copy can be deleted</string>
+    <string name="delete_on_camera_unavailable_not_supported">Camera does not support USB deletion</string>
+    <string name="delete_on_camera_unavailable_no_handle">Imported earlier; camera original handle unavailable</string>
+    <string name="camera_delete_failed">Failed to delete photo on camera</string>
+    <string name="camera_delete_failed_not_connected">Camera disconnected; camera original was not deleted</string>
+    <string name="camera_delete_failed_not_supported">Camera does not support USB deletion</string>
+    <string name="camera_delete_failed_not_found">Photo not found on camera</string>
+    <string name="camera_delete_failed_protected">Photo is protected on camera</string>
+    <string name="camera_delete_failed_read_only">Camera storage is read-only</string>
+    <string name="dialog_delete_confirm">Delete</string>
+    <string name="dialog_cancel">Cancel</string>
+
+    <string name="camera_connected_label">Connected</string>
+    <string name="camera_error_permission_denied">Permission denied · Retry</string>
+    <string name="camera_error_missing_device">Camera missing · Retry</string>
+    <string name="camera_error_connect_failed">Connection failed · Retry</string>
+    <string name="dialog_disconnect_title">Disconnect camera?</string>
+    <string name="dialog_disconnect_message">Disconnecting returns the camera to standalone shooting; reconnect anytime to resume syncing.</string>
+    <string name="dialog_disconnect_confirm">Disconnect</string>
+    <string name="empty_no_camera_title">No camera detected</string>
+    <string name="empty_no_camera_desc">Connect your camera via USB cable in PTP / PC Remote mode</string>
+    <string name="empty_ready_title">Camera detected (not connected)</string>
+    <string name="empty_ready_desc">Tap below to grant USB access and start tethering</string>
+    <string name="empty_connecting_title">Connecting to camera…</string>
+    <string name="empty_connecting_desc">Allow USB access in the system prompt to begin syncing</string>
+    <string name="empty_connected_title">Camera ready, waiting for shutter</string>
+    <string name="empty_connected_desc">JPEG and RAW photos will sync here automatically after each shot</string>
+    <string name="empty_error_title">Could not open USB session</string>
+    <string name="empty_error_desc_permission">USB permission was not granted; tap below to retry</string>
+    <string name="empty_error_desc_generic">Camera may be busy or cable unstable; check and retry</string>
+    <string name="empty_action_connect">Connect Camera</string>
+    <string name="empty_action_retry">Retry Connection</string>
+    <string name="format_raw">RAW</string>
+    <string name="format_jpeg">JPEG</string>
+
+    <string name="decoding_raw_preview">Decoding RAW preview…</string>
+    <string name="loading_photo_preview">Loading preview…</string>
+    <string name="edited_preview_unavailable">Edited preview unavailable. Open the editor and save again.</string>
+    <string name="sync_transfer_in_progress">Syncing photo</string>
+    <string name="sync_transfer_percent">%1$d%%</string>
+    <string name="feedback_camera_disconnected">Camera disconnected</string>
+
+    <string name="exported_badge">✓ Exported</string>
+    <string name="photo_info_toggle">Info</string>
+    <string name="info_label_resolution">Resolution</string>
+    <string name="info_label_format_size">Format / Size</string>
+    <string name="info_label_camera_handle">Camera Handle</string>
+    <string name="info_unknown_value">—</string>
+    <string name="info_handle_available">#0x%1$x</string>
+    <string name="info_handle_no_camera_support">#0x%1$x</string>
+    <string name="info_handle_not_connected">#0x%1$x (offline)</string>
+    <string name="info_handle_missing">No handle</string>
+    <string name="dialog_delete_title_named">Delete %1$s</string>
+
+    <string name="auto_follow_toggle">AutoFollow</string>
+    <string name="feedback_auto_follow_on">AutoFollow on: jumps to new photos</string>
+    <string name="feedback_auto_follow_off">AutoFollow off: shows banner only</string>
+    <string name="new_photo_banner_count">%1$d new photos · Tap to view</string>
+
+    <string name="filmstrip_collapse">▾ Hide Filmstrip</string>
+    <string name="filmstrip_expand">▴ Show Filmstrip</string>
+    <string name="filmstrip_exported_mark">✓</string>
+
+    <string name="edited_badge">✎ Edited</string>
+    <string name="filmstrip_edited_mark">✎</string>
+    <string name="edit_photo">Edit photo</string>
+
+    <string name="quick_strip_expand">▴ Presets</string>
+    <string name="quick_strip_expand_active">▴ %1$s</string>
+    <string name="quick_strip_collapse">▾ Hide Presets</string>
+    <string name="quick_strip_no_preset">None</string>
+    <string name="quick_strip_compare_hold">Hold to compare original</string>
+    <string name="quick_strip_preset_applied_named">Applied \"%1$s\" (auto-applied to new shots)</string>
+    <string name="quick_strip_preset_selected_tether_only">Selected \"%1$s\" for incoming tethered shots</string>
+    <string name="quick_strip_preset_cleared">Switched to No Preset (originals)</string>
+    <string name="quick_strip_apply_failed">Failed to apply preset</string>
+
+    <string name="compare_original_pill">Original (Before)</string>
+
+    <string name="export_progress_baking_title">Baking Export</string>
+    <string name="export_progress_baking_detail">Rendering at full resolution and saving to gallery…</string>
+    <string name="export_progress_baking_detail_named">%1$s · Rendering at full resolution…</string>
+    <string name="export_progress_original_title">Exporting Original</string>
+</resources>

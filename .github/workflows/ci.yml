@@ -64,10 +64,10 @@ jobs:
                 run: chmod +x gradlew
 
             -   name: Run unit tests
-                run: ./gradlew --no-daemon :app:testDebugUnitTest
+                run: ./gradlew --no-daemon testDebugUnitTest
 
             -   name: Run Android lint
-                run: ./gradlew --no-daemon :app:lintDebug
+                run: ./gradlew --no-daemon lintDebug
 
             -   name: Upload test report
                 if: always()

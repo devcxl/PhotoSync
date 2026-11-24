@@ -105,5 +105,6 @@ Release AAB 位于 `app/build/outputs/bundle/release/app-release.aab`。
 
 ## License
 
-本项目以 [MIT](LICENSE) 许可发布。第三方组件（LibRaw、Little CMS）遵循各自的许可，见
-`libraw/src/main/cpp/third_party/` 内的许可证文件。
+本项目以 [MIT](LICENSE) 许可发布。第三方组件（LibRaw、Little CMS、libjpeg-turbo 等）遵循
+各自的许可，完整的版权声明、源码位置与 LibRaw（LGPL-2.1）替换说明见
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

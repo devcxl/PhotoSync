@@ -1,0 +1,537 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/editorRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/editor_bg"
+    android:keepScreenOn="true">
+
+    <!-- Central GLES 3.0 preview canvas -->
+    <android.opengl.GLSurfaceView
+        android:id="@+id/glSurfaceView"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        app:layout_constraintBottom_toTopOf="@id/bottomPanel"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <!-- Geometry overlay: crop handles, straighten grid and perspective pins -->
+    <cn.devcxl.photosync.editor.ui.widgets.CropOverlayView
+        android:id="@+id/cropOverlayView"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        app:layout_constraintBottom_toTopOf="@id/bottomPanel"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <!-- Liquify brush overlay: dashed brush ring and displacement strokes -->
+    <cn.devcxl.photosync.editor.ui.widgets.LiquifyBrushOverlayView
+        android:id="@+id/liquifyBrushOverlayView"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone"
+        app:layout_constraintBottom_toTopOf="@id/bottomPanel"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <!-- Body guide overlay: draggable waist / hip lines for Body Reshaping -->
+    <cn.devcxl.photosync.editor.ui.widgets.BodyGuideOverlayView
+        android:id="@+id/bodyGuideOverlayView"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone"
+        app:layout_constraintBottom_toTopOf="@id/bottomPanel"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <!-- Compare-original status pill -->
+    <TextView
+        android:id="@+id/compareStatusPill"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="60dp"
+        android:background="@color/editor_glass_bg"
+        android:paddingStart="14dp"
+        android:paddingTop="6dp"
+        android:paddingEnd="14dp"
+        android:paddingBottom="6dp"
+        android:text="@string/editor_comparing_original"
+        android:textColor="@color/editor_text_primary"
+        android:textSize="12sp"
+        android:textStyle="bold"
+        android:visibility="gone"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        tools:visibility="visible" />
+
+    <!-- Top floating bar -->
+    <LinearLayout
+        android:id="@+id/editorTopBar"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="14dp"
+        android:paddingTop="12dp"
+        android:paddingEnd="14dp"
+        android:paddingBottom="12dp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <FrameLayout
+            android:layout_width="@dimen/editor_top_btn_height"
+            android:layout_height="@dimen/editor_top_btn_height">
+
+            <ImageButton
+                android:id="@+id/btnDone"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@drawable/bg_editor_primary_icon_btn"
+                android:contentDescription="@string/editor_done"
+                android:padding="8dp"
+                android:scaleType="centerInside"
+                android:src="@drawable/ic_editor_done_24"
+                app:tint="@color/editor_text_primary" />
+
+            <ProgressBar
+                android:id="@+id/btnDoneSpinner"
+                style="?android:attr/progressBarStyleSmall"
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:layout_gravity="center"
+                android:indeterminate="true"
+                android:indeterminateTint="@color/editor_text_primary"
+                android:visibility="gone" />
+        </FrameLayout>
+
+        <cn.devcxl.photosync.editor.ui.widgets.BaseLookToggleView
+            android:id="@+id/baseLookToggle"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/editor_top_btn_height"
+            android:layout_marginStart="8dp"
+            android:background="@color/editor_accent_blue_pill"
+            android:visibility="gone"
+            tools:visibility="visible" />
+
+        <Space
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:layout_weight="1" />
+
+        <ImageButton
+            android:id="@+id/btnUndo"
+            android:layout_width="@dimen/editor_top_btn_height"
+            android:layout_height="@dimen/editor_top_btn_height"
+            android:layout_marginEnd="8dp"
+            android:background="@drawable/bg_editor_icon_btn"
+            android:contentDescription="@string/editor_undo"
+            android:padding="8dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_editor_undo_24"
+            app:tint="@color/editor_text_primary" />
+
+        <ImageButton
+            android:id="@+id/btnRedo"
+            android:layout_width="@dimen/editor_top_btn_height"
+            android:layout_height="@dimen/editor_top_btn_height"
+            android:layout_marginEnd="8dp"
+            android:background="@drawable/bg_editor_icon_btn"
+            android:contentDescription="@string/editor_redo"
+            android:padding="8dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_editor_redo_24"
+            app:tint="@color/editor_text_primary" />
+
+        <FrameLayout
+            android:layout_width="@dimen/editor_top_btn_height"
+            android:layout_height="@dimen/editor_top_btn_height"
+            android:layout_marginEnd="8dp">
+
+            <ImageButton
+                android:id="@+id/btnExport"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@drawable/bg_editor_icon_btn"
+                android:contentDescription="@string/editor_export"
+                android:padding="8dp"
+                android:scaleType="centerInside"
+                android:src="@drawable/ic_editor_export_24"
+                app:tint="@color/editor_text_primary" />
+
+            <ProgressBar
+                android:id="@+id/btnExportSpinner"
+                style="?android:attr/progressBarStyleSmall"
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:layout_gravity="center"
+                android:indeterminate="true"
+                android:indeterminateTint="@color/editor_accent_blue"
+                android:visibility="gone" />
+        </FrameLayout>
+
+        <ImageButton
+            android:id="@+id/btnCompare"
+            android:layout_width="@dimen/editor_top_btn_height"
+            android:layout_height="@dimen/editor_top_btn_height"
+            android:background="@drawable/bg_editor_icon_btn"
+            android:contentDescription="@string/editor_compare"
+            android:padding="8dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_editor_compare_24"
+            app:tint="@color/editor_text_primary" />
+    </LinearLayout>
+
+    <!-- Quiet "+N new photos" pill: background ingest must never steal focus from a gesture -->
+    <TextView
+        android:id="@+id/newSyncedPhotoPill"
+        android:layout_width="wrap_content"
+        android:layout_height="28dp"
+        android:layout_marginTop="62dp"
+        android:background="@drawable/bg_editor_new_photos_pill"
+        android:clickable="true"
+        android:focusable="false"
+        android:gravity="center"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:textColor="@color/editor_text_primary"
+        android:textSize="12sp"
+        android:textStyle="bold"
+        android:visibility="gone"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/editorTopBar"
+        tools:text="+3 新照片"
+        tools:visibility="visible" />
+
+    <!-- Bottom 3-tier drawer (Variant A + B hybrid) -->
+    <LinearLayout
+        android:id="@+id/bottomPanel"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:background="@color/editor_surface"
+        android:orientation="vertical"
+        android:paddingStart="16dp"
+        android:paddingTop="12dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="16dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent">
+
+        <include android:id="@+id/portraitPreviewStatus" layout="@layout/editor_portrait_preview_status" />
+
+        <!-- Tier 1: Parameter Header & DialSeekBar -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/activeToolLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/editor_tool_exposure"
+                android:textColor="@color/editor_text_primary"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:text="@string/editor_double_tap_reset_hint"
+                android:textColor="@color/editor_text_muted"
+                android:textSize="11sp" />
+
+            <TextView
+                android:id="@+id/activeValueText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:textColor="@color/editor_accent_blue"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                tools:text="+0.00 EV" />
+        </LinearLayout>
+
+        <cn.devcxl.photosync.editor.ui.widgets.DialSeekBar
+            android:id="@+id/dialSeekBar"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:layout_marginTop="4dp" />
+
+        <include
+            android:id="@+id/rotateFlipPanel"
+            layout="@layout/editor_rotate_flip_panel" />
+
+        <include
+            android:id="@+id/colorPanels"
+            layout="@layout/editor_color_panels" />
+
+        <include
+            android:id="@+id/detailPanels"
+            layout="@layout/editor_detail_panels" />
+
+        <include
+            android:id="@+id/effectPanels"
+            layout="@layout/editor_effect_panels" />
+
+        <include
+            android:id="@+id/portraitPanels"
+            layout="@layout/editor_portrait_panels" />
+
+        <include
+            android:id="@+id/presetPanel"
+            layout="@layout/editor_preset_panel" />
+
+        <!-- Tier 2: Sub-tool chip row -->
+        <HorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:id="@+id/subToolChipContainer"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal" />
+        </HorizontalScrollView>
+
+        <!-- Tier 2b: crop aspect-ratio lock chips -->
+        <HorizontalScrollView
+            android:id="@+id/aspectChipScroll"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:scrollbars="none"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:id="@+id/aspectChipContainer"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal" />
+        </HorizontalScrollView>
+
+        <!-- Tier 1b: liquify brush controls (mode, size, strength, reset) -->
+        <LinearLayout
+            android:id="@+id/liquifyPanel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:id="@+id/liquifyModeChipContainer"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal" />
+
+                <Space
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:layout_weight="1" />
+
+                <ImageButton
+                    android:id="@+id/liquifyResetButton"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:background="@drawable/bg_editor_icon_btn"
+                    android:contentDescription="@string/editor_liquify_reset"
+                    android:padding="7dp"
+                    android:scaleType="centerInside"
+                    android:src="@drawable/ic_editor_reset_24"
+                    app:tint="@color/editor_text_secondary" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/editor_liquify_size_label"
+                    android:textColor="@color/editor_text_secondary"
+                    android:textSize="11sp" />
+
+                <cn.devcxl.photosync.editor.ui.widgets.DialSeekBar
+                    android:id="@+id/liquifySizeSeekBar"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_marginStart="6dp"
+                    android:layout_weight="1" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/editor_liquify_strength_label"
+                    android:textColor="@color/editor_text_secondary"
+                    android:textSize="11sp" />
+
+                <cn.devcxl.photosync.editor.ui.widgets.DialSeekBar
+                    android:id="@+id/liquifyStrengthSeekBar"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_marginStart="6dp"
+                    android:layout_weight="1" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Tier 3: 6 fixed category tabs -->
+        <LinearLayout
+            android:id="@+id/categoryTabRow"
+            android:layout_width="match_parent"
+            android:layout_height="36dp"
+            android:layout_marginTop="10dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:weightSum="6">
+
+            <TextView
+                android:id="@+id/tabPreset"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="@string/editor_tab_preset"
+                android:textColor="@color/editor_text_muted"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/tabGeometry"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="@string/editor_tab_geometry"
+                android:textColor="@color/editor_text_muted"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/tabTone"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="@color/editor_surface_elevated"
+                android:gravity="center"
+                android:text="@string/editor_tab_tone"
+                android:textColor="@color/editor_text_primary"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tabColor"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="@string/editor_tab_color"
+                android:textColor="@color/editor_text_muted"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/tabDetail"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="@string/editor_tab_detail"
+                android:textColor="@color/editor_text_muted"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/tabPortrait"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="@string/editor_tab_portrait"
+                android:textColor="@color/editor_text_muted"
+                android:textSize="12sp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- Dedicated full-resolution bake progress overlay -->
+    <FrameLayout
+        android:id="@+id/exportProgressOverlay"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:background="#8C000000"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:background="@drawable/bg_editor_progress_card"
+            android:gravity="center_horizontal"
+            android:minWidth="220dp"
+            android:orientation="vertical"
+            android:paddingStart="24dp"
+            android:paddingTop="22dp"
+            android:paddingEnd="24dp"
+            android:paddingBottom="20dp">
+
+            <ProgressBar
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:indeterminate="true"
+                android:indeterminateTint="@color/editor_accent_blue" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/editor_exporting"
+                android:textColor="@color/editor_text_primary"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:gravity="center"
+                android:text="@string/editor_exporting_detail"
+                android:textColor="@color/editor_text_secondary"
+                android:textSize="11sp" />
+        </LinearLayout>
+    </FrameLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

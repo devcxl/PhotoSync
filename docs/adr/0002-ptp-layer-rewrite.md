@@ -48,10 +48,11 @@
 
 ## 已知遗留
 
-1. **LibRaw 的 LGPL 义务未处理**：`:libraw` 仍把 LibRaw（LGPL-2.1）与 lcms2（MIT）静态
-   链接进单个 `libraw.so`。LGPL §6 要求使用者能替换该库，静态链接的单 `.so` 不满足。
-   可选路径：把 LibRaw 编成独立 `.so` 并在运行时链接、提供可重链接的目标文件，或购买
-   LibRaw 商业授权。此项不在本次改动范围内（`third_party/` 未改动）。
+1. ~~**LibRaw 的 LGPL 义务未处理**~~：已解决。LibRaw 现编译为独立的 `libraw.so`（含静态
+   链接的 Little-CMS 与 OpenMP 运行时），`libraw_wrapper.so` 通过 DT_NEEDED 动态链接它；
+   源码与构建脚本随仓库提供，使用者可重编并替换 APK 中的 `lib/<abi>/libraw.so`。详见
+   `THIRD_PARTY_NOTICES.md`。剩余限制：`raw_autobright.cpp` 仍读取 LibRaw 0.21.x 的内部
+   直方图，替换时需保持 0.21.x ABI。
 2. **需要真机验证**：单元测试覆盖协议编解码与策略，但 USB 传输、厂商事件通道、长时间
    同步仍需在 Canon / Nikon / Sony 机身上回归。
 3. **相册删除路径**（`DeleteObject`）保留原有前置校验，但同样未在真机验证。

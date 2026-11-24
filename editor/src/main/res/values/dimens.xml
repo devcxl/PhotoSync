@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="editor_top_btn_height">36dp</dimen>
+    <dimen name="editor_side_panel_width">320dp</dimen>
+    <dimen name="editor_liquify_reset_button_height">28dp</dimen>
+</resources>

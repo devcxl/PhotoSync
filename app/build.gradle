@@ -12,8 +12,8 @@ android {
         applicationId "cn.devcxl.photosync"
         minSdk = 24
         targetSdk = 36
-        versionCode 2
-        versionName "0.2.1"
+        versionCode 3
+        versionName "0.3.0"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -59,6 +59,20 @@ android {
             minifyEnabled = true
             shrinkResources = true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+
+            // GitHub Releases distributes the AAB directly, so the native symbol tables (+6.21 MB
+            // for two ABIs) buy nothing.
+            ndk {
+                debugSymbolLevel = "none"
+            }
+        }
+    }
+
+    // MediaPipe ships x86/x86_64 native libraries that a phone never loads; an AAB ignores
+    // `splits.abi` and would otherwise pack all four ABIs (+26.36 MB).
+    packaging {
+        jniLibs {
+            excludes += ["lib/x86/**", "lib/x86_64/**"]
         }
     }
     compileOptions {
@@ -71,8 +85,12 @@ android {
     buildFeatures {
         viewBinding = true
     }
+    testOptions {
+        unitTests.includeAndroidResources = true
+    }
 }
 dependencies {
+    implementation project(':editor')
     implementation project(':libraw')
 
     implementation libs.androidx.core.ktx
@@ -81,6 +99,7 @@ dependencies {
 
     // Required by PhotoView
     implementation libs.androidx.appcompat
+    implementation libs.androidx.exifinterface
 
     implementation libs.androidx.activity.ktx
 
@@ -91,6 +110,7 @@ dependencies {
     implementation libs.timber
 
     testImplementation libs.junit
+    testImplementation libs.robolectric
     androidTestImplementation libs.androidx.junit
     androidTestImplementation libs.androidx.espresso.core
 

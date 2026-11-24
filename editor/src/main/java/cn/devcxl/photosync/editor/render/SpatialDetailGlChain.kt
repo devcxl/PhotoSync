@@ -1,0 +1,156 @@
+package cn.devcxl.photosync.editor.render
+
+import kotlin.math.min
+
+import android.opengl.GLES20
+import timber.log.Timber
+
+import cn.devcxl.photosync.editor.domain.PassDEffectsMath
+import cn.devcxl.photosync.editor.domain.SpatialDetailParams
+import cn.devcxl.photosync.editor.domain.SpatialDetailPlan
+import cn.devcxl.photosync.editor.domain.SpatialDetailStage
+import cn.devcxl.photosync.editor.domain.TileUvTransform
+
+/**
+ * Physical `SpatialDetailChain`: runs the planned Pass C sub-passes through a two-target ping-pong so
+ * every stage reads a complete frame and never its own write.
+ *
+ * Scales `sharpenRadiusPx` by `workingShortEdge / fullResolutionShortEdge` and scales Stage 0 skin
+ * blur step proportionally to working resolution so preview and full-res Bake stay physically aligned.
+ */
+internal class SpatialDetailGlChain(private val capabilities: GlCapabilities) {
+
+    private val program = SpatialDetailGlProgram()
+    private val pingPong = arrayOf(
+        OffscreenColorTarget(capabilities),
+        OffscreenColorTarget(capabilities)
+    )
+
+    /** FBO draw calls issued by the most recent [run]. */
+    var lastDrawCalls: Int = 0
+        private set
+
+    /** True when the Pass C shader compiled on this driver. */
+    val isReady: Boolean
+        get() = program.isReady
+
+    /** Compiles the Pass C program; a failure raises Tier 3 for this context only. */
+    fun init(): Boolean {
+        lastDrawCalls = 0
+        // A recreated context needs fresh attachments: a target disabled by the previous driver must
+        // be able to allocate again.
+        pingPong.forEach { it.resetDisableFlag() }
+        val ready = program.init()
+        if (!ready) capabilities.markMinimalFallback("Pass C SpatialDetail")
+        return ready
+    }
+
+    /** Releases every GL object owned by the chain. */
+    fun release() {
+        program.release()
+        pingPong.forEach { it.release() }
+        lastDrawCalls = 0
+    }
+
+    /**
+     * Executes [plan] against [inputTextureId].
+     *
+     * @return The texture that now holds the Pass C output, or [inputTextureId] when nothing ran.
+     */
+    fun run(
+        inputTextureId: Int,
+        width: Int,
+        height: Int,
+        fullResolutionShortEdge: Int,
+        params: SpatialDetailParams,
+        plan: SpatialDetailPlan,
+        prepassTextureId: Int,
+        skinMaskTextureId: Int,
+        atmosphericLight: FloatArray,
+        guideTransform: TileUvTransform = TileUvTransform.IDENTITY
+    ): Int {
+        lastDrawCalls = 0
+        if (!program.isReady || inputTextureId == 0 || plan.stages.isEmpty()) return inputTextureId
+        val fullShort = fullResolutionShortEdge.coerceAtLeast(1).toFloat()
+        val workingShort = min(width, height).coerceAtLeast(1).toFloat()
+        val resolutionScale = (workingShort / fullShort).coerceIn(MIN_RESOLUTION_SCALE, 1.0f)
+        val scaledRadiusPx = (params.sharpenRadiusPx * resolutionScale)
+            .coerceIn(SpatialDetailParams.MIN_SHARPEN_RADIUS_PX, SpatialDetailParams.MAX_SHARPEN_RADIUS_PX)
+        val skinBlurScale = (workingShort * SKIN_BLUR_REFERENCE_SCALE).coerceAtLeast(1.0f)
+        var current = inputTextureId
+        for ((index, stage) in plan.stages.withIndex()) {
+            val target = pingPong[index % pingPong.size]
+            target.ensureSize(width, height, allowHalfFloat = true, exactSize = true)
+            if (!target.isReady) {
+                Timber.w("Pass C target unavailable; spatial detail stops at stage %s", stage)
+                return current
+            }
+            val ditherAmp = if (target.isHalfFloatTarget) 0.0f else PassDEffectsMath.DITHER_AMPLITUDE
+            target.bind()
+            program.draw(
+                buildStageDrawParams(
+                    stage, current, prepassTextureId, skinMaskTextureId, params,
+                    atmosphericLight, scaledRadiusPx, skinBlurScale, width, height, ditherAmp, guideTransform
+                )
+            )
+            target.unbind()
+            current = target.textureId
+            lastDrawCalls++
+        }
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+        return current
+    }
+
+    private fun buildStageDrawParams(
+        stage: SpatialDetailStage,
+        inputTextureId: Int,
+        prepassTextureId: Int,
+        skinMaskTextureId: Int,
+        params: SpatialDetailParams,
+        atmosphericLight: FloatArray,
+        scaledRadiusPx: Float,
+        skinBlurScale: Float,
+        width: Int,
+        height: Int,
+        ditherAmp: Float,
+        guideTransform: TileUvTransform
+    ): SpatialDetailDrawParams = SpatialDetailDrawParams(
+        stage = stage,
+        inputTextureId = inputTextureId,
+        prepassTextureId = if (needsPrepass(stage)) prepassTextureId else 0,
+        skinMaskTextureId = if (needsSkinMask(stage)) skinMaskTextureId else 0,
+        skinSmooth = params.skinSmooth,
+        skinTexture = params.skinTexture,
+        skinEvenTone = params.skinEvenTone,
+        skinBlurScale = skinBlurScale,
+        dehazeStrength = params.dehaze,
+        atmosphericLight = atmosphericLight,
+        clarity = params.clarity,
+        texture = params.texture,
+        nrLuma = params.nrLuma,
+        nrChroma = params.nrChroma,
+        nrDetail = params.nrDetail,
+        sharpenAmount = params.sharpenAmount,
+        sharpenRadiusPx = scaledRadiusPx,
+        sharpenThreshold = params.sharpenThreshold,
+        sharpenMasking = params.sharpenMasking,
+        texelWidth = width,
+        texelHeight = height,
+        ditherAmp = ditherAmp,
+        guideUvScaleX = guideTransform.scaleX,
+        guideUvScaleY = guideTransform.scaleY,
+        guideUvOffsetX = guideTransform.offsetX,
+        guideUvOffsetY = guideTransform.offsetY
+    )
+
+    private fun needsPrepass(stage: SpatialDetailStage): Boolean =
+        stage == SpatialDetailStage.DEHAZE || stage == SpatialDetailStage.CLARITY_TEXTURE
+
+    private fun needsSkinMask(stage: SpatialDetailStage): Boolean =
+        stage == SpatialDetailStage.SKIN_SMOOTHING || stage == SpatialDetailStage.SHARPEN
+
+    private companion object {
+        private const val MIN_RESOLUTION_SCALE = 0.05f
+        private const val SKIN_BLUR_REFERENCE_SCALE = 1.0f / 512.0f
+    }
+}

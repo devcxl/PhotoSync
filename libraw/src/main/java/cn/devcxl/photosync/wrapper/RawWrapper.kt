@@ -7,6 +7,11 @@ import android.util.Log
 object RawWrapper {
     private const val TAG = "RawWrapper"
     init {
+        // libraw.so is the independently replaceable LGPL-2.1 component; c++_shared and libomp are
+        // its runtime dependencies. Load them explicitly in dependency order: some vendor system
+        // loaders do not resolve DT_NEEDED from the app's nativeLibraryDir early enough.
+        System.loadLibrary("c++_shared")
+        System.loadLibrary("raw")
         System.loadLibrary("raw_wrapper")
     }
 
@@ -14,6 +19,33 @@ object RawWrapper {
     external fun decodeThumbnail(path: String): ByteArray?
     external fun decodeToRGB(path: String): ByteArray?
     external fun decodeToBitmapNative(path: String): Bitmap?
+
+    /**
+     * Decodes [path] into 16-bit linear-light `RGBA16F` pixels for the editor's GLES 3.0
+     * pipeline, bypassing the 8-bit browse-page tone mapping.
+     *
+     * The native decoder configures LibRaw with `output_bps = 16`, sRGB primaries and a linear
+     * transfer function, so texels stay in scene-linear light and keep the full RAW highlight
+     * headroom. Pixels are written straight into a JVM-owned direct buffer: no heap `ByteArray`
+     * or `Bitmap` is allocated for the source texture.
+     *
+     * @param path Absolute file path to the RAW photo.
+     * @param maxLongEdge Longest edge of the returned buffer in pixels; `<= 0` keeps the
+     *   full decoded resolution. The native decoder enables LibRaw `half_size` when the target
+     *   is at most half of the source long edge, then area-downsamples in linear light.
+     * @return A [LinearRawBuffer] carrying the pixels plus the auto-bright gain and effective
+     *   ISO the browse page would apply, or `null` when the file cannot be decoded.
+     */
+    external fun decodeToLinearRgba16F(path: String, maxLongEdge: Int): LinearRawBuffer?
+
+    /**
+     * Extracts shooting EXIF metadata from the RAW file header at [path] without running
+     * full demosaicing.
+     *
+     * @param path Absolute file path to the RAW photo.
+     * @return Parsed [RawExifMetadata] or null if the file header cannot be opened.
+     */
+    external fun extractExifMetadata(path: String): RawExifMetadata?
 
     /**
      * 解码缩略图为 Bitmap。先尝试嵌入式 JPEG，失败则尝试 BITMAP 格式。
@@ -69,10 +101,19 @@ object RawWrapper {
         if (8 + pixelBytes != data.size.toLong()) return null
         if (pixelBytes > Int.MAX_VALUE) return null
 
-        val bmp = if (reuse != null && reuse.width == width && reuse.height == height && reuse.config == Bitmap.Config.ARGB_8888) {
-            reuse.eraseColor(0); reuse
+        val bmp = if (reuse != null &&
+            reuse.width == width &&
+            reuse.height == height &&
+            reuse.config == Bitmap.Config.ARGB_8888
+        ) {
+            reuse.eraseColor(0)
+            reuse
         } else {
-            try { Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888) } catch (_: OutOfMemoryError) { return null }
+            try {
+                Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            } catch (_: OutOfMemoryError) {
+                return null
+            }
         }
 
         val pixels = IntArray(width * height)

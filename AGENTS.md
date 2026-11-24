@@ -69,7 +69,7 @@ PhotoSync/
 │   │   └── androidTest/java/cn/devcxl/photosync/  # Instrumented tests
 │   └── build.gradle
 ├── libraw/                         # Native library module (LibRaw + lcms2 via CMake + JNI)
-│   ├── src/main/cpp/               # CMakeLists.txt, libraw_jni.cpp, third_party/ submodules
+│   ├── src/main/cpp/               # CMakeLists.txt (libraw.so + libraw_wrapper.so), JNI bridge, third_party/ submodules
 │   ├── src/main/java/cn/devcxl/photosync/wrapper/RawWrapper.kt
 │   └── build.gradle
 ├── gradle/
@@ -351,6 +351,13 @@ Before completing any change:
 - **RAW**: Decode to JPEG via `RawWrapper`, then save
 - Both paths funnel through `MainActivity.saveToGallery`, which handles the
   `MediaStore` + `IS_PENDING` dance on API 29+ and the legacy direct-write path below it.
+
+### LibRaw / LGPL
+- LibRaw (LGPL-2.1) is built as an **independent** `libraw.so`; `libraw_wrapper.so` links it
+  dynamically and only through its public interfaces. Keep that boundary: folding LibRaw back
+  into the JNI library breaks the replaceability that `THIRD_PARTY_NOTICES.md` promises.
+- Both libraries share `c++_shared`; the single OpenMP runtime is static inside `libraw.so`
+  with exported symbols, and the wrapper resolves `__kmpc_*` through the `libraw.so` dependency.
 
 ### Logging
 - Use **Timber** everywhere. `android.util.Log` and `printStackTrace()` are not used in

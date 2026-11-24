@@ -170,32 +170,21 @@
                     tools:text="1 / 12"/>
 
                 <TextView
-                    android:id="@+id/photoNameText"
+                    android:id="@+id/photoEditedBadge"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:ellipsize="middle"
-                    android:fontFamily="monospace"
-                    android:maxWidth="180dp"
-                    android:singleLine="true"
-                    android:textColor="@color/darkroom_text_secondary"
-                    android:textSize="12sp"
-                    tools:text="DSC04821.ARW"/>
-
-                <TextView
-                    android:id="@+id/photoFormatBadge"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:background="@drawable/bg_badge_raw"
-                    android:paddingStart="6dp"
+                    android:layout_marginStart="6dp"
+                    android:background="@drawable/bg_edited_pill"
+                    android:paddingStart="7dp"
                     android:paddingTop="1dp"
-                    android:paddingEnd="6dp"
+                    android:paddingEnd="7dp"
                     android:paddingBottom="1dp"
-                    android:textColor="@color/badge_raw_text"
+                    android:text="@string/edited_badge"
+                    android:textColor="@color/toggle_on_text"
                     android:textSize="10sp"
                     android:textStyle="bold"
-                    tools:text="RAW"/>
+                    android:visibility="gone"
+                    tools:visibility="visible"/>
 
                 <TextView
                     android:id="@+id/photoExportedBadge"
@@ -258,52 +247,59 @@
         </LinearLayout>
 
         <!-- Info drawer toggle -->
-        <LinearLayout
-            android:id="@+id/infoToggleButton"
-            android:layout_width="wrap_content"
-            android:layout_height="@dimen/top_bar_control_height"
-            android:layout_marginEnd="8dp"
-            android:background="@drawable/bg_toggle_pill"
-            android:clickable="true"
-            android:focusable="true"
-            android:gravity="center_vertical"
-            android:minWidth="48dp"
-            android:orientation="horizontal"
-            android:paddingStart="11dp"
-            android:paddingEnd="11dp"
-            android:visibility="gone"
-            tools:visibility="visible">
-
-            <ImageView
-                android:layout_width="15dp"
-                android:layout_height="15dp"
-                android:layout_marginEnd="5dp"
-                android:contentDescription="@null"
-                android:src="@drawable/ic_info_24"
-                app:tint="@color/darkroom_text_secondary"/>
-
-            <TextView
-                android:id="@+id/infoToggleLabel"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/photo_info_toggle"
-                android:textColor="@color/darkroom_text_secondary"
-                android:textSize="12sp"
-                android:textStyle="bold"/>
-        </LinearLayout>
-
-        <!-- Action buttons (circle diameter unified with top bar height) -->
         <ImageButton
-            android:id="@+id/exportButton"
+            android:id="@+id/infoToggleButton"
             android:layout_width="@dimen/top_bar_control_height"
             android:layout_height="@dimen/top_bar_control_height"
             android:layout_marginEnd="8dp"
             android:background="@drawable/bg_glass_icon_btn"
-            android:contentDescription="@string/export_to_gallery"
+            android:contentDescription="@string/photo_info_toggle"
             android:padding="9dp"
             android:scaleType="centerInside"
-            android:src="@drawable/ic_export_24"
+            android:src="@drawable/ic_info_24"
+            android:visibility="gone"
+            app:tint="@color/darkroom_text_secondary"
+            tools:visibility="visible"/>
+
+        <!-- Action buttons (circle diameter unified with top bar height) -->
+        <ImageButton
+            android:id="@+id/editButton"
+            android:layout_width="@dimen/top_bar_control_height"
+            android:layout_height="@dimen/top_bar_control_height"
+            android:layout_marginEnd="8dp"
+            android:background="@drawable/bg_glass_icon_btn"
+            android:contentDescription="@string/edit_photo"
+            android:padding="9dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_edit_24"
             app:tint="@color/darkroom_text_primary"/>
+
+        <FrameLayout
+            android:layout_width="@dimen/top_bar_control_height"
+            android:layout_height="@dimen/top_bar_control_height"
+            android:layout_marginEnd="8dp">
+
+            <ImageButton
+                android:id="@+id/exportButton"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@drawable/bg_glass_icon_btn"
+                android:contentDescription="@string/export_to_gallery"
+                android:padding="9dp"
+                android:scaleType="centerInside"
+                android:src="@drawable/ic_export_24"
+                app:tint="@color/darkroom_text_primary"/>
+
+            <ProgressBar
+                android:id="@+id/exportButtonSpinner"
+                style="?android:attr/progressBarStyleSmall"
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:layout_gravity="center"
+                android:indeterminate="true"
+                android:indeterminateTint="@color/accent_blue"
+                android:visibility="gone"/>
+        </FrameLayout>
 
         <ImageButton
             android:id="@+id/deleteButton"
@@ -317,17 +313,38 @@
             app:tint="@color/darkroom_text_primary"/>
     </LinearLayout>
 
+    <!-- Press-and-hold compare pill: mirrors the editor's "未编辑原图 (Before)" -->
+    <TextView
+        android:id="@+id/compareStatusPill"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="60dp"
+        android:background="@drawable/bg_compare_pill"
+        android:paddingStart="14dp"
+        android:paddingTop="6dp"
+        android:paddingEnd="14dp"
+        android:paddingBottom="6dp"
+        android:text="@string/compare_original_pill"
+        android:textColor="@color/darkroom_text_primary"
+        android:textSize="12sp"
+        android:textStyle="bold"
+        android:visibility="gone"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        tools:visibility="visible"/>
+
     <!-- Collapsible photo technical info drawer -->
     <LinearLayout
         android:id="@+id/infoDrawerPanel"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:background="@drawable/bg_info_card"
-        android:orientation="horizontal"
+        android:orientation="vertical"
         android:paddingStart="14dp"
-        android:paddingTop="9dp"
+        android:paddingTop="10dp"
         android:paddingEnd="14dp"
-        android:paddingBottom="9dp"
+        android:paddingBottom="10dp"
         android:visibility="gone"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintTop_toTopOf="parent"
@@ -338,72 +355,114 @@
         <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginEnd="16dp"
-            android:orientation="vertical">
+            android:layout_marginBottom="8dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
 
             <TextView
+                android:id="@+id/infoFileNameText"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/info_label_resolution"
-                android:textColor="@color/darkroom_text_muted"
-                android:textSize="10sp"/>
-
-            <TextView
-                android:id="@+id/infoResolutionText"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
+                android:ellipsize="middle"
                 android:fontFamily="monospace"
+                android:maxWidth="220dp"
+                android:singleLine="true"
                 android:textColor="@color/darkroom_text_primary"
                 android:textSize="12sp"
                 android:textStyle="bold"
-                tools:text="6000 × 4000"/>
+                tools:text="DSC04821.ARW"/>
+
+            <TextView
+                android:id="@+id/infoFormatBadge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:background="@drawable/bg_badge_raw"
+                android:paddingStart="6dp"
+                android:paddingTop="1dp"
+                android:paddingEnd="6dp"
+                android:paddingBottom="1dp"
+                android:textColor="@color/badge_raw_text"
+                android:textSize="10sp"
+                android:textStyle="bold"
+                tools:text="RAW"/>
         </LinearLayout>
 
         <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginEnd="16dp"
-            android:orientation="vertical">
+            android:orientation="horizontal">
 
-            <TextView
+            <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/info_label_format_size"
-                android:textColor="@color/darkroom_text_muted"
-                android:textSize="10sp"/>
+                android:layout_marginEnd="16dp"
+                android:orientation="vertical">
 
-            <TextView
-                android:id="@+id/infoFormatSizeText"
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/info_label_resolution"
+                    android:textColor="@color/darkroom_text_muted"
+                    android:textSize="10sp"/>
+
+                <TextView
+                    android:id="@+id/infoResolutionText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/darkroom_text_primary"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    tools:text="6000 × 4000"/>
+            </LinearLayout>
+
+            <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:fontFamily="monospace"
-                android:textColor="@color/darkroom_text_primary"
-                android:textSize="12sp"
-                android:textStyle="bold"
-                tools:text="RAW · 48.6 MB"/>
-        </LinearLayout>
+                android:layout_marginEnd="16dp"
+                android:orientation="vertical">
 
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:orientation="vertical">
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/info_label_format_size"
+                    android:textColor="@color/darkroom_text_muted"
+                    android:textSize="10sp"/>
 
-            <TextView
+                <TextView
+                    android:id="@+id/infoFormatSizeText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/darkroom_text_primary"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    tools:text="RAW · 48.6 MB"/>
+            </LinearLayout>
+
+            <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/info_label_camera_handle"
-                android:textColor="@color/darkroom_text_muted"
-                android:textSize="10sp"/>
+                android:orientation="vertical">
 
-            <TextView
-                android:id="@+id/infoHandleText"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:fontFamily="monospace"
-                android:textColor="@color/darkroom_text_primary"
-                android:textSize="12sp"
-                android:textStyle="bold"
-                tools:text="#0x10042"/>
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/info_label_camera_handle"
+                    android:textColor="@color/darkroom_text_muted"
+                    android:textSize="10sp"/>
+
+                <TextView
+                    android:id="@+id/infoHandleText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/darkroom_text_primary"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    tools:text="#0x10042"/>
+            </LinearLayout>
         </LinearLayout>
     </LinearLayout>
 
@@ -554,21 +613,90 @@
         app:layout_constraintStart_toStartOf="parent"
         tools:visibility="visible">
 
-        <TextView
-            android:id="@+id/filmstripToggleHandle"
-            android:layout_width="wrap_content"
-            android:layout_height="26dp"
-            android:layout_marginBottom="4dp"
-            android:background="@drawable/bg_filmstrip_handle"
-            android:clickable="true"
-            android:focusable="true"
-            android:gravity="center"
-            android:paddingStart="12dp"
-            android:paddingEnd="12dp"
-            android:text="@string/filmstrip_collapse"
-            android:textColor="@color/darkroom_text_primary"
-            android:textSize="11sp"
-            android:textStyle="bold"/>
+        <!-- Quick preset + tethered actions strip, collapsed by default -->
+        <LinearLayout
+            android:id="@+id/quickPresetStrip"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_quick_strip"
+            android:gravity="center_horizontal"
+            android:orientation="vertical"
+            android:paddingStart="8dp"
+            android:paddingTop="4dp"
+            android:paddingEnd="8dp"
+            android:paddingBottom="4dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/quickStripToggleHandle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="26dp"
+                    android:background="@drawable/bg_filmstrip_handle"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center"
+                    android:paddingStart="12dp"
+                    android:paddingEnd="12dp"
+                    android:text="@string/quick_strip_expand"
+                    android:textColor="@color/darkroom_text_primary"
+                    android:textSize="11sp"
+                    android:textStyle="bold"/>
+
+                <ImageButton
+                    android:id="@+id/quickCompareButton"
+                    android:layout_width="32dp"
+                    android:layout_height="26dp"
+                    android:layout_marginStart="6dp"
+                    android:background="@drawable/bg_toggle_pill"
+                    android:contentDescription="@string/quick_strip_compare_hold"
+                    android:padding="5dp"
+                    android:scaleType="centerInside"
+                    android:src="@drawable/ic_compare_24"
+                    android:visibility="gone"
+                    app:tint="@color/darkroom_text_primary"
+                    tools:visibility="visible"/>
+
+                <Space
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"/>
+
+                <TextView
+                    android:id="@+id/filmstripToggleHandle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="26dp"
+                    android:background="@drawable/bg_filmstrip_handle"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center"
+                    android:paddingStart="12dp"
+                    android:paddingEnd="12dp"
+                    android:text="@string/filmstrip_collapse"
+                    android:textColor="@color/darkroom_text_primary"
+                    android:textSize="11sp"
+                    android:textStyle="bold"/>
+            </LinearLayout>
+
+            <HorizontalScrollView
+                android:id="@+id/quickPresetChipScroll"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:scrollbars="none"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:id="@+id/quickPresetChipContainer"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"/>
+            </HorizontalScrollView>
+        </LinearLayout>
 
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/filmstripRecyclerView"
@@ -582,5 +710,63 @@
             android:paddingEnd="0dp"
             android:paddingBottom="4dp"/>
     </LinearLayout>
+
+    <!-- Dedicated export / bake progress overlay -->
+    <FrameLayout
+        android:id="@+id/exportProgressOverlay"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:background="#8C000000"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:background="@drawable/bg_glass_card"
+            android:gravity="center_horizontal"
+            android:minWidth="230dp"
+            android:orientation="vertical"
+            android:paddingStart="24dp"
+            android:paddingTop="22dp"
+            android:paddingEnd="24dp"
+            android:paddingBottom="20dp">
+
+            <ProgressBar
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:indeterminate="true"
+                android:indeterminateTint="@color/accent_blue"/>
+
+            <TextView
+                android:id="@+id/exportProgressTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/export_progress_baking_title"
+                android:textColor="@color/darkroom_text_primary"
+                android:textSize="14sp"
+                android:textStyle="bold"/>
+
+            <TextView
+                android:id="@+id/exportProgressSubtitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:ellipsize="middle"
+                android:gravity="center"
+                android:maxLines="2"
+                android:maxWidth="240dp"
+                android:text="@string/export_progress_baking_detail"
+                android:textColor="@color/darkroom_text_secondary"
+                android:textSize="11sp"/>
+        </LinearLayout>
+    </FrameLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

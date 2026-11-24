@@ -1,6 +1,7 @@
 package cn.devcxl.photosync.activity
 
-import cn.devcxl.photosync.adapter.PhotoPagerAdapter
+import cn.devcxl.photosync.adapter.PhotoContentVersion
+import cn.devcxl.photosync.adapter.PhotoPagerViewHolder
 import cn.devcxl.photosync.adapter.PhotoRenderStage
 import cn.devcxl.photosync.adapter.PhotoViewerMode
 import cn.devcxl.photosync.adapter.JpegTiledSourceMode
@@ -92,7 +93,9 @@ class ExampleUnitTest {
         val decision = resolvePhotoRenderDecision(
             currentPath = "/tmp/a.jpg",
             currentStage = PhotoRenderStage.FULL,
+            currentContentVersion = PhotoContentVersion.Unspecified,
             nextPath = "/tmp/a.jpg",
+            nextContentVersion = PhotoContentVersion.Unspecified,
             hasThumbnail = true,
             hasFull = false,
             isZoomed = false
@@ -107,7 +110,9 @@ class ExampleUnitTest {
         val decision = resolvePhotoRenderDecision(
             currentPath = "/tmp/a.jpg",
             currentStage = PhotoRenderStage.THUMBNAIL,
+            currentContentVersion = PhotoContentVersion.Unspecified,
             nextPath = "/tmp/a.jpg",
+            nextContentVersion = PhotoContentVersion.Unspecified,
             hasThumbnail = true,
             hasFull = true,
             isZoomed = true
@@ -122,7 +127,9 @@ class ExampleUnitTest {
         val decision = resolvePhotoRenderDecision(
             currentPath = "/tmp/a.jpg",
             currentStage = PhotoRenderStage.THUMBNAIL,
+            currentContentVersion = PhotoContentVersion.Unspecified,
             nextPath = "/tmp/a.jpg",
+            nextContentVersion = PhotoContentVersion.Unspecified,
             hasThumbnail = true,
             hasFull = false,
             isZoomed = false
@@ -182,10 +189,10 @@ class ExampleUnitTest {
 
     @Test
     fun shouldReturnTrue_whenScaleAboveTolerance() {
-        assertFalse(PhotoPagerAdapter.VH.testIsZoomed(scale = 1.005f, minScale = 1.0f))
-        assertTrue(PhotoPagerAdapter.VH.testIsZoomed(scale = 1.05f, minScale = 1.0f))
-        assertFalse(PhotoPagerAdapter.VH.testIsZoomed(scale = 0.252f, minScale = 0.25f))
-        assertTrue(PhotoPagerAdapter.VH.testIsZoomed(scale = 0.30f, minScale = 0.25f))
+        assertFalse(PhotoPagerViewHolder.testIsZoomed(scale = 1.005f, minScale = 1.0f))
+        assertTrue(PhotoPagerViewHolder.testIsZoomed(scale = 1.05f, minScale = 1.0f))
+        assertFalse(PhotoPagerViewHolder.testIsZoomed(scale = 0.252f, minScale = 0.25f))
+        assertTrue(PhotoPagerViewHolder.testIsZoomed(scale = 0.30f, minScale = 0.25f))
     }
 
     @Test
@@ -221,8 +228,9 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun shouldRequestFilmstripThumbnail_onlyForNonRawItems() {
-        assertTrue(shouldRequestFilmstripThumbnail(isRaw = false))
-        assertFalse(shouldRequestFilmstripThumbnail(isRaw = true))
+    fun shouldRequestFilmstripThumbnail_whenNonRawOrHasEditPreview() {
+        assertTrue(shouldRequestFilmstripThumbnail(isRaw = false, hasEditPreview = false))
+        assertFalse(shouldRequestFilmstripThumbnail(isRaw = true, hasEditPreview = false))
+        assertTrue(shouldRequestFilmstripThumbnail(isRaw = true, hasEditPreview = true))
     }
 }

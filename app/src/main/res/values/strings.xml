@@ -9,6 +9,11 @@
     <string name="toast_export_failed_invalid_path">导出失败：路径无效</string>
     <string name="toast_saved_to_gallery">已导出到相册: %1$s</string>
     <string name="toast_save_failed">导出失败</string>
+    <string name="toast_baking_export">正在烘焙导出 %1$s</string>
+    <string name="toast_baked_saved">已导出成片: %1$s</string>
+    <string name="toast_bake_failed">烘焙导出失败，请检查存储空间</string>
+    <string name="export_menu_edited">导出编辑后成片</string>
+    <string name="export_menu_original">导出未编辑原图</string>
     <string name="toast_storage_permission_denied">未授予存储权限，无法导出</string>
     <string name="usb_inserted">已检测到相机，点击左上角「未连接 · 点击连接」开始同步</string>
     <string name="usb_removed">相机已断开</string>
@@ -69,6 +74,7 @@
     <!-- Immersive viewer, loading & transfer feedback (Issue #25) -->
     <string name="decoding_raw_preview">正在解码 RAW 预览…</string>
     <string name="loading_photo_preview">正在加载预览…</string>
+    <string name="edited_preview_unavailable">编辑预览不可用，请打开编辑器重新保存</string>
     <string name="sync_transfer_in_progress">正在同步照片</string>
     <string name="sync_transfer_percent">%1$d%%</string>
     <string name="feedback_camera_disconnected">相机连接已断开</string>
@@ -96,4 +102,27 @@
     <string name="filmstrip_collapse">▾ 收起胶片条</string>
     <string name="filmstrip_expand">▴ 展开胶片条</string>
     <string name="filmstrip_exported_mark">✓</string>
+
+    <!-- Non-destructive photo editor (Ticket #02) -->
+    <string name="edited_badge">✎ 已编辑</string>
+    <string name="filmstrip_edited_mark">✎</string>
+    <string name="edit_photo">编辑照片</string>
+
+    <!-- Tethered darkroom unified preset strip, compare and export progress -->
+    <string name="quick_strip_expand">▴ 预设</string>
+    <string name="quick_strip_expand_active">▴ %1$s</string>
+    <string name="quick_strip_collapse">▾ 收起预设</string>
+    <string name="quick_strip_no_preset">无预设</string>
+    <string name="quick_strip_compare_hold">按住对比未编辑原图</string>
+    <string name="quick_strip_preset_applied_named">已套用「%1$s」（联机新片同步生效）</string>
+    <string name="quick_strip_preset_selected_tether_only">已选择「%1$s」，联机新片将自动套用</string>
+    <string name="quick_strip_preset_cleared">已切回无预设（展示原图）</string>
+    <string name="quick_strip_apply_failed">预设应用失败</string>
+
+    <string name="compare_original_pill">未编辑原图 (Before)</string>
+
+    <string name="export_progress_baking_title">正在烘焙导出</string>
+    <string name="export_progress_baking_detail">正在全分辨率渲染并写入系统相册，请稍候…</string>
+    <string name="export_progress_baking_detail_named">%1$s · 全分辨率渲染中…</string>
+    <string name="export_progress_original_title">正在导出原图</string>
 </resources>

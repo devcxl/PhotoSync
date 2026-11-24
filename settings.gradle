@@ -26,4 +26,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "PhotoSync"
 include ':app'
+include ':editor'
 include ':libraw'
