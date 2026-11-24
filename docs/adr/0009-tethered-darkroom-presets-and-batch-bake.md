@@ -19,7 +19,7 @@
 
 - `CopyMask` 默认包含 `{baseLook, tone, color, detail, effects, portrait.skin}`，默认排除 `{geometry.*, portrait.reshape, portrait.body}`；
 - `BuiltinPresets` 提供 5 组纯参数预设（`builtin_clean_portrait`、`builtin_film_chrome`、`builtin_warm_sunset`、`builtin_cool_nordic`、`builtin_mono_silver`），其本地化名称通过 `:editor` `strings.xml` 解析，保持 `domain/` 零 Android / `contract/` 依赖；
-- 「保存为预设」「应用预设」「清除预设（`PresetGraphMerger.resetPresetAxes`）」及跨图复制粘贴全部复用同一 `CopyMask` 与 `PresetGraphMerger` 契约，避免逻辑漂移；
+- 「保存为预设」「应用预设」「清除预设（`PresetGraphMerger.resetToOriginal`，把整张图重置回原始状态）」及跨图复制粘贴全部复用同一 `CopyMask` 与 `PresetGraphMerger` 契约，避免逻辑漂移；
 - 长按「复制参数」勾选的自定义 `CopyMask` 随快照保存在 `EditClipboard.Entry` 中，`includeLiquify = true` 时通过 `LiquifyMeshCopier` 为目标照片复制独立的 `.bin` 网格副本。
 
 ### 2. `user_presets` 持久化与 SQL 层内置只读保护

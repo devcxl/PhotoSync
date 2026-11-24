@@ -35,7 +35,8 @@ import cn.devcxl.photosync.editor.ui.widgets.PresetPanelView
  * live graph, renames/deletes user presets and toggles the `LiveTetherPreset`.
  *
  * Applying a preset is a real undo step under [EditParameterKey.PRESET], so one `撤销` returns to the
- * previous grade instead of a half-applied mixture of both.
+ * previous grade instead of a half-applied mixture of both. Tapping `无预设` clears the whole graph —
+ * grade, portrait and frame geometry — back to the imported original.
  */
 internal class PresetPanelBinder(
     private val context: Context,
@@ -49,6 +50,13 @@ internal class PresetPanelBinder(
     interface Host {
         /** A preset (or the `无预设` chip) changed the graph; render at full quality. */
         fun onPresetApplied(graph: EditGraph)
+
+        /**
+         * Clears the photo back to its original: grade, portrait and frame geometry.
+         *
+         * @return False when the photo is already untouched.
+         */
+        fun onPresetCleared(): Boolean
 
         /** The active `LiveTetherPreset` changed. */
         fun onLiveTetherPresetChanged(presetId: String?)
@@ -110,8 +118,10 @@ internal class PresetPanelBinder(
     }
 
     private fun clearPresetAxes() {
-        val graph = PresetGraphMerger.resetPresetAxes(undoController.currentGraph)
-        commitPresetStep(graph)
+        if (!host.onPresetCleared()) {
+            Toast.makeText(context, R.string.editor_preset_already_clear, Toast.LENGTH_SHORT).show()
+            return
+        }
         Toast.makeText(context, R.string.editor_preset_cleared, Toast.LENGTH_SHORT).show()
     }
 

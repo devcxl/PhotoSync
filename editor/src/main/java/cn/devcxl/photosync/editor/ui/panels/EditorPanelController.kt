@@ -44,6 +44,8 @@ internal class EditorPanelController(
         fun onGraphEdited(graph: EditGraph, parameterKey: EditParameterKey)
         /** A discrete edit that seals its own undo step. */
         fun onGraphCommitted(graph: EditGraph, parameterKey: EditParameterKey)
+        /** Clears every adjustment of the photo; returns false when it is already untouched. */
+        fun onResetAllRequested(): Boolean
         /** Width/height ratio of the frame the preview canvas is currently showing. */
         fun previewAspect(): Float
         /** The liquify brush mode, size or strength changed. */
@@ -111,6 +113,12 @@ internal class EditorPanelController(
             override fun onPresetApplied(graph: EditGraph) {
                 host.onGraphCommitted(graph, EditParameterKey.PRESET)
                 refresh()
+            }
+
+            override fun onPresetCleared(): Boolean {
+                val cleared = host.onResetAllRequested()
+                if (cleared) refresh()
+                return cleared
             }
 
             override fun onLiveTetherPresetChanged(presetId: String?) = Unit
@@ -267,6 +275,12 @@ internal class EditorPanelController(
     private fun resetTool(spec: EditorToolSpec) {
         if (spec.controlStyle == EditorControlStyle.LIQUIFY) {
             host.onLiquifyResetRequested()
+            return
+        }
+        if (spec.tool == EditorTool.PRESET) {
+            // "无预设" clears the out-of-graph liquify grid too, so it must go through the shared
+            // history coordinator instead of a plain parameter commit.
+            host.onResetAllRequested()
             return
         }
         commit(spec.parameterKey) { spec.reset(it) }

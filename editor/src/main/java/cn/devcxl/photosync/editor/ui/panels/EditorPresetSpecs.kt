@@ -25,7 +25,7 @@ internal object EditorPresetSpecs {
             parameterKey = EditParameterKey.PRESET,
             controlStyle = EditorControlStyle.PRESET,
             isModified = { graph -> !PresetGraphMerger.hasNeutralPresetAxes(graph) },
-            reset = { graph -> PresetGraphMerger.resetPresetAxes(graph) }
+            reset = { graph -> PresetGraphMerger.resetToOriginal(graph) }
         )
     )
 }

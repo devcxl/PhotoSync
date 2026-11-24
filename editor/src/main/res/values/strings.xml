@@ -245,7 +245,8 @@
     <string name="editor_preset_live_on">已设为联机预设：新同步照片自动套用</string>
     <string name="editor_preset_live_off">已取消联机预设</string>
     <string name="editor_preset_applied">已套用预设「%1$s」</string>
-    <string name="editor_preset_cleared">已清除预设参数</string>
+    <string name="editor_preset_cleared">已恢复原始外观</string>
+    <string name="editor_preset_already_clear">已是原始外观</string>
     <string name="editor_preset_empty">暂无预设，点击上方按钮保存当前调色</string>
 
     <!-- Tethered ingest pill -->

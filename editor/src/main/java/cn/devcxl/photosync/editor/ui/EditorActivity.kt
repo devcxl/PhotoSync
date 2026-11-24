@@ -252,6 +252,8 @@ class EditorActivity : AppCompatActivity(),
         renderCoordinator.updateHistoryButtons()
     }
 
+    override fun onResetAllRequested(): Boolean = historyCoordinator.requestResetAll()
+
     override fun previewAspect(): Float = EditorPreviewGeometry.previewAspect(
         undoController.currentGraph,
         panel.currentTool,

@@ -29,8 +29,8 @@ import cn.devcxl.photosync.editor.domain.PresetGraphMerger
  * Unified collapsible preset strip above the filmstrip:
  * - Picking a preset applies it to the current photo (with an inline circular spinner while
  *   rendering) AND activates it for incoming tethered photos automatically.
- * - Picking `无预设` clears the current photo's preset axes AND disables tethered auto-apply so
- *   new shots display straight as originals.
+ * - Picking `无预设` clears the current photo back to the imported original — grade, portrait and
+ *   frame geometry — AND disables tethered auto-apply so new shots display straight as originals.
  * - The hold-to-compare icon button appears only on edited photos and shows the unedited original
  *   strictly while held down.
  */
@@ -200,7 +200,7 @@ internal class TetheredQuickStripController(
         val graph = if (photoId == null) {
             null
         } else if (preset == null) {
-            PresetGraphMerger.resetPresetAxes(host.currentGraph())
+            PresetGraphMerger.resetToOriginal(host.currentGraph())
         } else {
             resolvePresetGraph(preset) ?: return
         }

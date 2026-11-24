@@ -84,4 +84,57 @@ class EditorHistoryCoordinatorTest {
         assertEquals(25, undoController.currentGraph.tone.contrast)
         assertTrue(meshPublishedCount > 0)
     }
+
+    @Test
+    fun shouldRestoreParametersAndLiquifyTogether_whenUndoingOneFullReset() {
+        val undoController = EditorUndoController()
+        val session = LiquifySession(LiquifyMeshStore(File("/tmp/opencode/unused_history_test")))
+        val coordinator = EditorHistoryCoordinator(
+            photoId = 42L,
+            undoController = undoController,
+            liquifySession = session,
+            onMeshPublished = {},
+            onStateChanged = {}
+        )
+
+        val exposed = EditGraph().copy(tone = EditGraph().tone.copy(exposure = 0.8f))
+        undoController.onParameterDrag(exposed, EditParameterKey.TONE_EXPOSURE, timestampMs = 100L)
+        undoController.onParameterRelease()
+        session.beginStroke()
+        session.pushStroke(Uv(0.4f, 0.5f), Uv(0.55f, 0.5f), radiusNorm = 0.1f, frameAspect = 1.5f)
+        session.commitStroke()
+        coordinator.onLiquifyStrokeCommitted()
+
+        assertTrue(coordinator.requestResetAll())
+        assertTrue(undoController.currentGraph.isIdentity())
+        assertFalse(session.hasMesh)
+        assertNull(undoController.currentGraph.geometry.liquify)
+
+        // A single undo restores both the graph and the out-of-graph liquify grid.
+        coordinator.undo()
+        assertEquals(0.8f, undoController.currentGraph.tone.exposure, 1e-4f)
+        assertTrue(session.hasMesh)
+        assertNotNull(undoController.currentGraph.geometry.liquify)
+
+        coordinator.redo()
+        assertTrue(undoController.currentGraph.isIdentity())
+        assertFalse(session.hasMesh)
+        assertNull(undoController.currentGraph.geometry.liquify)
+    }
+
+    @Test
+    fun shouldReportNoChange_whenRequestingAFullResetOnAnOriginalPhoto() {
+        val undoController = EditorUndoController()
+        val session = LiquifySession(LiquifyMeshStore(File("/tmp/opencode/unused_history_test")))
+        val coordinator = EditorHistoryCoordinator(
+            photoId = 42L,
+            undoController = undoController,
+            liquifySession = session,
+            onMeshPublished = {},
+            onStateChanged = {}
+        )
+
+        assertFalse(coordinator.requestResetAll())
+        assertFalse(coordinator.canUndo)
+    }
 }

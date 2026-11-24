@@ -180,26 +180,14 @@ class CopyMaskTest {
     }
 
     @Test
-    fun shouldResetPresetAxesOnly_whenMergingNoPreset() {
-        val target = busyGraph().copy(
-            geometry = GeometryOps(
-                rotate90 = 1,
-                crop = CropRect(0.1f, 0.1f, 0.8f, 0.8f),
-                liquify = LiquifyRef(meshRelPath = "edits/7/liquify_128x128.bin", sha256 = "")
-            )
-        )
+    fun shouldResetEveryAxis_whenClearingToNoPreset() {
+        val target = busyGraph()
 
-        val reset = PresetGraphMerger.resetPresetAxes(target)
+        val reset = PresetGraphMerger.resetToOriginal(target)
 
+        assertTrue(reset.isIdentity())
+        assertNull(reset.geometry.liquify)
         assertEquals(BaseLook.CAMERA_DEFAULT, reset.baseLook)
-        assertTrue(reset.tone.isIdentity())
-        assertTrue(reset.color.isIdentity())
-        assertTrue(reset.detail.isIdentity())
-        assertTrue(reset.effects.isIdentity())
-        assertTrue(reset.portrait.skin.isIdentity())
-        assertEquals(target.geometry, reset.geometry)
-        assertEquals(target.portrait.reshape, reset.portrait.reshape)
-        assertEquals(target.portrait.body, reset.portrait.body)
     }
 
     @Test

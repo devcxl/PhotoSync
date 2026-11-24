@@ -237,7 +237,8 @@
     <string name="editor_preset_live_on">Live Tether Preset enabled for new synced photos</string>
     <string name="editor_preset_live_off">Live Tether Preset turned off</string>
     <string name="editor_preset_applied">Applied preset \"%1$s\"</string>
-    <string name="editor_preset_cleared">Cleared preset adjustments</string>
+    <string name="editor_preset_cleared">Restored the original look</string>
+    <string name="editor_preset_already_clear">Already unedited</string>
     <string name="editor_preset_empty">No presets yet. Tap above to save current adjustments.</string>
 
     <!-- Tethered ingest pill -->

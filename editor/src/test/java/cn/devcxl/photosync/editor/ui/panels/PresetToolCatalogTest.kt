@@ -66,9 +66,10 @@ class PresetToolCatalogTest {
     }
 
     @Test
-    fun shouldResetPresetAxesOnly_whenTheChipIsDoubleTapped() {
+    fun shouldResetEveryAxis_whenTheChipIsDoubleTapped() {
         val spec = checkNotNull(EditorToolCatalog.specFor(EditorTool.PRESET))
         val busy = EditGraph(
+            geometry = GeometryOps(rotate90 = 1, straighten = 3.0f),
             tone = ToneOps(exposure = 0.6f, shadows = 20),
             color = ColorOps(temp = 25),
             detail = DetailOps(clarity = 30),
@@ -82,14 +83,9 @@ class PresetToolCatalogTest {
 
         val reset = spec.reset(busy)
 
-        assertTrue(reset.tone.isIdentity())
-        assertTrue(reset.color.isIdentity())
-        assertTrue(reset.detail.isIdentity())
-        assertTrue(reset.effects.isIdentity())
-        assertTrue(reset.portrait.skin.isIdentity())
-        assertEquals(15, reset.portrait.reshape.face)
-        assertEquals(10, reset.portrait.body.waist)
-        assertEquals(0.44f, reset.portrait.body.waistY ?: 0f, 1e-4f)
+        assertTrue(reset.isIdentity())
+        assertEquals(0, reset.geometry.rotate90)
+        assertTrue(reset.portrait.isIdentity())
     }
 
     @Test

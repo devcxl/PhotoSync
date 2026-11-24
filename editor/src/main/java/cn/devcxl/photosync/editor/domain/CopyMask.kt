@@ -100,19 +100,22 @@ object PresetGraphMerger {
         CopyMask().apply(preset, target)
 
     /**
-     * Resets every preset axis of [target] to its neutral default.
+     * Returns [target] with every axis — grade, portrait and frame geometry — back at its neutral
+     * default, i.e. the state a freshly imported photo starts in.
      *
-     * `geometry` (including the liquify reference), `portrait.reshape` and `portrait.body` survive,
-     * so tapping `无预设` removes the look without discarding the frame's crop or warp work.
+     * The liquify grid is referenced from `geometry` but lives outside the graph, so the editor must
+     * additionally clear its [LiquifySession] mesh when it applies this reset; the history
+     * coordinator records both halves as one undoable step.
      */
-    fun resetPresetAxes(target: EditGraph): EditGraph = EditValidator.sanitize(
+    fun resetToOriginal(target: EditGraph): EditGraph = EditValidator.sanitize(
         target.copy(
             baseLook = BaseLook.CAMERA_DEFAULT,
+            geometry = GeometryOps(),
             tone = ToneOps(),
             color = ColorOps(),
             detail = DetailOps(),
             effects = EffectsOps(),
-            portrait = target.portrait.copy(skin = SkinOps())
+            portrait = PortraitOps()
         )
     )
 
