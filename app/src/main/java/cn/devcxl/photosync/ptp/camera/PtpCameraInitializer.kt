@@ -42,7 +42,10 @@ internal class PtpCameraInitializer(
             try {
                 if (attempt == 0) {
                     transport.resetDevice()
-                } else if (lastError !is PtpDeviceException) {
+                } else {
+                    // Every retry resets again: a camera left busy by a killed process may ignore
+                    // the first reset, and a plain GetDeviceInfo retry would stay busy forever.
+                    // The id is this process's own in-flight transaction, never a guessed one.
                     transport.cancelAndResetDevice(session.inFlightTransactionId)
                 }
                 // Wait after reset or a completed DeviceBusy response, then flush late packets
@@ -97,10 +100,11 @@ internal class PtpCameraInitializer(
 
     internal companion object {
         /**
-         * One attempt right after the reset plus two retries. A fresh array per read, so a
-         * caller that passes the default on cannot mutate state shared with other cameras.
+         * One attempt right after the reset plus four retries. The tail is deliberately longer:
+         * after the app process is killed mid-transfer, a camera can spend seconds abandoning the
+         * old transaction before it answers GetDeviceInfo again.
          */
         val DEFAULT_SETTLE_DELAYS_MS: LongArray
-            get() = longArrayOf(300L, 500L, 800L)
+            get() = longArrayOf(300L, 700L, 1200L, 2000L, 3000L)
     }
 }

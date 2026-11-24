@@ -17,6 +17,7 @@ import cn.devcxl.photosync.ptp.protocol.PtpObjectInfo
 import cn.devcxl.photosync.ptp.protocol.PtpOp
 import cn.devcxl.photosync.ptp.protocol.PtpProtocolException
 import cn.devcxl.photosync.ptp.protocol.PtpResponsePacket
+import cn.devcxl.photosync.ptp.protocol.PtpSessionException
 import cn.devcxl.photosync.ptp.protocol.PtpStorageInfo
 import cn.devcxl.photosync.ptp.protocol.PtpTransportException
 import cn.devcxl.photosync.ptp.transport.PtpTransport
@@ -81,10 +82,22 @@ internal class PtpCamera private constructor(
     /**
      * Opens a PTP session, including the recovery for a camera that still holds one.
      *
+     * A camera whose previous host process was killed may refuse the session takeover even after
+     * the connect handshake; resetting the pipe once and retrying turns that dead-session refusal
+     * into a normal connect instead of a failure the user can only clear by replugging.
+     *
      * @throws cn.devcxl.photosync.ptp.protocol.PtpException when the camera refuses
      */
     internal suspend fun openSession() = locked {
-        session.open(supportsCloseSession = deviceInfo?.supportsOperation(PtpOp.CLOSE_SESSION) ?: true)
+        val supportsCloseSession = deviceInfo?.supportsOperation(PtpOp.CLOSE_SESSION) ?: true
+        try {
+            session.open(supportsCloseSession = supportsCloseSession)
+        } catch (e: PtpSessionException) {
+            Timber.w(e, "OpenSession rejected; resetting the device and retrying once")
+            session.abandon()
+            transport.cancelAndResetDevice(null)
+            session.open(supportsCloseSession = supportsCloseSession)
+        }
         profile.onSessionStart(session)
         Timber.i("PTP session opened on %s (%s)", modelName, profile.name)
     }

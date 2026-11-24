@@ -216,6 +216,11 @@ class StillImageRecoveryProtocolTest {
                 "attempts=${device.getDeviceInfoCommands}",
             device.getDeviceInfoCommands <= INIT_SETTLE_DELAYS.size,
         )
+        assertEquals(
+            "Every retry must reset the device instead of only re-asking a busy camera",
+            INIT_SETTLE_DELAYS.size,
+            device.deviceResets,
+        )
     }
 
     @Test

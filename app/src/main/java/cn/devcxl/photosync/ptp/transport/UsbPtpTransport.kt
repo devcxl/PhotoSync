@@ -9,6 +9,7 @@ import android.hardware.usb.UsbManager
 import cn.devcxl.photosync.ptp.protocol.PtpContainer
 import cn.devcxl.photosync.ptp.protocol.PtpContainerHeader
 import cn.devcxl.photosync.ptp.protocol.PtpTransportException
+import kotlinx.coroutines.delay
 import timber.log.Timber
 
 /**
@@ -208,12 +209,45 @@ internal class UsbPtpTransport private constructor(
         private const val INTERFACE_CLASS_STILL_IMAGE = 6
 
         /**
+         * Delays before re-opening a device, in order. A killed process can leave the USB service
+         * releasing the old connection for a moment; the whole budget stays below one second so a
+         * genuinely missing permission still fails fast.
+         */
+        private val OPEN_RETRY_DELAYS_MS = longArrayOf(300L, 600L)
+
+        /**
          * Opens [device] and claims its PTP interface.
          *
+         * A process that was killed while a session was open can leave the USB service releasing
+         * the old file descriptor; opening immediately then fails with a null device or a refused
+         * claim. Retrying with a short backoff reuses the same device instead of reporting a
+         * permanent connect failure that only a replug would clear.
+         *
          * @throws PtpTransportException when the device cannot be opened, exposes no usable
-         *   interface, or refuses to be claimed
+         *   interface, or refuses to be claimed on every attempt
          */
-        fun open(usbManager: UsbManager, device: UsbDevice): UsbPtpTransport {
+        suspend fun open(usbManager: UsbManager, device: UsbDevice): UsbPtpTransport {
+            var lastError: PtpTransportException? = null
+            for (attempt in OPEN_RETRY_DELAYS_MS.indices) {
+                try {
+                    return openOnce(usbManager, device)
+                } catch (e: PtpTransportException) {
+                    lastError = e
+                    if (attempt == OPEN_RETRY_DELAYS_MS.lastIndex) break
+                    Timber.w(
+                        e,
+                        "USB open attempt %d/%d failed; retrying in %dms",
+                        attempt + 1,
+                        OPEN_RETRY_DELAYS_MS.size,
+                        OPEN_RETRY_DELAYS_MS[attempt],
+                    )
+                    delay(OPEN_RETRY_DELAYS_MS[attempt])
+                }
+            }
+            throw lastError ?: PtpTransportException("Unable to open USB device ${device.deviceName}")
+        }
+
+        private fun openOnce(usbManager: UsbManager, device: UsbDevice): UsbPtpTransport {
             val connection = usbManager.openDevice(device)
                 ?: throw PtpTransportException("Unable to open USB device ${device.deviceName}")
 
