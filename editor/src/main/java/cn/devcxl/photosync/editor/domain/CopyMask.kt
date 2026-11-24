@@ -89,15 +89,28 @@ data class CopyMask(
 /**
  * Merges a [Preset]'s parameters into an existing graph.
  *
- * Presets only ever carry pure parameter axes, so applying one resets the preset axes to the
- * preset's values while leaving the single-photo composition (`geometry`, `portrait.reshape`,
- * `portrait.body`) untouched — the same contract a cross-photo paste uses.
+ * A preset carries the whole appearance — grade, skin, face reshape and body reshape — but never
+ * the frame geometry, so applying one leaves this photo's crop, straightening, perspective and
+ * liquify work untouched. Clearing to `无预设` is stronger still: it resets the whole graph,
+ * including the geometry and the portrait group.
  */
 object PresetGraphMerger {
 
-    /** Applies [preset] onto [target], preserving `geometry`, `portrait.reshape` and `portrait.body`. */
+    /**
+     * The axes a preset carries: the whole appearance, portrait work included.
+     *
+     * The default [CopyMask] deliberately excludes `reshape` / `body` because a cross-photo paste
+     * must not move the next frame's face; a preset is a look the user saved on purpose, so it owns
+     * those axes instead.
+     */
+    private val PRESET_MASK = CopyMask(includePortraitReshapeBody = true)
+
+    /** Applies [preset] onto [target], preserving only the frame `geometry`. */
     fun applyPreset(preset: EditGraph, target: EditGraph): EditGraph =
-        CopyMask().apply(preset, target)
+        PRESET_MASK.apply(preset, target)
+
+    /** Extracts the axes a preset stores from [graph]: the appearance, never the geometry. */
+    fun extractPreset(graph: EditGraph): EditGraph = PRESET_MASK.extract(graph)
 
     /**
      * Returns [target] with every axis — grade, portrait and frame geometry — back at its neutral
@@ -120,10 +133,11 @@ object PresetGraphMerger {
     )
 
     /**
-     * True when every preset-owned axis sits at its neutral default.
+     * True when every axis a preset carries sits at its neutral default.
      *
-     * Geometry and the portrait reshape/body warps are deliberately ignored: those describe the
-     * frame's composition, not the look a preset replaces.
+     * Frame geometry is deliberately ignored: presets never carry it, so a crop cannot make a
+     * preset "active". [resetToOriginal] is broader than this check — clearing to `无预设` resets
+     * the whole graph.
      */
     fun hasNeutralPresetAxes(graph: EditGraph): Boolean =
         graph.baseLook == BaseLook.CAMERA_DEFAULT &&
@@ -131,21 +145,21 @@ object PresetGraphMerger {
             graph.color.isIdentity() &&
             graph.detail.isIdentity() &&
             graph.effects.isIdentity() &&
-            graph.portrait.skin.isIdentity()
+            graph.portrait.isIdentity()
 
     /**
-     * Returns the id of the first entry in [candidates] whose preset-owned axes match [graph], or
-     * `null` when [graph] is neutral on preset axes or matches none.
+     * Returns the id of the first entry in [candidates] whose carried axes match [graph], or `null`
+     * when [graph] is neutral on those axes or matches none.
      */
     fun matchingPresetId(
         graph: EditGraph,
         candidates: Iterable<Pair<String, String>>
     ): String? {
         if (hasNeutralPresetAxes(graph)) return null
-        val targetEncoded = EditGraphJsonCodec.encode(CopyMask().extract(graph))
+        val targetEncoded = EditGraphJsonCodec.encode(extractPreset(graph))
         for ((id, subsetJson) in candidates) {
             val decoded = EditGraphJsonCodec.decode(subsetJson) ?: continue
-            val normalized = EditGraphJsonCodec.encode(CopyMask().extract(decoded))
+            val normalized = EditGraphJsonCodec.encode(extractPreset(decoded))
             if (normalized == targetEncoded) return id
         }
         return null

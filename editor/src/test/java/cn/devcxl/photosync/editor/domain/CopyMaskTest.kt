@@ -191,14 +191,22 @@ class CopyMaskTest {
     }
 
     @Test
-    fun shouldApplyPresetParametersWithoutTouchingComposition_whenMergingPreset() {
+    fun shouldApplyPresetPortraitWorkWithoutTouchingGeometry_whenMergingPreset() {
         val preset = EditGraph(
             tone = ToneOps(exposure = 0.4f, contrast = 15),
             color = ColorOps(temp = 12),
-            portrait = PortraitOps(skin = SkinOps(smooth = 25))
+            portrait = PortraitOps(
+                skin = SkinOps(smooth = 25),
+                reshape = ReshapeOps(face = 30),
+                body = BodyOps(waist = 8)
+            )
         )
         val target = EditGraph(
-            geometry = GeometryOps(straighten = 3.0f),
+            geometry = GeometryOps(
+                straighten = 3.0f,
+                crop = CropRect(0.1f, 0.1f, 0.9f, 0.9f),
+                liquify = LiquifyRef(meshRelPath = "edits/9/liquify_128x128.bin", sha256 = "")
+            ),
             portrait = PortraitOps(reshape = ReshapeOps(face = 14))
         )
 
@@ -208,13 +216,32 @@ class CopyMaskTest {
         assertEquals(15, merged.tone.contrast)
         assertEquals(12, merged.color.temp)
         assertEquals(25, merged.portrait.skin.smooth)
+        assertEquals(30, merged.portrait.reshape.face)
+        assertEquals(8, merged.portrait.body.waist)
         assertEquals(3.0f, merged.geometry.straighten, 1e-4f)
-        assertEquals(14, merged.portrait.reshape.face)
+        assertEquals(0.1f, merged.geometry.crop.left, 1e-4f)
+        assertNotNull(merged.geometry.liquify)
         assertFalse(merged.isIdentity())
     }
 
     @Test
-    fun shouldMatchPresetByLookAxesOnly_whenTargetHasDifferentGeometry() {
+    fun shouldExtractPortraitWorkButNoGeometry_whenSavingAPreset() {
+        val source = busyGraph()
+
+        val extracted = PresetGraphMerger.extractPreset(source)
+
+        assertEquals(source.baseLook, extracted.baseLook)
+        assertEquals(source.tone, extracted.tone)
+        assertEquals(source.color, extracted.color)
+        assertEquals(source.detail, extracted.detail)
+        assertEquals(source.effects, extracted.effects)
+        assertEquals(source.portrait, extracted.portrait)
+        assertTrue(extracted.geometry.isIdentity())
+        assertNull(extracted.geometry.liquify)
+    }
+
+    @Test
+    fun shouldMatchPresetByCarriedAxesOnly_whenTargetHasDifferentGeometry() {
         val specs = BuiltinPresets.specs().map { it.id to it.graphSubsetJson }
         val filmGraph = PresetGraphMerger.applyPreset(
             checkNotNull(BuiltinPresets.graphFor(BuiltinPresets.FILM_CHROME_ID)),
@@ -224,5 +251,16 @@ class CopyMaskTest {
         val matched = PresetGraphMerger.matchingPresetId(filmGraph, specs)
 
         assertEquals(BuiltinPresets.FILM_CHROME_ID, matched)
+    }
+
+    @Test
+    fun shouldMatchPreset_whenThePresetCarriesPortraitReshape() {
+        val presetJson = EditGraphJsonCodec.encode(
+            EditGraph(portrait = PortraitOps(reshape = ReshapeOps(face = 20)))
+        )
+        val specs = listOf("user_face" to presetJson)
+        val applied = PresetGraphMerger.applyPreset(checkNotNull(EditGraphJsonCodec.decode(presetJson)), EditGraph())
+
+        assertEquals("user_face", PresetGraphMerger.matchingPresetId(applied, specs))
     }
 }

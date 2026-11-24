@@ -55,14 +55,19 @@ class PresetToolCatalogTest {
     }
 
     @Test
-    fun shouldIgnoreComposition_whenDecidingModified() {
+    fun shouldReportModified_whenOnlyPortraitWorkDiffersFromNeutral() {
         val spec = checkNotNull(EditorToolCatalog.specFor(EditorTool.PRESET))
-        val composedOnly = EditGraph(
-            geometry = GeometryOps(straighten = 4.0f),
-            portrait = PortraitOps(reshape = ReshapeOps(face = 20))
-        )
+        val portraitOnly = EditGraph(portrait = PortraitOps(reshape = ReshapeOps(face = 20)))
 
-        assertFalse(spec.isModified(composedOnly))
+        assertTrue(spec.isModified(portraitOnly))
+    }
+
+    @Test
+    fun shouldIgnoreGeometry_whenDecidingModified() {
+        val spec = checkNotNull(EditorToolCatalog.specFor(EditorTool.PRESET))
+        val geometryOnly = EditGraph(geometry = GeometryOps(straighten = 4.0f))
+
+        assertFalse(spec.isModified(geometryOnly))
     }
 
     @Test

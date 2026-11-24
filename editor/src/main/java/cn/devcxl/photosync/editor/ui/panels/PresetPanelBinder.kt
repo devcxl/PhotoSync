@@ -22,7 +22,6 @@ import cn.devcxl.photosync.editor.contract.EditStore
 import cn.devcxl.photosync.editor.contract.EditorHostRegistry
 import cn.devcxl.photosync.editor.contract.UserPresetRecord
 import cn.devcxl.photosync.editor.databinding.ActivityEditorBinding
-import cn.devcxl.photosync.editor.domain.CopyMask
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.EditGraphJsonCodec
 import cn.devcxl.photosync.editor.domain.EditParameterKey
@@ -153,8 +152,9 @@ internal class PresetPanelBinder(
             Toast.makeText(context, R.string.editor_preset_save_failed, Toast.LENGTH_SHORT).show()
             return
         }
-        // Persist only the look axes: a preset that carried this frame's crop would letterbox the next.
-        val graphJson = EditGraphJsonCodec.encode(CopyMask().extract(graph))
+        // Persist the whole appearance (grade + portrait work) but never this frame's crop:
+        // a preset that carried the crop would letterbox the next photo.
+        val graphJson = EditGraphJsonCodec.encode(PresetGraphMerger.extractPreset(graph))
         showNamePrompt(R.string.editor_preset_save_title, null) { name -> persistPreset(name, graphJson) }
     }
 

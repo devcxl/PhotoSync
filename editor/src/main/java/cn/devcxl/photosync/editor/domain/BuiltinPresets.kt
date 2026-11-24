@@ -14,8 +14,10 @@ data class BuiltinPresetSpec(
  *
  * Every entry is a *pure parameter* preset: it only carries `baseLook`, tone, colour, detail, effects
  * and portrait skin, never a crop, straighten, perspective quad, liquify grid, face reshape or body
- * warp. Display names live in localized `strings.xml` so `domain/` stays pure Kotlin without
- * hardcoded UI strings or dependencies on `contract/`.
+ * warp. Applying one replaces the whole appearance, so a built-in look resets any face or body
+ * reshaping to neutral — only a user preset carries that work. Display names live in localized
+ * `strings.xml` so `domain/` stays pure Kotlin without hardcoded UI strings or dependencies on
+ * `contract/`.
  */
 object BuiltinPresets {
 
