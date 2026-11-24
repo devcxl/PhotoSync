@@ -67,7 +67,7 @@ abstract class AppDatabase : RoomDatabase() {
                 `name` TEXT NOT NULL,
                 `graph_subset_json` TEXT NOT NULL,
                 `lut_file_path` TEXT,
-                `is_builtin` INTEGER NOT NULL DEFAULT 0,
+                `is_builtin` INTEGER NOT NULL,
                 `created_at` INTEGER NOT NULL
             )
             """.trimIndent()
