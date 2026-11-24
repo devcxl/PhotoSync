@@ -26,8 +26,8 @@ import cn.devcxl.photosync.editor.domain.BodyWarpSolver
 
 /**
  * Seam under test: [PortraitAnalysisCache] — the keying (source identity, model identity, delegate
- * environment), the single-entry policy, the mutex-serialized single analysis, the "failure and
- * identity drift are not cached" rules, the clear generation guard and the cancellation contract.
+ * environment), the LRU policy, the mutex-serialized single analysis, the "failure and identity
+ * drift are not cached" rules, the clear generation guard and the cancellation contract.
  *
  * The fake `produce` blocks on a [CountDownLatch], exactly like the real MediaPipe pass, so the
  * cancellation tests exercise the production timing: waiting is cancellable, a blocking pass is not.
@@ -223,19 +223,33 @@ class PortraitAnalysisCacheTest {
     }
 
     @Test
-    fun shouldKeepOnlyOneEntry_whenAnotherPhotoIsRequested() = runBlocking {
-        val cache = PortraitAnalysisCache()
-        val firstCalls = AtomicInteger()
-        val secondCalls = AtomicInteger()
-        val first = KEY.copy(sourcePath = "/photos/first.jpg")
-        val second = KEY.copy(sourcePath = "/photos/second.jpg")
+    fun shouldKeepTheMostRecentEntries_andEvictTheLeastRecentlyUsed() = runBlocking {
+        val cache = PortraitAnalysisCache(maxEntries = 2)
+        val a = KEY.copy(sourcePath = "/photos/a.jpg")
+        val b = KEY.copy(sourcePath = "/photos/b.jpg")
+        val c = KEY.copy(sourcePath = "/photos/c.jpg")
+        var aCalls = 0
+        var bCalls = 0
+        var cCalls = 0
 
-        cache.get({ first }, { firstCalls.incrementAndGet(); snapshot(1.0f) })
-        cache.get({ second }, { secondCalls.incrementAndGet(); snapshot(2.0f) })
-        cache.get({ first }, { firstCalls.incrementAndGet(); snapshot(3.0f) })
+        cache.get({ a }, { aCalls++; snapshot(1.0f) })
+        cache.get({ b }, { bCalls++; snapshot(2.0f) })
+        // Touch A, so B becomes the least recently used entry.
+        cache.get({ a }, { aCalls++; snapshot(3.0f) })
+        cache.get({ c }, { cCalls++; snapshot(4.0f) })
 
-        assertEquals(2, firstCalls.get())
-        assertEquals(1, secondCalls.get())
+        assertEquals(1, aCalls)
+        assertEquals(1, cCalls)
+
+        // B was evicted by C; A and C are still warm.
+        cache.get({ c }, { cCalls++; snapshot(5.0f) })
+        cache.get({ a }, { aCalls++; snapshot(6.0f) })
+        assertEquals(1, aCalls)
+        assertEquals(1, cCalls)
+
+        // Asking for the evicted photo analyses it again.
+        cache.get({ b }, { bCalls++; snapshot(7.0f) })
+        assertEquals(2, bCalls)
     }
 
     @Test

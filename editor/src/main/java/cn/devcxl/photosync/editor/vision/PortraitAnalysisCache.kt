@@ -156,13 +156,18 @@ class PortraitIdentityDriftException internal constructor(
 private const val DRIFT_MESSAGE = "Portrait source or model changed during the preview analysis"
 
 /**
- * Single-entry, suspending cache of the [PortraitAnalysisSnapshot] the background preview reuses.
+ * Small LRU cache of the [PortraitAnalysisSnapshot]s the background preview reuses.
  *
  * ## What is cached
- * At most one analysis, keyed by [PortraitAnalysisKey]: the source identity (path, size, mtime, RAW
- * flag), the downloaded-model identity and the analysis environment. The derived face / body /
- * liquify warps are *not* cached — the caller rebuilds them from the snapshot and the current graph
- * on every call.
+ * Up to [maxEntries] analyses, keyed by [PortraitAnalysisKey]: the source identity (path, size,
+ * mtime, RAW flag), the downloaded-model identity and the analysis environment. The derived face /
+ * body / liquify warps are *not* cached — the caller rebuilds them from the snapshot and the current
+ * graph on every call.
+ *
+ * ## Why more than one entry
+ * A tethered session applies presets to one photo after another, so a single-entry cache would
+ * re-run MediaPipe for every photo the user goes back to. Four entries keep a burst of freshly
+ * reviewed photos warm at roughly 2 MB of masks.
  *
  * ## Concurrency and cancellation
  * - One coroutine [Mutex] is held across the cache access **and** the single analysis it guards, so
@@ -173,12 +178,12 @@ private const val DRIFT_MESSAGE = "Portrait source or model changed during the p
  *   coroutine context is captured before the lock is taken and re-checked right after the pass, so a
  *   cancelled caller neither returns nor publishes the result.
  * - [clear] never takes the mutex — memory pressure must not queue behind a 20 s inference — it only
- *   bumps [generation] and drops the entry under [stateLock]. A pass that started before the bump
+ *   bumps [generation] and drops the entries under [stateLock]. A pass that started before the bump
  *   therefore cannot repopulate the cache.
  *
  * ## Lock order
  * `BakeConcurrencyGate.rawBakeMutex` (held by the RAW preview path before it calls in) → [mutex] →
- * [stateLock]. [stateLock] is a leaf monitor: it is only taken for the entry and the generation,
+ * [stateLock]. [stateLock] is a leaf monitor: it is only taken for the entries and the generation,
  * never around a suspension, I/O or the analysis, and nothing inside it acquires another lock.
  *
  * ## Failure and identity drift
@@ -187,18 +192,28 @@ private const val DRIFT_MESSAGE = "Portrait source or model changed during the p
  * `keyOf` under the mutex immediately before the pass and once more after it, and a difference
  * throws [PortraitIdentityDriftException] — the stale pass is neither returned nor stored, and the
  * caller is expected to abandon the render.
+ *
+ * @param maxEntries Maximum analyses kept; the least recently used one is evicted first.
  */
-internal class PortraitAnalysisCache {
+internal class PortraitAnalysisCache(private val maxEntries: Int = DEFAULT_MAX_ENTRIES) {
 
     /** Serializes the cache access and the analysis that follows a miss. */
     private val mutex = Mutex()
 
-    /** Guards [entry] and [generation]; never held while suspending or analysing. */
+    /** Guards [entries] and [generation]; never held while suspending or analysing. */
     private val stateLock = Any()
 
     private var generation: Long = 0L
 
-    private var entry: Entry? = null
+    private val entries = object : LinkedHashMap<PortraitAnalysisKey, PortraitAnalysisSnapshot>(
+        maxEntries.coerceAtLeast(1) + 1,
+        LOAD_FACTOR,
+        true
+    ) {
+        override fun removeEldestEntry(
+            eldest: MutableMap.MutableEntry<PortraitAnalysisKey, PortraitAnalysisSnapshot>?
+        ): Boolean = size > maxEntries.coerceAtLeast(1)
+    }
 
     /**
      * Returns the cached snapshot for [key], or runs [produce] and stores its result.
@@ -228,8 +243,8 @@ internal class PortraitAnalysisCache {
         val context = currentCoroutineContext()
         return mutex.withLock {
             val key = keyOf() ?: return@withLock null
-            val cached = synchronized(stateLock) { entry?.takeIf { it.key == key } }
-            if (cached != null) return@withLock cached.snapshot
+            val cached = synchronized(stateLock) { entries[key] }
+            if (cached != null) return@withLock cached
 
             context.ensureActive()
             val generationAtStart = synchronized(stateLock) { generation }
@@ -247,7 +262,7 @@ internal class PortraitAnalysisCache {
                 throw driftBetween(key, current)
             }
             synchronized(stateLock) {
-                if (generation == generationAtStart) entry = Entry(key, snapshot)
+                if (generation == generationAtStart) entries[key] = snapshot
             }
             snapshot
         }
@@ -256,7 +271,7 @@ internal class PortraitAnalysisCache {
     /** Drops an entry that no longer describes the bytes on disk; the caller holds [mutex]. */
     private fun discardEntry(key: PortraitAnalysisKey) {
         synchronized(stateLock) {
-            if (entry?.key == key) entry = null
+            entries.remove(key)
         }
     }
 
@@ -283,7 +298,7 @@ internal class PortraitAnalysisCache {
     }
 
     /**
-     * Drops the entry and invalidates every pass that is already running.
+     * Drops every entry and invalidates analyses that are already running.
      *
      * Safe to call from any thread, including under memory pressure while an analysis is in flight:
      * it never waits for [mutex].
@@ -291,11 +306,15 @@ internal class PortraitAnalysisCache {
     fun clear() {
         synchronized(stateLock) {
             generation++
-            entry = null
+            entries.clear()
         }
     }
 
-    private class Entry(val key: PortraitAnalysisKey, val snapshot: PortraitAnalysisSnapshot)
+    private companion object {
+        /** Recent photos kept warm; four entries cost roughly 2 MB of masks. */
+        const val DEFAULT_MAX_ENTRIES = 4
+        const val LOAD_FACTOR = 0.75f
+    }
 }
 
 /**

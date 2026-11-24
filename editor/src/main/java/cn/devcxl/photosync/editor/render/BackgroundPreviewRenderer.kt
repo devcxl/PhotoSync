@@ -249,6 +249,49 @@ object BackgroundPreviewRenderer {
     }
 
     /**
+     * Warms the portrait analysis for [sourcePath] without rendering a preview.
+     *
+     * Called when the preset strip opens: the source is leased and left in
+     * [RecentEditorSourceCache] so the render triggered by the preset tap hits the cache, and the
+     * MediaPipe pass is stored in [PortraitPreviewCache] for that render to reuse.
+     *
+     * @return True when an analysis is available; a failure is a normal cache miss, not an error.
+     */
+    suspend fun prewarmPortrait(
+        context: Context,
+        filesDir: File,
+        sourcePath: String,
+        isRaw: Boolean
+    ): Boolean {
+        if (sourcePath.isBlank()) return false
+        return try {
+            withContext(Dispatchers.IO) {
+                val lease = RecentEditorSourceCache.shared.acquire(
+                    sourcePath = sourcePath,
+                    isRaw = isRaw,
+                    preferLinear = true
+                ) ?: return@withContext false
+                try {
+                    BakePortraitSupport.prewarmPreview(
+                        context = context,
+                        filesDir = filesDir,
+                        sourcePath = sourcePath,
+                        isRaw = isRaw,
+                        source = lease.source
+                    )
+                } finally {
+                    lease.close()
+                }
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: RuntimeException) {
+            Timber.w(error, "Portrait prewarm failed; the preset tap will analyse on demand")
+            false
+        }
+    }
+
+    /**
      * Stops the offscreen GPU worker and completes queued renders with `null`.
      *
      * The worker also exits on its own after an idle period, so this is the explicit teardown hook
@@ -270,6 +313,7 @@ object BackgroundPreviewRenderer {
     fun onMemoryPressure() {
         OffscreenPreviewRenderer.onMemoryPressure()
         PortraitPreviewCache.clear()
+        BakePortraitSupport.releasePreviewEngine()
     }
 
     /**
@@ -317,7 +361,7 @@ object BackgroundPreviewRenderer {
         graph: EditGraph,
         source: EditorSource
     ): OffscreenPreviewRequest {
-        val portrait = resolvePortrait(context, filesDir, sourcePath, isRaw, graph)
+        val portrait = resolvePortrait(context, filesDir, sourcePath, isRaw, graph, source)
         return OffscreenPreviewRequest(
             source = source,
             graph = graph,
@@ -381,7 +425,8 @@ object BackgroundPreviewRenderer {
         filesDir: File,
         sourcePath: String,
         isRaw: Boolean,
-        graph: EditGraph
+        graph: EditGraph,
+        source: EditorSource
     ): BakePortraitSupport.ResolvedPortrait {
         val liquifyMesh = loadLiquifyMesh(filesDir, graph.geometry.liquify)
         if (graph.portrait.isIdentity()) {
@@ -394,7 +439,8 @@ object BackgroundPreviewRenderer {
                 sourcePath = sourcePath,
                 isRaw = isRaw,
                 graph = graph,
-                liquifyMesh = liquifyMesh
+                liquifyMesh = liquifyMesh,
+                source = source
             )
         }
         return if (isRaw) {

@@ -225,8 +225,12 @@ object FaceMlsSolver {
             val v = texelCentre(row)
             for (column in 0 until SOLVE_GRID) {
                 val u = texelCentre(column)
-                MlsSimilarity.solve(source, target, count, u, v, MLS_ALPHA, scratch)
+                // The confinement window is exactly zero outside the halo, so skipping those cells is
+                // identical to solving and multiplying by zero — and on a typical frame it skips most
+                // of the grid, which is the hot path of the whole MLS solve.
                 val confinement = confinementWindow(frame, u, v)
+                if (confinement <= 0.0f) continue
+                MlsSimilarity.solve(source, target, count, u, v, MLS_ALPHA, scratch)
                 val cell = (row * SOLVE_GRID + column) * CHANNELS
                 grid[cell] += ((scratch[0] - u) * confinement)
                     .coerceIn(-MAX_DISPLACEMENT, MAX_DISPLACEMENT)

@@ -7,6 +7,7 @@ import android.content.Context
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -40,6 +41,9 @@ internal class TetheredDarkroomHost(
 
     private val store: EditStore?
         get() = EditorHostRegistry.editStore
+
+    /** The portrait prewarm running for the preset strip, cancelled when the strip reopens. */
+    private var prewarmJob: Job? = null
 
     /** The graph shown for the pager's current page, or a neutral one when unedited. */
     fun currentGraph(): EditGraph {
@@ -93,6 +97,29 @@ internal class TetheredDarkroomHost(
             } finally {
                 quickStrip.setApplyingPreset(active = false, presetId = null)
             }
+        }
+    }
+
+    /**
+     * Starts the portrait analysis for the photo on screen in the background.
+     *
+     * The preset strip calls this when it opens: browsing the chips takes long enough for the
+     * MediaPipe pass and the source decode to finish, so tapping a preset that carries face or body
+     * reshaping only waits for the render instead of the whole analysis.
+     *
+     * A newer request cancels the previous one: only the photo currently on screen is worth warming.
+     */
+    fun prewarmCurrentPortrait() {
+        val entity = adapter.getItem(currentIndex()) ?: return
+        prewarmJob?.cancel()
+        prewarmJob = scope.launch {
+            val isRaw = ExtensionUtils.isRawExtension(ExtensionUtils.fileExtension(entity.path))
+            BackgroundPreviewRenderer.prewarmPortrait(
+                context = context,
+                filesDir = context.filesDir,
+                sourcePath = entity.path,
+                isRaw = isRaw
+            )
         }
     }
 

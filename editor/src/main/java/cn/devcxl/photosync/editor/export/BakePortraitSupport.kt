@@ -15,6 +15,7 @@ import cn.devcxl.photosync.editor.domain.PortraitAnalysis
 import cn.devcxl.photosync.editor.domain.PortraitWarpComposer
 import cn.devcxl.photosync.editor.domain.WarpDisplacementField
 import cn.devcxl.photosync.editor.render.EditorBitmapLoader
+import cn.devcxl.photosync.editor.render.EditorSource
 import cn.devcxl.photosync.editor.vision.MediaPipeDelegatePolicy
 import cn.devcxl.photosync.editor.vision.MediaPipePortraitEngine
 import cn.devcxl.photosync.editor.vision.ModelDownloadManager
@@ -54,6 +55,11 @@ internal object BakePortraitSupport {
         val warpField: WarpDisplacementField?,
         val skinMask: FloatArray?
     )
+
+    /** Guards the shared preview engine and the model identity it was built with. */
+    private val engineLock = Any()
+    private var cachedPreviewEngine: MediaPipePortraitEngine? = null
+    private var cachedPreviewModel: PortraitModelIdentity? = null
 
     fun resolve(
         context: Context,
@@ -116,7 +122,8 @@ internal object BakePortraitSupport {
         sourcePath: String,
         isRaw: Boolean,
         graph: EditGraph,
-        liquifyMesh: LiquifyMesh?
+        liquifyMesh: LiquifyMesh?,
+        source: EditorSource? = null
     ): ResolvedPortrait {
         if (graph.portrait.isIdentity()) {
             return ResolvedPortrait(warpField = liquifyMesh, skinMask = null)
@@ -128,7 +135,7 @@ internal object BakePortraitSupport {
                 // a file replaced or a model that finished downloading in between makes the result
                 // unstable, and the cache must not keep it.
                 keyOf = { previewAnalysisKey(context, sourcePath, isRaw, modelFile(filesDir)) },
-                produce = { analyzeForPreview(context, modelFile, sourcePath, isRaw) }
+                produce = { analyzeForPreview(context, modelFile, sourcePath, isRaw, source) }
             )
         } ?: return ResolvedPortrait(warpField = liquifyMesh, skinMask = null)
         return composeResolvedPortrait(snapshot.toAnalysis(graph.portrait.body), graph, liquifyMesh)
@@ -164,20 +171,51 @@ internal object BakePortraitSupport {
     }
 
     /**
+     * Runs the analysis for [sourcePath] without rendering anything.
+     *
+     * Used when the user opens the preset strip: the inference for the photo on screen starts while
+     * they browse, so tapping a preset that carries portrait work only pays for the render. The
+     * result lands in [PortraitPreviewCache], which the real preview then reads.
+     *
+     * @param source Already-decoded pixels to analyse instead of decoding the file again.
+     * @return True when an analysis is now cached for [sourcePath].
+     */
+    suspend fun prewarmPreview(
+        context: Context,
+        filesDir: File,
+        sourcePath: String,
+        isRaw: Boolean,
+        source: EditorSource? = null
+    ): Boolean {
+        if (sourcePath.isBlank()) return false
+        val modelFile = modelFile(filesDir)
+        return withContext(Dispatchers.IO) {
+            PortraitPreviewCache.analysis(
+                keyOf = { previewAnalysisKey(context, sourcePath, isRaw, modelFile(filesDir)) },
+                produce = { analyzeForPreview(context, modelFile, sourcePath, isRaw, source) }
+            )
+        } != null
+    }
+
+    /**
      * Runs the expensive pass for a cache miss.
      *
      * [modelFile] is re-checked here on purpose: a download that finishes between the key snapshot
      * and this pass is used immediately, and the identity check the cache runs right after the pass
      * then sees the new model and refuses to store the result — never a wrong entry.
+     *
+     * The already-decoded [source] is reused when the caller has one: decoding the file a second time
+     * costs a full LibRaw pass for RAW photos, which is the dominant latency of a portrait preview.
      */
     private fun analyzeForPreview(
         context: Context,
         modelFile: File,
         sourcePath: String,
-        isRaw: Boolean
+        isRaw: Boolean,
+        source: EditorSource?
     ): PortraitAnalysisSnapshot? {
-        val bitmap = decodeAnalysisBitmap(sourcePath, isRaw) ?: return null
-        val engine = MediaPipePortraitEngine(context, MediaPipeDelegatePolicy(context))
+        val bitmap = analysisBitmap(source) ?: decodeAnalysisBitmap(sourcePath, isRaw) ?: return null
+        val engine = acquirePreviewEngine(context, modelFile)
         try {
             if (modelFile.isFile) {
                 engine.upgradeToMulticlass(modelFile)
@@ -188,7 +226,77 @@ internal object BakePortraitSupport {
             return PortraitAnalysisSnapshot.from(analysis)
         } finally {
             if (!bitmap.isRecycled) bitmap.recycle()
-            engine.release()
+        }
+    }
+
+    /**
+     * Builds the analysis bitmap from the already-decoded [source], or `null` when it cannot.
+     *
+     * Always returns a throw-away bitmap: the caller recycles it after the analysis, and the source's
+     * proxy belongs to the shared source cache.
+     */
+    private fun analysisBitmap(source: EditorSource?): Bitmap? = when (source) {
+        null -> null
+        is EditorSource.BitmapSource -> scaleToAnalysisSize(source.proxy)
+        is EditorSource.LinearRawSource -> {
+            val small = source.proxy.downscaledTo(ANALYSIS_MAX_EDGE_PX)
+            Bitmap.createBitmap(
+                LinearRawPreviewRenderer.renderArgb(
+                    source = small,
+                    graph = EditGraph(),
+                    fullResolutionShortEdge = ANALYSIS_MAX_EDGE_PX
+                ),
+                small.width,
+                small.height,
+                Bitmap.Config.ARGB_8888
+            )
+        }
+    }
+
+    /** Returns an analysis-sized copy of [bitmap]; the caller must never recycle the original. */
+    private fun scaleToAnalysisSize(bitmap: Bitmap): Bitmap? {
+        if (bitmap.isRecycled) return null
+        val shortEdge = minOf(bitmap.width, bitmap.height).coerceAtLeast(1)
+        val scale = (ANALYSIS_MAX_EDGE_PX.toFloat() / shortEdge).coerceAtMost(1.0f)
+        val width = (bitmap.width * scale).toInt().coerceAtLeast(1)
+        val height = (bitmap.height * scale).toInt().coerceAtLeast(1)
+        return if (width == bitmap.width && height == bitmap.height) {
+            bitmap.copy(Bitmap.Config.ARGB_8888, false)
+        } else {
+            Bitmap.createScaledBitmap(bitmap, width, height, true)
+        }
+    }
+
+    /**
+     * Returns the process-wide preview engine, creating it — and loading both models — only when the
+     * downloaded-model identity changed.
+     *
+     * The caller already runs under the analysis mutex, so task creation, the model swap and the
+     * analysis never interleave. Rebuilding the engine on a model change keeps the old retry-free
+     * `release()` semantics while paying the model load once per process instead of once per preview.
+     */
+    private fun acquirePreviewEngine(
+        context: Context,
+        modelFile: File
+    ): MediaPipePortraitEngine {
+        val identity = PortraitModelIdentity.of(modelFile)
+        synchronized(engineLock) {
+            val cached = cachedPreviewEngine
+            if (cached != null && cachedPreviewModel == identity) return cached
+            cached?.release()
+            val engine = MediaPipePortraitEngine(context, MediaPipeDelegatePolicy(context))
+            cachedPreviewEngine = engine
+            cachedPreviewModel = identity
+            return engine
+        }
+    }
+
+    /** Releases the shared preview engine; the next preview re-creates it lazily. */
+    fun releasePreviewEngine() {
+        synchronized(engineLock) {
+            cachedPreviewEngine?.release()
+            cachedPreviewEngine = null
+            cachedPreviewModel = null
         }
     }
 

@@ -109,5 +109,7 @@ internal class TetheredDarkroomCoordinator(
         override fun currentPhotoId(): Long? = darkroom.currentPhotoId()
 
         override fun canCompareCurrent(): Boolean = darkroom.canCompareCurrent()
+
+        override fun prewarmPortrait() = darkroom.prewarmCurrentPortrait()
     }
 }

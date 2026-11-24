@@ -49,6 +49,9 @@ internal class TetheredQuickStripController(
         fun currentGraph(): EditGraph
         fun currentPhotoId(): Long?
         fun canCompareCurrent(): Boolean
+
+        /** Warms the portrait analysis of the photo on screen so a portrait preset applies faster. */
+        fun prewarmPortrait()
     }
 
     private val density = context.resources.displayMetrics.density
@@ -94,6 +97,7 @@ internal class TetheredQuickStripController(
             )
         }
         binding.quickPresetChipScroll.visibility = if (collapsed) View.GONE else View.VISIBLE
+        if (!collapsed) host.prewarmPortrait()
         renderToggleHandle()
     }
 
