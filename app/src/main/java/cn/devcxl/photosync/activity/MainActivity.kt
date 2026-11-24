@@ -125,6 +125,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var dao: PhotoDao
     private val knownPhotoIds = mutableSetOf<Long>()
     private var photoListInitialized: Boolean = false
+    private val lastViewedPhoto: LastViewedPhotoStore by lazy {
+        LastViewedPhotoStore(getSharedPreferences(PREFS_NAME, MODE_PRIVATE))
+    }
+    private var restoredLastViewedPhoto: Boolean = false
 
     private var connectionState: UsbPtpConnectionState = UsbPtpConnectionState.Idle
     private var cameraPresent: Boolean = false
@@ -337,6 +341,13 @@ class MainActivity : AppCompatActivity() {
         connectionController.refreshAvailableCameras()
     }
 
+    override fun onPause() {
+        super.onPause()
+        // Covers the session where the user never swiped: the pager callback alone would not record
+        // the photo that was restored on launch.
+        adapter.getItem(binding.viewPager.currentItem)?.id?.let(lastViewedPhoto::save)
+    }
+
     private fun setupDao() {
         dao = AppDatabase.getInstance(this).photoDao()
     }
@@ -372,6 +383,7 @@ class MainActivity : AppCompatActivity() {
         }
         binding.viewPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
             override fun onPageSelected(position: Int) {
+                adapter.getItem(position)?.id?.let(lastViewedPhoto::save)
                 darkroom.endCompare()
                 currentPageZoomed = false
                 binding.zoomBadge.visibility = View.GONE
@@ -565,6 +577,18 @@ class MainActivity : AppCompatActivity() {
             .start()
     }
 
+    /**
+     * Jumps to the photo the previous session was showing.
+     *
+     * Runs once per process on the first list emission, so a later import can never drag the pager
+     * back to an old photo. A saved id that no longer exists leaves the pager at its default.
+     */
+    private fun restoreLastViewedPhoto(items: List<PhotoEntity>) {
+        val index = restoreIndexForPhoto(lastViewedPhoto.load(), items.map { it.id }) ?: return
+        if (index == binding.viewPager.currentItem) return
+        binding.viewPager.setCurrentItem(index, false)
+    }
+
     private fun observeDatabase() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -574,6 +598,10 @@ class MainActivity : AppCompatActivity() {
                     val itemsCopy = list.toList()
                     adapter.updateItems(itemsCopy)
                     filmstripAdapter.updateItems(itemsCopy)
+                    if (!restoredLastViewedPhoto) {
+                        restoredLastViewedPhoto = true
+                        restoreLastViewedPhoto(itemsCopy)
+                    }
                     evictCachesForRemovedItems(list)
                     val newlyAdded = if (!photoListInitialized) {
                         knownPhotoIds.addAll(list.map { it.id })
