@@ -16,6 +16,7 @@ import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.EditParameterKey
 import cn.devcxl.photosync.editor.domain.EditorUndoController
 import cn.devcxl.photosync.editor.domain.LiquifyBrushSettings
+import cn.devcxl.photosync.editor.domain.SubjectBackgroundMode
 import cn.devcxl.photosync.editor.lut.CubeLutStore
 import cn.devcxl.photosync.editor.ui.gesture.CropHandleMath
 import cn.devcxl.photosync.editor.ui.gesture.EditorGroup
@@ -27,8 +28,8 @@ import cn.devcxl.photosync.editor.ui.widgets.DialSeekBar
  * the active category, the tier-1 control slot (`DialSeekBar`, color, spatial-detail, effect or
  * liquify panels), the crop aspect chips and the value read-out.
  *
- * The seventh `AI` tab is a shell in this wave: it selects the group and keeps the shared chip
- * container as the placeholder until the subject, erase and sky tools land in later waves.
+ * The seventh `AI` tab hosts the subject cut-out in this wave; the erase and sky tools land in later
+ * waves inside the same chip container.
  */
 internal class EditorPanelController(
     private val context: Context,
@@ -57,6 +58,12 @@ internal class EditorPanelController(
         fun onLiquifyResetRequested()
         /** The user asked to import a `.cube` LUT through the system file chooser. */
         fun onLutImportRequested()
+
+        /** The user selected a subject background mode; may start model download/inference. */
+        fun onSubjectModeRequested(mode: SubjectBackgroundMode)
+
+        /** The user picked a solid subject background colour. */
+        fun onSubjectColorRequested(argb: Int)
     }
 
     var currentGroup: EditorGroup = EditorGroup.TONE
@@ -107,6 +114,15 @@ internal class EditorPanelController(
         onEdited = ::handleSubPanelEdited,
         onCommitted = ::handleSubPanelCommitted
     )
+    private val subjectPanels = SubjectPanelBinder(
+        binding = binding,
+        host = object : SubjectPanelBinder.Host {
+            override fun onSubjectModeRequested(mode: SubjectBackgroundMode) =
+                host.onSubjectModeRequested(mode)
+
+            override fun onSubjectColorRequested(argb: Int) = host.onSubjectColorRequested(argb)
+        }
+    )
     private val presetPanels = PresetPanelBinder(
         context = context,
         binding = binding,
@@ -156,6 +172,7 @@ internal class EditorPanelController(
         detailPanels.showFor(null)
         effectsPanels.showFor(null)
         portraitPanels.showFor(null)
+        subjectPanels.setVisible(false)
         presetPanels.setVisible(false)
         aspectRow.setVisible(false)
     }
@@ -171,6 +188,7 @@ internal class EditorPanelController(
         detailPanels.refresh(graph)
         effectsPanels.refresh(graph)
         portraitPanels.refresh(graph)
+        subjectPanels.refresh(graph)
         presetPanels.refresh(graph)
         rotateFlipPanel.refresh(graph)
         refreshHeaderReadout(graph)
@@ -247,6 +265,7 @@ internal class EditorPanelController(
         detailPanels.showFor(null)
         effectsPanels.showFor(null)
         portraitPanels.showFor(null)
+        subjectPanels.setVisible(false)
         presetPanels.setVisible(false)
         rotateFlipPanel.setVisible(false)
         aspectRow.setVisible(false)
@@ -296,6 +315,7 @@ internal class EditorPanelController(
         detailPanels.showFor(spec.controlStyle)
         effectsPanels.showFor(spec.controlStyle)
         portraitPanels.showFor(spec.controlStyle)
+        subjectPanels.setVisible(spec.controlStyle == EditorControlStyle.SUBJECT)
         presetPanels.setVisible(spec.controlStyle == EditorControlStyle.PRESET)
         rotateFlipPanel.setVisible(spec.controlStyle == EditorControlStyle.ROTATE_FLIP)
         val dial = spec.dial

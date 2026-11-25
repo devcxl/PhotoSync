@@ -23,7 +23,11 @@ internal data class RenderFrameState(
     val lateralCaRedK: Float = 0.0f,
     val lateralCaBlueK: Float = 0.0f,
     val outputAspectRatio: Float = 1.0f,
-    val warpActive: Boolean = false
+    val warpActive: Boolean = false,
+    val subjectMode: Int = 0,
+    val subjectColorRgb: Int = 0xFFFFFF,
+    val subjectUvMatrix: FloatArray = IDENTITY_MATRIX,
+    val subjectWarpActive: Boolean = false
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -39,7 +43,11 @@ internal data class RenderFrameState(
             lateralCaRedK == other.lateralCaRedK &&
             lateralCaBlueK == other.lateralCaBlueK &&
             outputAspectRatio == other.outputAspectRatio &&
-            warpActive == other.warpActive
+            warpActive == other.warpActive &&
+            subjectMode == other.subjectMode &&
+            subjectColorRgb == other.subjectColorRgb &&
+            subjectUvMatrix.contentEquals(other.subjectUvMatrix) &&
+            subjectWarpActive == other.subjectWarpActive
     }
 
     override fun hashCode(): Int {
@@ -55,6 +63,10 @@ internal data class RenderFrameState(
         result = 31 * result + lateralCaBlueK.hashCode()
         result = 31 * result + outputAspectRatio.hashCode()
         result = 31 * result + warpActive.hashCode()
+        result = 31 * result + subjectMode
+        result = 31 * result + subjectColorRgb
+        result = 31 * result + subjectUvMatrix.contentHashCode()
+        result = 31 * result + subjectWarpActive.hashCode()
         return result
     }
 
@@ -92,5 +104,7 @@ internal data class PreviewFrameRequest(
     val canvas: CanvasViewportTransform,
     val state: RenderFrameState,
     val compareOriginal: Boolean,
-    val graphRevision: Int
+    val graphRevision: Int,
+    /** Uploaded source-space subject composite, or `0` when the stage is inactive. */
+    val subjectTextureId: Int = 0
 )

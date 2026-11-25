@@ -28,7 +28,12 @@ import cn.devcxl.photosync.editor.domain.Lut3dSamples
 import cn.devcxl.photosync.editor.domain.SourceDimensions
 import cn.devcxl.photosync.editor.domain.SourceResidencyPlan
 import cn.devcxl.photosync.editor.domain.SourceResidencyPlanner
+import cn.devcxl.photosync.editor.domain.SubjectBackgroundMode
+import cn.devcxl.photosync.editor.domain.WarpDisplacementField
 import cn.devcxl.photosync.editor.lut.CubeLutStore
+import cn.devcxl.photosync.editor.render.SubjectCompositeLoader
+import cn.devcxl.photosync.editor.render.SubjectRenderContract
+import cn.devcxl.photosync.editor.render.SubjectRenderPlan
 
 /**
  * Process-wide concurrency gate for the full-resolution bake pipeline.
@@ -165,6 +170,9 @@ class BakeExporter(
             )
             val maxWarpUv = maxAbsWarpUv(portrait.warpField)
             val frame = BakeFrameFactory.create(graph, source, outSize.first, outSize.second, maxWarpUv)
+            val subject = resolveSubject(request, graph, portrait.warpField, source)
+                ?: return BakeResult.Failure("subject mask unavailable")
+            chain.setSubject(subject.support, subject.plan)
             prepass.prepare(frame, outSize.first, outSize.second)
             return publish(request, graph, chain, source, frame, outSize, coroutine)
         } finally {
@@ -228,7 +236,48 @@ class BakeExporter(
         return BakeResult.Success(uri, outWidth, outHeight, request.displayName)
     }
 
-    private fun maxAbsWarpUv(field: cn.devcxl.photosync.editor.domain.WarpDisplacementField?): Float {
+    /**
+     * Resolves the bake's subject support and Pass D plan.
+     *
+     * @return `null` only when the graph asks for a cut-out but its mask cannot be loaded; an
+     *   inactive subject returns a pair of `null`s so the normal bake proceeds unchanged.
+     */
+    private fun resolveSubject(
+        request: BakeRequest,
+        graph: EditGraph,
+        warpField: WarpDisplacementField?,
+        source: BakeSourceTextures
+    ): ResolvedBakeSubject? {
+        if (graph.subject.bgMode == SubjectBackgroundMode.ORIGINAL) {
+            return ResolvedBakeSubject(null, null)
+        }
+        val mask = SubjectCompositeLoader.loadMask(filesDir, graph) ?: return null
+        val initial = SubjectCompositeLoader.resolveForFile(
+            graph = graph,
+            sourcePath = request.sourcePath,
+            isRaw = request.isRaw,
+            filesDir = filesDir
+        )
+        val plan = SubjectRenderContract.plan(graph, hasMask = true)
+            ?: return ResolvedBakeSubject(null, null)
+        return ResolvedBakeSubject(
+            support = BakeSubjectSupport(
+                graph = graph,
+                mask = mask,
+                initial = initial,
+                warpField = warpField,
+                inverseMatrix = BakeFrameFactory.inverseMatrix(graph, source)
+            ),
+            plan = plan
+        )
+    }
+
+    private data class ResolvedBakeSubject(
+        val support: BakeSubjectSupport?,
+        val plan: SubjectRenderPlan?
+    )
+
+    private fun maxAbsWarpUv(field: WarpDisplacementField?): Float {
         if (field == null || field.isZero()) return 0.0f
         var maxDisp = 0.0f
         val count = field.gridSize * field.gridSize * 2

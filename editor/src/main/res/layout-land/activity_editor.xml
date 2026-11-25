@@ -317,6 +317,10 @@
             android:layout_marginTop="8dp" />
 
         <include
+            android:id="@+id/subjectPanel"
+            layout="@layout/editor_subject_panel" />
+
+        <include
             android:id="@+id/rotateFlipPanel"
             layout="@layout/editor_rotate_flip_panel" />
 

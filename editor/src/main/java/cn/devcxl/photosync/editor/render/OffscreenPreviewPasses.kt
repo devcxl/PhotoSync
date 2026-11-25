@@ -62,6 +62,7 @@ internal class OffscreenPreviewPasses : AutoCloseable {
 
     private val warpTexture = WarpTexture()
     private val skinMaskTexture = SkinMaskTexture()
+    private val subjectTexture = SubjectMaskTexture()
     private val curveLutTexture = CurveLutTexture()
     private val lutTexture = Lut3dTexture()
     private val prepassAnalyzer = PrepassAnalyzer(capabilities)
@@ -85,6 +86,10 @@ internal class OffscreenPreviewPasses : AutoCloseable {
     /** Samples per axis of the uploaded 3D LUT, or `0` when none is bound. */
     val lutSampleSize: Int
         get() = lutTexture.sampleSize
+
+    /** True when a subject composite was uploaded and can be sampled by Pass D. */
+    val isSubjectActive: Boolean
+        get() = subjectTexture.isActive
 
     /**
      * Compiles every program and probes the driver on the current thread.
@@ -124,7 +129,8 @@ internal class OffscreenPreviewPasses : AutoCloseable {
         warpField: WarpDisplacementField?,
         skinMask: FloatArray?,
         curve: CurveOps,
-        lut: Lut3dSamples?
+        lut: Lut3dSamples?,
+        subject: SubjectComposite? = null
     ): Boolean {
         warpTexture.stage(warpField)
         val warpUploadFailed = warpTexture.uploadIfNeeded()
@@ -136,6 +142,12 @@ internal class OffscreenPreviewPasses : AutoCloseable {
         skinMaskTexture.uploadIfNeeded()
         if (skinMask != null && !skinMaskTexture.isActive) {
             return previewUnavailable("the skin mask could not be uploaded")
+        }
+
+        subjectTexture.stage(subject)
+        subjectTexture.uploadIfNeeded()
+        if (subject != null && !subjectTexture.isActive) {
+            return previewUnavailable("the subject composite could not be uploaded")
         }
 
         curveLutTexture.stage(curve)
@@ -287,10 +299,29 @@ internal class OffscreenPreviewPasses : AutoCloseable {
         width: Int,
         height: Int,
         inputTextureId: Int,
-        effectsParams: PassDEffectsParams
+        effectsParams: PassDEffectsParams,
+        subjectMode: Int = 0,
+        subjectColorRgb: Int = 0xFFFFFF,
+        subjectUvMatrix: FloatArray? = null,
+        subjectCheckerboard: Boolean = true
     ): Boolean {
         outputTarget.ensureSize(width, height, allowHalfFloat = false, exactSize = true)
         if (!outputTarget.isReady) return previewUnavailable("the Pass D target is incomplete")
+        val subject = if (subjectMode != 0 && subjectTexture.isActive) {
+            SubjectDrawParams(
+                textureId = subjectTexture.textureId,
+                mode = subjectMode,
+                solidColorRgb = subjectColorRgb,
+                localSpace = false,
+                uvMatrix = subjectUvMatrix ?: IDENTITY_MATRIX,
+                warpTextureId = if (warpTexture.isWarpActive) warpTexture.textureId else 0,
+                warpScale = warpTexture.decodeScale,
+                warpOffset = warpTexture.decodeOffset,
+                checkerboard = subjectCheckerboard
+            )
+        } else {
+            null
+        }
         outputTarget.bind()
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
         effectsProgram.draw(
@@ -307,7 +338,8 @@ internal class OffscreenPreviewPasses : AutoCloseable {
                 tileUv = TileUvTransform.IDENTITY,
                 pixelScaleX = width.toFloat(),
                 pixelScaleY = height.toFloat(),
-                flipVerticalForScreen = false
+                flipVerticalForScreen = false,
+                subject = subject
             )
         )
         outputTarget.unbind()
@@ -343,6 +375,7 @@ internal class OffscreenPreviewPasses : AutoCloseable {
         effectsProgram.release()
         warpTexture.release()
         skinMaskTexture.release()
+        subjectTexture.release()
         curveLutTexture.release()
         lutTexture.release()
         prepassAnalyzer.release()
@@ -421,6 +454,12 @@ internal class OffscreenPreviewPasses : AutoCloseable {
 
         /** `GL_CONTEXT_LOST`; `GLES20` does not expose it and the value is context-loss specific. */
         const val GL_CONTEXT_LOST_ERROR = 0x0505
+
+        val IDENTITY_MATRIX = floatArrayOf(
+            1.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f,
+            0.0f, 0.0f, 1.0f
+        )
 
         val DEFAULT_ATMOSPHERIC_LIGHT = floatArrayOf(1.0f, 1.0f, 1.0f)
     }

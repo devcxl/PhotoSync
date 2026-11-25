@@ -32,6 +32,26 @@ internal object GuidedFilter {
         radius: Int,
         epsilon: Float
     ): FloatArray {
+        val coefficients = coefficients(guide, input, width, height, radius, epsilon)
+        return apply(guide, coefficients, width, height)
+    }
+
+    /**
+     * Computes the linear coefficients of the guided filter without evaluating the output.
+     *
+     * Splitting the two stages is what makes the fast guided filter possible: the expensive
+     * coefficient pass runs on a subsampled grid and [apply] evaluates the full-resolution result.
+     *
+     * @return The `a` and `b` planes of `out = a * guide + b`, each [width] x [height].
+     */
+    fun coefficients(
+        guide: FloatArray,
+        input: FloatArray,
+        width: Int,
+        height: Int,
+        radius: Int,
+        epsilon: Float
+    ): GuidedFilterCoefficients {
         require(guide.size == width * height && input.size == width * height) {
             "Guide and input must match the ${width}x$height grid"
         }
@@ -50,10 +70,25 @@ internal object GuidedFilter {
         val intercepts = FloatArray(guide.size) { index ->
             meanInput[index] - coefficients[index] * meanGuide[index]
         }
-        val meanCoefficients = ImageFilters.boxMean(coefficients, width, height, radius)
-        val meanIntercepts = ImageFilters.boxMean(intercepts, width, height, radius)
+        return GuidedFilterCoefficients(
+            a = ImageFilters.boxMean(coefficients, width, height, radius),
+            b = ImageFilters.boxMean(intercepts, width, height, radius)
+        )
+    }
+
+    /** Evaluates `a * guide + b` for one grid. */
+    fun apply(
+        guide: FloatArray,
+        coefficients: GuidedFilterCoefficients,
+        width: Int,
+        height: Int
+    ): FloatArray {
+        require(guide.size == width * height) { "Guide must match the ${width}x$height grid" }
+        require(coefficients.a.size == guide.size && coefficients.b.size == guide.size) {
+            "Guided-filter coefficients must match the guide grid"
+        }
         return FloatArray(guide.size) { index ->
-            meanCoefficients[index] * guide[index] + meanIntercepts[index]
+            coefficients.a[index] * guide[index] + coefficients.b[index]
         }
     }
 
@@ -81,3 +116,14 @@ internal object GuidedFilter {
         }
     }
 }
+
+/**
+ * Linear coefficients of a guided filter, `out = a * guide + b`.
+ *
+ * [a] and [b] are stored as full planes so a fast guided filter can compute them on a coarse grid,
+ * upsample them and evaluate the result at the target resolution.
+ */
+internal data class GuidedFilterCoefficients(
+    val a: FloatArray,
+    val b: FloatArray
+)

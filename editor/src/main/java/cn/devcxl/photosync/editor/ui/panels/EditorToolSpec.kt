@@ -63,6 +63,9 @@ internal enum class EditorControlStyle {
     /** Portrait body reshaping panel: waist and legs. */
     BODY_RESHAPE,
 
+    /** Subject cut-out panel: original / transparent / solid background and preset swatches. */
+    SUBJECT,
+
     /** Preset library panel: save the current look, apply a preset, clear preset axes. */
     PRESET
 }
@@ -100,7 +103,8 @@ internal data class EditorToolSpec(
 /**
  * Registry of the tools delivered so far: geometry (including liquify), tone, white balance,
  * display color, the Pass C spatial-detail group, the Pass D effect panels (3D LUT, film grain,
- * post-crop vignette), lens dispersion / defringe and the Portrait group (skin, face and body).
+ * post-crop vignette), lens dispersion / defringe, the Portrait group (skin, face and body) and the
+ * AI subject cut-out.
  */
 internal object EditorToolCatalog {
 
@@ -113,7 +117,8 @@ internal object EditorToolCatalog {
                 EditorColorSpecs.colourSpecs() +
                 EditorSpatialDetailSpecs.spatialDetailSpecs() +
                 EditorToneDetailSpecs.detailSpecs() +
-                EditorPortraitSpecs.portraitSpecs()
+                EditorPortraitSpecs.portraitSpecs() +
+                AiSubjectSpecs.subjectSpecs()
             )
             .associateBy { it.tool }
 

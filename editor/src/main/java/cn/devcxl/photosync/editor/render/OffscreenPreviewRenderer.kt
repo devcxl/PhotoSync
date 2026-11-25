@@ -39,7 +39,9 @@ internal data class OffscreenPreviewRequest(
     val warpField: WarpDisplacementField? = null,
     val skinMask: FloatArray? = null,
     val lut: Lut3dSamples? = null,
-    val outDir: File
+    val outDir: File,
+    /** Source-space subject composite of `graph.subject`, or `null` when the stage is inactive. */
+    val subject: SubjectComposite? = null
 )
 
 /**

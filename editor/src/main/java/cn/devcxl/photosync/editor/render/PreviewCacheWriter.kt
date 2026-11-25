@@ -15,6 +15,7 @@ import cn.devcxl.photosync.editor.domain.LinearRawPreviewRenderer
 import cn.devcxl.photosync.editor.domain.SkinMaskMath
 import cn.devcxl.photosync.editor.domain.WarpDisplacementField
 import cn.devcxl.photosync.editor.domain.Lut3dSamples
+import cn.devcxl.photosync.editor.domain.Mat3
 import cn.devcxl.photosync.editor.domain.PassBColorMath
 import cn.devcxl.photosync.editor.domain.PassDEffectsMath
 import cn.devcxl.photosync.editor.domain.PassDEffectsParams
@@ -48,9 +49,11 @@ internal object PreviewCacheWriter {
         photoId: Long,
         warpField: WarpDisplacementField? = null,
         lut: Lut3dSamples? = null,
-        skinMask: FloatArray? = null
+        skinMask: FloatArray? = null,
+        subject: SubjectComposite? = null
     ): String? {
-        val rendered = renderBitmapFrame(source, graph, warpField, lut, skinMask) ?: return null
+        val rendered = renderBitmapFrame(source, graph, warpField, lut, skinMask, subject)
+            ?: return null
         return compressAndWrite(rendered, cacheDir, photoId)
     }
 
@@ -62,9 +65,11 @@ internal object PreviewCacheWriter {
         photoId: Long,
         warpField: WarpDisplacementField? = null,
         lut: Lut3dSamples? = null,
-        skinMask: FloatArray? = null
+        skinMask: FloatArray? = null,
+        subject: SubjectComposite? = null
     ): String? {
-        val rendered = renderLinearFrame(source, graph, warpField, lut, skinMask) ?: return null
+        val rendered = renderLinearFrame(source, graph, warpField, lut, skinMask, subject)
+            ?: return null
         return compressAndWrite(rendered, cacheDir, photoId)
     }
 
@@ -80,9 +85,11 @@ internal object PreviewCacheWriter {
         outDir: File,
         warpField: WarpDisplacementField? = null,
         lut: Lut3dSamples? = null,
-        skinMask: FloatArray? = null
+        skinMask: FloatArray? = null,
+        subject: SubjectComposite? = null
     ): String? {
-        val rendered = renderBitmapFrame(source, graph, warpField, lut, skinMask) ?: return null
+        val rendered = renderBitmapFrame(source, graph, warpField, lut, skinMask, subject)
+            ?: return null
         return compressAndWriteTo(rendered, outDir)
     }
 
@@ -93,9 +100,11 @@ internal object PreviewCacheWriter {
         outDir: File,
         warpField: WarpDisplacementField? = null,
         lut: Lut3dSamples? = null,
-        skinMask: FloatArray? = null
+        skinMask: FloatArray? = null,
+        subject: SubjectComposite? = null
     ): String? {
-        val rendered = renderLinearFrame(source, graph, warpField, lut, skinMask) ?: return null
+        val rendered = renderLinearFrame(source, graph, warpField, lut, skinMask, subject)
+            ?: return null
         return compressAndWriteTo(rendered, outDir)
     }
 
@@ -104,7 +113,8 @@ internal object PreviewCacheWriter {
         graph: EditGraph,
         warpField: WarpDisplacementField?,
         lut: Lut3dSamples?,
-        skinMask: FloatArray?
+        skinMask: FloatArray?,
+        subject: SubjectComposite?
     ): Bitmap? {
         val sourceAspect = source.width.toFloat() / source.height.toFloat()
         val outputAspect = GeometryMath.outputAspect(graph.geometry, sourceAspect)
@@ -129,7 +139,23 @@ internal object PreviewCacheWriter {
             graph = graph,
             lut = lut,
             fullResolutionShortEdge = minOf(source.width, source.height),
-            skinMask = skinMask?.takeIf { it.size == SkinMaskMath.MASK_SIZE * SkinMaskMath.MASK_SIZE }
+            skinMask = skinMask?.takeIf { it.size == SkinMaskMath.MASK_SIZE * SkinMaskMath.MASK_SIZE },
+            beforeEffects = subject?.let { composite ->
+                { buffer, width, height ->
+                    SubjectCpuComposer.apply(
+                        pixels = buffer,
+                        width = width,
+                        height = height,
+                        graph = graph,
+                        composite = composite,
+                        inverseMatrix = GeometryMath.buildPassAInverseMatrix(
+                            graph.geometry,
+                            sourceAspect
+                        ),
+                        warpField = warpField
+                    ).copyInto(buffer)
+                }
+            }
         )
         return Bitmap.createBitmap(
             pixels,
@@ -144,7 +170,8 @@ internal object PreviewCacheWriter {
         graph: EditGraph,
         warpField: WarpDisplacementField?,
         lut: Lut3dSamples?,
-        skinMask: FloatArray?
+        skinMask: FloatArray?,
+        subject: SubjectComposite?
     ): Bitmap {
         val sourceAspect = source.width.toFloat() / source.height.toFloat()
         val outputAspect = GeometryMath.outputAspect(graph.geometry, sourceAspect)
@@ -167,7 +194,10 @@ internal object PreviewCacheWriter {
             graph = graph,
             fullResolutionShortEdge = minOf(source.width, source.height),
             lut = lut,
-            skinMask = skinMask
+            skinMask = skinMask,
+            subject = subject,
+            inverseMatrix = geometry,
+            warpField = warpField
         )
         return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).apply {
             setPixels(graded, 0, width, 0, 0, width, height)
@@ -185,7 +215,11 @@ internal object PreviewCacheWriter {
         graph: EditGraph,
         fullResolutionShortEdge: Int,
         lut: Lut3dSamples? = null,
-        skinMask: FloatArray? = null
+        skinMask: FloatArray? = null,
+        subject: SubjectComposite? = null,
+        inverseMatrix: Mat3 =
+            Mat3.identity(),
+        warpField: WarpDisplacementField? = null
     ): IntArray {
         applyPassBToPixels(pixels, width, height, graph)
         val afterPassC = applyPassCToPixels(
@@ -196,8 +230,17 @@ internal object PreviewCacheWriter {
             fullResolutionShortEdge = fullResolutionShortEdge,
             skinMask = skinMask
         )
-        applyPassDEffectsToPixels(afterPassC, width, height, graph, lut)
-        return afterPassC
+        val afterSubject = SubjectCpuComposer.apply(
+            pixels = afterPassC,
+            width = width,
+            height = height,
+            graph = graph,
+            composite = subject,
+            inverseMatrix = inverseMatrix,
+            warpField = warpField
+        )
+        applyPassDEffectsToPixels(afterSubject, width, height, graph, lut)
+        return afterSubject
     }
 
     private fun applyPassCToPixels(

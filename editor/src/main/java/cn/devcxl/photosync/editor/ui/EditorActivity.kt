@@ -9,6 +9,7 @@ import android.os.Looper
 import android.view.View
 import android.widget.Toast
 
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -16,6 +17,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
+import timber.log.Timber
 
 import cn.devcxl.photosync.editor.R
 import cn.devcxl.photosync.editor.contract.EditorHostRegistry
@@ -29,6 +31,7 @@ import cn.devcxl.photosync.editor.domain.EditorUndoController
 import cn.devcxl.photosync.editor.domain.LiquifyBrushSettings
 import cn.devcxl.photosync.editor.domain.LiquifyMeshStore
 import cn.devcxl.photosync.editor.domain.LiquifySession
+import cn.devcxl.photosync.editor.domain.SubjectBackgroundMode
 import cn.devcxl.photosync.editor.lut.CubeLutStore
 import cn.devcxl.photosync.editor.render.EditorGlRenderer
 import cn.devcxl.photosync.editor.render.EditorPreviewSession
@@ -65,10 +68,20 @@ class EditorActivity : AppCompatActivity(),
     private lateinit var renderCoordinator: EditorRenderCoordinator
     private lateinit var gestureHost: EditorGestureHost
     private lateinit var aiInferenceBar: AiInferenceBarController
+    private lateinit var subjectController: EditorSubjectController
     private val renderer = EditorGlRenderer()
     private val undoController = EditorUndoController()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val lutStore by lazy { CubeLutStore(filesDir) }
+
+    private val modelImportLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null || !::subjectController.isInitialized) return@registerForActivityResult
+        runCatching { contentResolver.openInputStream(uri) }
+            .onSuccess { stream -> stream?.use(subjectController::importModel) }
+            .onFailure { error -> Timber.e(error, "The selected ONNX model could not be opened") }
+    }
 
     private var photoId: Long = 0L
     private var sourcePath: String = ""
@@ -122,7 +135,7 @@ class EditorActivity : AppCompatActivity(),
     private fun initCoordinators() {
         val meshStore = LiquifyMeshStore(filesDir)
         liquifySession = LiquifySession(meshStore)
-        previewSession = EditorPreviewSession(renderer, cacheDir, photoId, lutStore)
+        previewSession = EditorPreviewSession(renderer, cacheDir, photoId, lutStore, filesDir)
         sessionLoader = EditorSessionLoader(photoId, previewSession, liquifySession)
         historyCoordinator = EditorHistoryCoordinator(
             photoId = photoId,
@@ -161,6 +174,7 @@ class EditorActivity : AppCompatActivity(),
             onCancelRequested = {
                 aiInferenceJob?.cancel()
                 aiInferenceJob = null
+                if (::subjectController.isInitialized) subjectController.cancel()
             }
         )
     }
@@ -203,6 +217,21 @@ class EditorActivity : AppCompatActivity(),
             portraitHost = portraitHost,
             renderCoordinatorProvider = { renderCoordinator },
             cancelSettle = { mainHandler.removeCallbacks(settleFullQualityRunnable) }
+        )
+        subjectController = EditorSubjectController(
+            context = this,
+            filesDir = filesDir,
+            photoId = photoId,
+            undoController = undoController,
+            previewSession = previewSession,
+            inferenceBar = aiInferenceBar,
+            scope = lifecycleScope,
+            sourceProvider = { previewSession.source },
+            onGraphCommitted = { _, _ ->
+                renderCoordinator.renderCurrentGraph(useProxy = false)
+                renderCoordinator.updateHistoryButtons()
+            },
+            onImportRequested = { modelImportLauncher.launch(arrayOf("application/octet-stream", "*/*")) }
         )
         lutImporter = EditorLutImportCoordinator(this, lutStore, undoController, previewSession) {
             renderCoordinator.renderCurrentGraph(useProxy = false)
@@ -262,6 +291,7 @@ class EditorActivity : AppCompatActivity(),
         aiInferenceBar.dismiss()
         aiInferenceJob?.cancel()
         aiInferenceJob = null
+        if (::subjectController.isInitialized) subjectController.release()
         ActivePhotoEditRegistry.release(photoId)
         canvas.detachOverlays()
         portraitHost.release()
@@ -312,6 +342,11 @@ class EditorActivity : AppCompatActivity(),
     }
 
     override fun onLutImportRequested() = lutImporter.launch()
+
+    override fun onSubjectModeRequested(mode: SubjectBackgroundMode) =
+        subjectController.requestMode(mode)
+
+    override fun onSubjectColorRequested(argb: Int) = subjectController.requestColor(argb)
     override fun onPreviewDragStarted() = gestureHost.onDragStarted()
     override fun onPreviewDragFinished() = gestureHost.onDragFinished()
     override fun onLiquifyMeshChanged() = gestureHost.onLiquifyMeshChanged()
@@ -383,6 +418,7 @@ class EditorActivity : AppCompatActivity(),
             renderCoordinator.publishLiquifyMesh()
             renderCoordinator.renderCurrentGraph(useProxy = false)
             renderCoordinator.updateHistoryButtons()
+            subjectController.restore(loaded.graph)
         }
     }
 

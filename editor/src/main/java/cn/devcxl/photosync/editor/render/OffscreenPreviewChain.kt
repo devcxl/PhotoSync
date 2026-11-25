@@ -106,7 +106,8 @@ internal class OffscreenPreviewChain(
                 warpField = request.warpField,
                 skinMask = skinMask,
                 curve = graph.color.curve,
-                lut = request.lut
+                lut = request.lut,
+                subject = request.subject
             )
             if (!staged || !checkpoint(guard)) return null
 
@@ -170,11 +171,19 @@ internal class OffscreenPreviewChain(
 
             val effectsParams = PassDEffectsParams.from(graph, outWidth.toFloat() / outHeight.toFloat())
                 .withLutSize(passes.lutSampleSize)
+            val subjectPlan = SubjectRenderContract.plan(
+                graph = graph,
+                hasMask = request.subject != null && passes.isSubjectActive
+            )
             val passD = passes.drawPassD(
                 width = outWidth,
                 height = outHeight,
                 inputTextureId = if (passCTexture != 0) passCTexture else passes.passBTextureId,
-                effectsParams = effectsParams
+                effectsParams = effectsParams,
+                subjectMode = subjectPlan?.shaderMode ?: 0,
+                subjectColorRgb = subjectPlan?.solidColorRgb ?: 0xFFFFFF,
+                subjectUvMatrix = inverseMatrix,
+                subjectCheckerboard = true
             )
             if (!passD || !checkpoint(guard)) return null
 

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<cn.devcxl.photosync.editor.ui.widgets.SubjectPanelView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:visibility="gone">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/editor_subject_panel_title"
+        android:textColor="@color/editor_text_secondary"
+        android:textSize="11sp" />
+
+    <LinearLayout
+        android:id="@+id/subjectModeRow"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:orientation="horizontal" />
+
+    <LinearLayout
+        android:id="@+id/subjectSwatchRow"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal" />
+
+    <TextView
+        android:id="@+id/subjectHint"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:text="@string/editor_subject_wave3_hint"
+        android:textColor="@color/editor_text_muted"
+        android:textSize="11sp" />
+</cn.devcxl.photosync.editor.ui.widgets.SubjectPanelView>

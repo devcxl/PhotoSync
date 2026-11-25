@@ -14,6 +14,7 @@ import cn.devcxl.photosync.editor.domain.Lut3dSamples
 import cn.devcxl.photosync.editor.domain.PassDEffectsParams
 import cn.devcxl.photosync.editor.domain.PortraitWarpComposer
 import cn.devcxl.photosync.editor.domain.SpatialDetailParams
+import cn.devcxl.photosync.editor.domain.SubjectOps
 import cn.devcxl.photosync.editor.domain.ToneShaderParams
 
 /**
@@ -26,8 +27,8 @@ import cn.devcxl.photosync.editor.domain.ToneShaderParams
  *    display color grading.
  * 3. **Pass C** ([SpatialDetailRenderer]) runs the 1024px Pre-pass, guided NR, dark-channel
  *    dehaze, Clarity/Texture and Y sharpening (short-circuited to 0 FBO draw calls when neutral).
- * 4. **Pass D** ([EffectsOutputStage]) applies tetrahedral 3D LUT, post-crop grain, vignette and
- *    `1/255` triangular dithering.
+ * 4. **Pass D** ([EffectsOutputStage]) composites the subject cut-out, then applies tetrahedral 3D
+ *    LUT, post-crop grain, vignette and `1/255` triangular dithering.
  */
 internal class EditorGlRenderer : GLSurfaceView.Renderer {
 
@@ -117,7 +118,8 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
                 canvas = canvasTransform,
                 state = state,
                 compareOriginal = compareOriginal,
-                graphRevision = prepassRevision
+                graphRevision = prepassRevision,
+                subjectTextureId = pipeline.subjectTextureId
             )
         )
         lastPassCDrawCalls = pipeline.lastPassCDrawCalls
@@ -165,6 +167,11 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
         pipeline.stageSkinMask(mask)
     }
 
+    /** Stages the source-space subject composite for the next Pass D draw. */
+    fun setSubjectComposite(composite: SubjectComposite?) {
+        pipeline.stageSubjectComposite(composite)
+    }
+
     private fun publishWarpLocked() {
         val composed = PortraitWarpComposer.compose(portraitFaceWarp, portraitBodyWarp, liquifyMesh)
         frameState = frameState.copy(warpActive = pipeline.stageWarpField(composed))
@@ -194,6 +201,10 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
             }
             val spatialParams = SpatialDetailParams.from(graph)
             pipeline.stageCurve(graph.color.curve)
+            val subjectPlan = SubjectRenderContract.plan(
+                graph = graph,
+                hasMask = pipeline.isSubjectCompositeAvailable
+            )
             frameState = RenderFrameState(
                 toneParams = ToneShaderParams.from(graph),
                 colorParams = ColorGradingParams.from(graph),
@@ -206,7 +217,12 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
                 lateralCaRedK = GeometryMath.lateralCaKFromSlider(aberration.redCyan),
                 lateralCaBlueK = GeometryMath.lateralCaKFromSlider(aberration.blueYellow),
                 outputAspectRatio = outputAspect,
-                warpActive = warpActive
+                warpActive = warpActive,
+                subjectMode = subjectPlan?.shaderMode ?: SUBJECT_MODE_OFF,
+                subjectColorRgb = subjectPlan?.solidColorRgb
+                    ?: (SubjectOps.DEFAULT_BG_COLOR_ARGB and RGB_MASK),
+                subjectUvMatrix = if (geometryActive) inverseMatrix else RenderFrameState.IDENTITY_MATRIX,
+                subjectWarpActive = subjectPlan != null && warpActive
             )
             isPassCActive = !useFastProxy && !spatialParams.isZeroDrawCallShortCircuit
             val prepassSig = prepassSignature(graph, warpActive, portraitFaceWarp, portraitBodyWarp)
@@ -241,5 +257,10 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
         imageHeight = source.height.coerceAtLeast(1)
         linearInput = source.isLinear
         autoBrightGain = (source as? EditorSource.LinearRawSource)?.autoBrightGain ?: 1.0f
+    }
+
+    private companion object {
+        const val SUBJECT_MODE_OFF = 0
+        const val RGB_MASK = 0x00FFFFFF
     }
 }

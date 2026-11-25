@@ -368,7 +368,8 @@ object BackgroundPreviewRenderer {
             warpField = portrait.warpField,
             skinMask = portrait.skinMask,
             lut = loadLut(filesDir, graph),
-            outDir = outDir
+            outDir = outDir,
+            subject = SubjectCompositeLoader.resolve(graph, source, filesDir)
         )
     }
 
@@ -385,7 +386,8 @@ object BackgroundPreviewRenderer {
                 outDir = outDir,
                 warpField = request.warpField,
                 lut = request.lut,
-                skinMask = request.skinMask
+                skinMask = request.skinMask,
+                subject = request.subject
             )
             is EditorSource.BitmapSource -> PreviewCacheWriter.writeBitmapPreviewTo(
                 source = source.full,
@@ -393,7 +395,8 @@ object BackgroundPreviewRenderer {
                 outDir = outDir,
                 warpField = request.warpField,
                 lut = request.lut,
-                skinMask = request.skinMask
+                skinMask = request.skinMask,
+                subject = request.subject
             )
         }
         written?.let(::File)

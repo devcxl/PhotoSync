@@ -21,7 +21,8 @@ internal class EditorPreviewSession(
     private val renderer: EditorGlRenderer,
     private val cacheDir: File,
     private val photoId: Long,
-    private val lutStore: CubeLutStore
+    private val lutStore: CubeLutStore,
+    private val filesDir: File
 ) {
 
     var source: EditorSource? = null
@@ -84,6 +85,20 @@ internal class EditorPreviewSession(
         renderer.setLiquifyMesh(mesh)
     }
 
+    /** Stages an already-built subject composite for the next canvas frame. */
+    fun applySubjectComposite(composite: SubjectComposite?) {
+        renderer.setSubjectComposite(composite)
+    }
+
+    /**
+     * Loads the mask referenced by [graph] and builds its composite. Blocking: call from an IO
+     * dispatcher before requesting the next frame.
+     */
+    fun resolveSubjectComposite(graph: EditGraph): SubjectComposite? {
+        val current = source ?: return null
+        return SubjectCompositeLoader.resolve(graph, current, filesDir)
+    }
+
     /**
      * Renders the screen-sized preview cache for [graph]. Blocking: call from an IO dispatcher.
      *
@@ -109,6 +124,7 @@ internal class EditorPreviewSession(
             Timber.e("The referenced 3D LUT is unavailable; keeping the previous preview")
             return null
         }
+        val subject = SubjectCompositeLoader.resolve(graph, current, filesDir)
         val accelerated = OffscreenPreviewRenderer.renderNow(
             OffscreenPreviewRequest(
                 source = current,
@@ -116,7 +132,8 @@ internal class EditorPreviewSession(
                 warpField = warpField,
                 skinMask = skinMask,
                 lut = lut,
-                outDir = File(cacheDir, EditorCachePaths.photoEditDirName(photoId))
+                outDir = File(cacheDir, EditorCachePaths.photoEditDirName(photoId)),
+                subject = subject
             )
         )
         if (accelerated != null) return accelerated.absolutePath
@@ -128,7 +145,8 @@ internal class EditorPreviewSession(
                 photoId = photoId,
                 warpField = warpField,
                 lut = lut,
-                skinMask = skinMask
+                skinMask = skinMask,
+                subject = subject
             )
             is EditorSource.BitmapSource -> PreviewCacheWriter.writePreviewCache(
                 source = current.full,
@@ -137,7 +155,8 @@ internal class EditorPreviewSession(
                 photoId = photoId,
                 warpField = warpField,
                 lut = lut,
-                skinMask = skinMask
+                skinMask = skinMask,
+                subject = subject
             )
         }
     }

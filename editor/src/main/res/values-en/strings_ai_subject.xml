@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="editor_tool_ai_subject">Subject</string>
+    <string name="editor_tool_ai_subject_modified">Subject •</string>
+    <string name="editor_subject_panel_title">On-device subject mask · hair-level refinement</string>
+    <string name="editor_subject_mode_original">Original</string>
+    <string name="editor_subject_mode_transparent">Transparent</string>
+    <string name="editor_subject_mode_solid">Solid colour</string>
+    <string name="editor_subject_wave3_hint">Background blur and independent foreground/background grading arrive in a later wave</string>
+    <string name="editor_subject_swatch_description">Background colour %1$s</string>
+    <string name="editor_subject_inference_label">Generating the subject mask (MODNet)…</string>
+    <string name="editor_subject_refine_label">Refining hair edges and colour decontamination…</string>
+    <string name="editor_subject_mask_missing">The subject mask is unavailable; regenerate it</string>
+    <string name="editor_subject_inference_failed">Subject mask generation failed; try again</string>
+    <string name="editor_subject_model_dialog_title">Download an on-device AI model</string>
+    <string name="editor_subject_model_dialog_message">%1$s\nAbout %2$.1f MB, tried against %3$d mirrors and verified by SHA-256. You can also pick an already downloaded .onnx file.</string>
+    <string name="editor_subject_model_download">Download</string>
+    <string name="editor_subject_model_import">Import local</string>
+    <string name="editor_subject_model_cancel">Cancel</string>
+    <string name="editor_subject_model_downloading">Downloading the model…</string>
+    <string name="editor_subject_model_importing">Verifying the local model…</string>
+    <string name="editor_subject_model_unavailable">Model install failed; retry from AI model management or import a local file</string>
+</resources>

@@ -51,7 +51,8 @@ internal object PreviewDrawRequests {
     fun effects(
         request: PreviewFrameRequest,
         frame: PreviewFrameInput,
-        curveTextureId: Int
+        curveTextureId: Int,
+        subject: SubjectDrawParams? = null
     ): EffectsStageRequest {
         val (scaleX, scaleY) = letterboxScale(request, frame.aspect)
         val (targetWidth, targetHeight) = OffscreenColorTarget.targetSizeFor(
@@ -77,7 +78,8 @@ internal object PreviewDrawRequests {
                 flipVerticalForScreen = false
             ),
             pixelScaleX = targetWidth,
-            pixelScaleY = targetHeight
+            pixelScaleY = targetHeight,
+            subject = subject
         )
     }
 

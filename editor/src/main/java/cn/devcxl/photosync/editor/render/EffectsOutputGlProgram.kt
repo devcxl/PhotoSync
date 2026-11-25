@@ -24,7 +24,9 @@ internal data class EffectsDrawParams(
     val pixelScaleX: Float = 1.0f,
     val pixelScaleY: Float = 1.0f,
     /** True only when presenting directly to the default screen framebuffer (`FBO 0`). */
-    val flipVerticalForScreen: Boolean = false
+    val flipVerticalForScreen: Boolean = false,
+    /** Optional Pass D subject composite; `null` keeps the shader's zero-cost short circuit. */
+    val subject: SubjectDrawParams? = null
 )
 
 /**
@@ -53,6 +55,16 @@ internal class EffectsOutputGlProgram {
     private var uOffsetLoc: Int = -1
     private var uTileUvTransformLoc: Int = -1
     private var uTilePixelScaleLoc: Int = -1
+    private var uSubjectModeLoc: Int = -1
+    private var uSubjectTexLoc: Int = -1
+    private var uSubjectColorLoc: Int = -1
+    private var uSubjectUvMatrixLoc: Int = -1
+    private var uSubjectLocalLoc: Int = -1
+    private var uSubjectWarpTexLoc: Int = -1
+    private var uHasSubjectWarpTexLoc: Int = -1
+    private var uSubjectWarpScaleLoc: Int = -1
+    private var uSubjectWarpOffsetLoc: Int = -1
+    private var uSubjectCheckerLoc: Int = -1
 
     private val quad = QuadMesh()
 
@@ -91,6 +103,7 @@ internal class EffectsOutputGlProgram {
         GLES20.glUniform2f(uScaleLoc, params.scaleX, params.scaleY)
         GLES20.glUniform2f(uOffsetLoc, params.offsetX, params.offsetY)
         bindEffectUniforms(params)
+        bindSubjectUniforms(params.subject)
         val orientation = if (params.flipVerticalForScreen) {
             QuadOrientation.SCREEN
         } else {
@@ -134,6 +147,39 @@ internal class EffectsOutputGlProgram {
         GLES20.glUniform2f(uTilePixelScaleLoc, params.pixelScaleX, params.pixelScaleY)
     }
 
+    private fun bindSubjectUniforms(subject: SubjectDrawParams?) {
+        if (subject == null || subject.textureId == 0 || subject.mode == 0) {
+            GLES20.glUniform1i(uSubjectModeLoc, 0)
+            GLES20.glUniform1i(uSubjectCheckerLoc, 0)
+            return
+        }
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, subject.textureId)
+        GLES20.glUniform1i(uSubjectTexLoc, 2)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE3)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, subject.warpTextureId)
+        GLES20.glUniform1i(uSubjectWarpTexLoc, 3)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+
+        GLES20.glUniform1i(uSubjectModeLoc, subject.mode)
+        GLES20.glUniform3f(
+            uSubjectColorLoc,
+            ((subject.solidColorRgb ushr 16) and 0xFF) / 255.0f,
+            ((subject.solidColorRgb ushr 8) and 0xFF) / 255.0f,
+            (subject.solidColorRgb and 0xFF) / 255.0f
+        )
+        GLES20.glUniformMatrix3fv(uSubjectUvMatrixLoc, 1, false, subject.uvMatrix, 0)
+        GLES20.glUniform1i(uSubjectLocalLoc, if (subject.localSpace) 1 else 0)
+        GLES20.glUniform1i(uHasSubjectWarpTexLoc, if (subject.warpTextureId != 0) 1 else 0)
+        GLES20.glUniform2f(uSubjectWarpScaleLoc, subject.warpScale, subject.warpScale)
+        GLES20.glUniform2f(
+            uSubjectWarpOffsetLoc,
+            subject.warpOffset,
+            subject.warpOffset
+        )
+        GLES20.glUniform1i(uSubjectCheckerLoc, if (subject.checkerboard) 1 else 0)
+    }
+
     private fun resolveLocations() {
         aPositionLoc = GLES20.glGetAttribLocation(programId, "aPosition")
         aTexCoordLoc = GLES20.glGetAttribLocation(programId, "aTexCoord")
@@ -151,5 +197,15 @@ internal class EffectsOutputGlProgram {
         uOffsetLoc = GLES20.glGetUniformLocation(programId, "uOffset")
         uTileUvTransformLoc = GLES20.glGetUniformLocation(programId, "uTileUvTransform")
         uTilePixelScaleLoc = GLES20.glGetUniformLocation(programId, "uTilePixelScale")
+        uSubjectModeLoc = GLES20.glGetUniformLocation(programId, "uSubjectMode")
+        uSubjectTexLoc = GLES20.glGetUniformLocation(programId, "uSubjectTex")
+        uSubjectColorLoc = GLES20.glGetUniformLocation(programId, "uSubjectColor")
+        uSubjectUvMatrixLoc = GLES20.glGetUniformLocation(programId, "uSubjectUvMatrix")
+        uSubjectLocalLoc = GLES20.glGetUniformLocation(programId, "uSubjectLocal")
+        uSubjectWarpTexLoc = GLES20.glGetUniformLocation(programId, "uSubjectWarpTex")
+        uHasSubjectWarpTexLoc = GLES20.glGetUniformLocation(programId, "uHasSubjectWarpTex")
+        uSubjectWarpScaleLoc = GLES20.glGetUniformLocation(programId, "uSubjectWarpScale")
+        uSubjectWarpOffsetLoc = GLES20.glGetUniformLocation(programId, "uSubjectWarpOffset")
+        uSubjectCheckerLoc = GLES20.glGetUniformLocation(programId, "uSubjectChecker")
     }
 }

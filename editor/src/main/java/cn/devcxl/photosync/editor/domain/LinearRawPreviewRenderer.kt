@@ -18,13 +18,19 @@ internal object LinearRawPreviewRenderer {
     private const val CHANNELS = 4
     private const val CHANNELS_RGB = 3
 
-    /** Renders [source] into packed `ARGB_8888` pixels, row-major (Pass B -> Pass C -> Pass D). */
+    /**
+     * Renders [source] into packed `ARGB_8888` pixels, row-major (Pass B -> Pass C -> Pass D).
+     *
+     * @param beforeEffects Optional CPU composite inserted between Pass C and Pass D, used by the
+     *   subject cut-out so LUT/grain/vignette still act on the composited frame.
+     */
     fun renderArgb(
         source: LinearRawBuffer,
         graph: EditGraph,
         lut: Lut3dSamples? = null,
         fullResolutionShortEdge: Int = minOf(source.width, source.height),
-        skinMask: FloatArray? = null
+        skinMask: FloatArray? = null,
+        beforeEffects: ((pixels: IntArray, width: Int, height: Int) -> Unit)? = null
     ): IntArray {
         val toneParams = ToneShaderParams.from(graph)
         val colorParams = ColorGradingParams.from(graph)
@@ -55,6 +61,7 @@ internal object LinearRawPreviewRenderer {
             fullResolutionShortEdge = fullResolutionShortEdge,
             skinMask = skinMask
         )
+        beforeEffects?.invoke(detailed, width, height)
         return applyPassDEffects(detailed, width, height, graph, lut)
     }
 

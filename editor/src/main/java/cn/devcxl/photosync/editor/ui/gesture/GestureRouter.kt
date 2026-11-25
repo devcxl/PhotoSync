@@ -55,6 +55,7 @@ enum class EditorTool {
     SKIN_SMOOTH,
     FACE_RESHAPE,
     BODY_RESHAPE,
+    AI_SUBJECT,
     PRESET
 }
 

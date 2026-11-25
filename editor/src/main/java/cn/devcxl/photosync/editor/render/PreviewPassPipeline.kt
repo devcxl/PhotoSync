@@ -19,7 +19,8 @@ import cn.devcxl.photosync.editor.domain.WarpDisplacementField
  * 3. **Pass C** ([SpatialDetailRenderer]) runs the 1024px Pre-pass + spatial-detail chain
  *    (skin smoothing, NR, dehaze, clarity/texture, sharpening) when non-neutral outside a fast
  *    proxy drag, otherwise short-circuits at **0 FBO draw calls**.
- * 4. **Pass D** ([EffectsOutputStage]) adds the 3D LUT, film grain, post-crop vignette and dithering.
+ * 4. **Pass D** ([EffectsOutputStage]) composites the subject cut-out, then adds the 3D LUT, film
+ *    grain, post-crop vignette and dithering.
  */
 internal class PreviewPassPipeline {
 
@@ -39,6 +40,7 @@ internal class PreviewPassPipeline {
     private val textures = EditorSourceTextures()
     private val warpTexture = WarpTexture()
     private val skinMaskTexture = SkinMaskTexture()
+    private val subjectTexture = SubjectMaskTexture()
     private val curveLutTexture = CurveLutTexture()
     private var geometryFallbackLogged = false
 
@@ -66,6 +68,7 @@ internal class PreviewPassPipeline {
         lastPassCDrawCalls = 0
         warpTexture.invalidate()
         skinMaskTexture.invalidate()
+        subjectTexture.invalidate()
         curveLutTexture.invalidate()
         textures.invalidateContext()
         if (preferEs3 && !geometryProgram.init()) {
@@ -84,6 +87,17 @@ internal class PreviewPassPipeline {
 
     /** Stages the portrait `skinMask`; `null` unbinds the Stage 0 / sharpening suppression mask. */
     fun stageSkinMask(mask: FloatArray?): Boolean = skinMaskTexture.stage(mask)
+
+    /** Stages the source-space subject composite, or `null` to disable the Pass D subject stage. */
+    fun stageSubjectComposite(composite: SubjectComposite?) = subjectTexture.stage(composite)
+
+    /** True when a composite is staged or uploaded, so [EditorGlRenderer] may activate the stage. */
+    val isSubjectCompositeAvailable: Boolean
+        get() = subjectTexture.isActive || subjectTexture.isStaged
+
+    /** Uploaded subject texture name, or `0` before the first upload. */
+    val subjectTextureId: Int
+        get() = subjectTexture.textureId
 
     /** Stages the 1D tone-curve LUT for the next frame. */
     fun stageCurve(curve: CurveOps) = curveLutTexture.stage(curve)
@@ -106,6 +120,7 @@ internal class PreviewPassPipeline {
         textures.uploadPending()
         val warpFailed = warpTexture.uploadIfNeeded()
         skinMaskTexture.uploadIfNeeded()
+        subjectTexture.uploadIfNeeded()
         curveLutTexture.uploadIfNeeded(preferEs3)
         effectsStage.uploadPending(preferEs3)
         return warpFailed
@@ -133,13 +148,32 @@ internal class PreviewPassPipeline {
             return
         }
         val passCTexture = renderSpatialDetailIfActive(request, frame)
-        val effectsActive = !request.state.effectsParams.isIdentity && effectsStage.isReady
+        val subject = subjectDrawParams(request)
+        val effectsActive = (!request.state.effectsParams.isIdentity || subject != null) &&
+            effectsStage.isReady
         when {
-            effectsActive && passCTexture != 0 -> drawPassDFromTexture(request, frame, passCTexture)
-            effectsActive -> drawPassD(request, frame)
+            effectsActive && passCTexture != 0 ->
+                drawPassDFromTexture(request, frame, passCTexture, subject)
+            effectsActive -> drawPassD(request, frame, subject)
             passCTexture != 0 -> presentPassC(request, frame, passCTexture)
             else -> drawPassB(request, frame)
         }
+    }
+
+    private fun subjectDrawParams(request: PreviewFrameRequest): SubjectDrawParams? {
+        val state = request.state
+        if (state.subjectMode == 0 || request.subjectTextureId == 0) return null
+        return SubjectDrawParams(
+            textureId = request.subjectTextureId,
+            mode = state.subjectMode,
+            solidColorRgb = state.subjectColorRgb,
+            localSpace = false,
+            uvMatrix = state.subjectUvMatrix,
+            warpTextureId = if (state.subjectWarpActive) warpTexture.textureId else 0,
+            warpScale = warpTexture.decodeScale,
+            warpOffset = warpTexture.decodeOffset,
+            checkerboard = state.subjectMode == SUBJECT_MODE_TRANSPARENT
+        )
     }
 
     private fun renderGeometryPass(request: PreviewFrameRequest, source: PreviewFrameInput): PreviewFrameInput {
@@ -250,8 +284,18 @@ internal class PreviewPassPipeline {
         )
     }
 
-    private fun drawPassD(request: PreviewFrameRequest, frame: PreviewFrameInput) {
-        if (!effectsStage.draw(PreviewDrawRequests.effects(request, frame, curveLutTexture.textureId))) {
+    private fun drawPassD(
+        request: PreviewFrameRequest,
+        frame: PreviewFrameInput,
+        subject: SubjectDrawParams?
+    ) {
+        val stageRequest = PreviewDrawRequests.effects(
+            request,
+            frame,
+            curveLutTexture.textureId,
+            subject
+        )
+        if (!effectsStage.draw(stageRequest)) {
             drawPassB(request, frame)
         }
     }
@@ -259,11 +303,12 @@ internal class PreviewPassPipeline {
     private fun drawPassDFromTexture(
         request: PreviewFrameRequest,
         frame: PreviewFrameInput,
-        textureId: Int
+        textureId: Int,
+        subject: SubjectDrawParams?
     ) {
         effectsStage.drawFromTexture(
             textureId,
-            PreviewDrawRequests.effects(request, frame, curveLutTexture.textureId)
+            PreviewDrawRequests.effects(request, frame, curveLutTexture.textureId, subject)
         )
     }
 
@@ -271,5 +316,9 @@ internal class PreviewPassPipeline {
         if (geometryFallbackLogged) return
         geometryFallbackLogged = true
         Timber.w("Pass A target unavailable; preview falls back to the un-warped source")
+    }
+
+    private companion object {
+        const val SUBJECT_MODE_TRANSPARENT = 2
     }
 }

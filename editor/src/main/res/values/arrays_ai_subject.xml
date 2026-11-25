@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Preset solid backgrounds of the AI subject panel; parsed once by SubjectPanelView. -->
+    <string-array name="editor_subject_swatch_colors">
+        <item>#FFFFFFFF</item>
+        <item>#FF111111</item>
+        <item>#FFF2C6A0</item>
+        <item>#FF9CC7E8</item>
+        <item>#FFB9D9B4</item>
+        <item>#FFE8A0A8</item>
+    </string-array>
+</resources>

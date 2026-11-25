@@ -43,6 +43,7 @@ enum class EditParameterKey {
     PORTRAIT_SKIN,
     PORTRAIT_RESHAPE,
     PORTRAIT_BODY,
+    AI_SUBJECT,
     PRESET
 }
 
