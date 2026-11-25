@@ -9,6 +9,8 @@ import android.os.Looper
 import android.view.View
 import android.widget.Toast
 
+import java.io.InputStream
+
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.Lifecycle
@@ -69,17 +71,23 @@ class EditorActivity : AppCompatActivity(),
     private lateinit var gestureHost: EditorGestureHost
     private lateinit var aiInferenceBar: AiInferenceBarController
     private lateinit var subjectController: EditorSubjectController
+    private lateinit var inpaintTools: EditorInpaintToolHost
     private val renderer = EditorGlRenderer()
     private val undoController = EditorUndoController()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val lutStore by lazy { CubeLutStore(filesDir) }
 
+    /** Receives the next SAF `.onnx` selection; set by the AI tool that asked for it. */
+    private var pendingModelImport: ((InputStream) -> Unit)? = null
+
     private val modelImportLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
-        if (uri == null || !::subjectController.isInitialized) return@registerForActivityResult
+        val importer = pendingModelImport
+        pendingModelImport = null
+        if (uri == null || importer == null) return@registerForActivityResult
         runCatching { contentResolver.openInputStream(uri) }
-            .onSuccess { stream -> stream?.use(subjectController::importModel) }
+            .onSuccess { stream -> stream?.use(importer) }
             .onFailure { error -> Timber.e(error, "The selected ONNX model could not be opened") }
     }
 
@@ -123,7 +131,8 @@ class EditorActivity : AppCompatActivity(),
             panel = panel,
             liquifySession = liquifySession,
             previewAspect = ::previewAspect,
-            guides = { portraitHost.guides() }
+            guides = { portraitHost.guides() },
+            sourceSize = { previewSession.source?.let { source -> source.width to source.height } }
         )
         overlaySync.syncBrush()
         initActionHosts()
@@ -174,6 +183,8 @@ class EditorActivity : AppCompatActivity(),
             onCancelRequested = {
                 aiInferenceJob?.cancel()
                 aiInferenceJob = null
+                if (::inpaintTools.isInitialized) inpaintTools.brush.cancelInference()
+                if (::inpaintTools.isInitialized) inpaintTools.cancelInstall()
                 if (::subjectController.isInitialized) subjectController.cancel()
             }
         )
@@ -231,8 +242,10 @@ class EditorActivity : AppCompatActivity(),
                 renderCoordinator.renderCurrentGraph(useProxy = false)
                 renderCoordinator.updateHistoryButtons()
             },
-            onImportRequested = { modelImportLauncher.launch(arrayOf("application/octet-stream", "*/*")) }
+            onImportRequested = { launchModelImport(subjectController::importModel) },
+            onRepaintRequested = { binding.glSurfaceView.requestRender() }
         )
+        initInpaintHost()
         lutImporter = EditorLutImportCoordinator(this, lutStore, undoController, previewSession) {
             renderCoordinator.renderCurrentGraph(useProxy = false)
             renderCoordinator.updateHistoryButtons()
@@ -244,6 +257,39 @@ class EditorActivity : AppCompatActivity(),
             onExportingChanged = topBar::setExporting,
             onFinished = { renderCoordinator.updateHistoryButtons() }
         )
+    }
+
+    /**
+     * Wires the `AI -> 消除` tool pair: the controller owns the model and the graph commit, the brush
+     * controller owns the strokes and the run.
+     */
+    private fun initInpaintHost() {
+        inpaintTools = EditorInpaintToolHost(
+            context = this,
+            binding = binding,
+            filesDir = filesDir,
+            photoId = photoId,
+            undoController = undoController,
+            previewSession = previewSession,
+            inferenceBar = aiInferenceBar,
+            scope = lifecycleScope,
+            onCanvasTransform = ::onCanvasTransformChanged,
+            onGraphChanged = {
+                renderCoordinator.renderCurrentGraph(useProxy = false)
+                renderCoordinator.updateHistoryButtons()
+            },
+            onRepaintRequested = { binding.glSurfaceView.requestRender() },
+            onSubjectCompositeStale = {
+                subjectController.refreshSourceComposite(undoController.currentGraph)
+            },
+            launchImport = ::launchModelImport
+        )
+    }
+
+    /** Opens the system document picker and routes the choice to the AI tool that asked for it. */
+    private fun launchModelImport(importer: (InputStream) -> Unit) {
+        pendingModelImport = importer
+        modelImportLauncher.launch(arrayOf("application/octet-stream", "*/*"))
     }
 
     /**
@@ -291,6 +337,7 @@ class EditorActivity : AppCompatActivity(),
         aiInferenceBar.dismiss()
         aiInferenceJob?.cancel()
         aiInferenceJob = null
+        if (::inpaintTools.isInitialized) inpaintTools.release()
         if (::subjectController.isInitialized) subjectController.release()
         ActivePhotoEditRegistry.release(photoId)
         canvas.detachOverlays()
@@ -303,8 +350,11 @@ class EditorActivity : AppCompatActivity(),
 
     override fun onEditorToolChanged(tool: EditorTool) {
         val liquifyActive = panel.currentGroup == EditorGroup.GEOMETRY && tool == EditorTool.LIQUIFY
-        binding.cropOverlayView.visibility = if (liquifyActive) View.GONE else View.VISIBLE
+        val inpaintActive = panel.currentGroup == EditorGroup.AI && tool == EditorTool.AI_ERASE
+        val canvasOwned = liquifyActive || inpaintActive
+        binding.cropOverlayView.visibility = if (canvasOwned) View.GONE else View.VISIBLE
         binding.liquifyBrushOverlayView.visibility = if (liquifyActive) View.VISIBLE else View.GONE
+        binding.inpaintBrushOverlayView.visibility = if (inpaintActive) View.VISIBLE else View.GONE
         overlaySync.sync(undoController.currentGraph)
         portraitHost.onToolChanged()
         renderCoordinator.renderCurrentGraph(useProxy = false)

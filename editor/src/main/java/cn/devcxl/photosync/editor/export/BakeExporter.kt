@@ -31,6 +31,7 @@ import cn.devcxl.photosync.editor.domain.SourceResidencyPlanner
 import cn.devcxl.photosync.editor.domain.SubjectBackgroundMode
 import cn.devcxl.photosync.editor.domain.WarpDisplacementField
 import cn.devcxl.photosync.editor.lut.CubeLutStore
+import cn.devcxl.photosync.editor.render.InpaintOverlay
 import cn.devcxl.photosync.editor.render.SubjectCompositeLoader
 import cn.devcxl.photosync.editor.render.SubjectRenderContract
 import cn.devcxl.photosync.editor.render.SubjectRenderPlan
@@ -149,7 +150,8 @@ class BakeExporter(
             sourcePath = request.sourcePath,
             isRaw = request.isRaw,
             plan = plan,
-            sourceLongEdge = sourceLongEdge
+            sourceLongEdge = sourceLongEdge,
+            inpaint = InpaintOverlay.of(filesDir, graph)
         ) ?: return BakeResult.Failure("source textures could not be created")
         val prepass = BakePrepass(chain, source)
         try {

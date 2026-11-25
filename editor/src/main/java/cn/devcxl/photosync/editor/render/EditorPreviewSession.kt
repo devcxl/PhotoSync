@@ -6,6 +6,7 @@ import timber.log.Timber
 
 import cn.devcxl.photosync.editor.contract.EditorCachePaths
 import cn.devcxl.photosync.editor.domain.EditGraph
+import cn.devcxl.photosync.editor.domain.InpaintPatchRef
 import cn.devcxl.photosync.editor.domain.LiquifyMesh
 import cn.devcxl.photosync.editor.domain.WarpDisplacementField
 import cn.devcxl.photosync.editor.domain.Lut3dSamples
@@ -16,6 +17,13 @@ import cn.devcxl.photosync.editor.lut.CubeLutStore
  *
  * Keeping this outside [cn.devcxl.photosync.editor.ui.EditorActivity] lets the activity stay a
  * thin controller: it delegates source loading, renderer state and cache writing here.
+ *
+ * ## Inpainting (Pre-Pass A)
+ * The **untouched decode** is kept for the whole session: [source] is either that decode or a
+ * private copy with `graph.inpaint` blended in. Erasing therefore never re-reads the RAW, undoing
+ * every erase returns to the exact original pixels, and the press-and-hold comparison can show the
+ * un-repaired frame while the canvas shows the repaired one. Composition only ever runs against the
+ * original, never against an already composed copy, so overlapping patches are applied once.
  */
 internal class EditorPreviewSession(
     private val renderer: EditorGlRenderer,
@@ -25,8 +33,13 @@ internal class EditorPreviewSession(
     private val filesDir: File
 ) {
 
+    /** The source the canvas renders: the untouched decode or its inpaint-composed copy. */
     var source: EditorSource? = null
         private set
+
+    private var originalSource: EditorSource? = null
+    private var composedSource: EditorSource? = null
+    private var appliedInpaint: List<InpaintPatchRef> = emptyList()
 
     /**
      * True when the staged source is a 16-bit linear RAW buffer, i.e. the `BaseLook` toggle can
@@ -42,11 +55,49 @@ internal class EditorPreviewSession(
      */
     fun loadSource(sourcePath: String, isRaw: Boolean, preferLinear: Boolean): EditorSource? {
         val loaded = EditorSourceLoader.load(sourcePath, isRaw, preferLinear)
+        composedSource?.release()
+        composedSource = null
+        appliedInpaint = emptyList()
+        originalSource = loaded
         source = loaded
         if (loaded != null) {
             renderer.setSource(loaded)
         }
+        renderer.setCompareSource(null)
         return loaded
+    }
+
+    /**
+     * Re-stages the canvas source for [graph]'s `EditGraph.inpaint` list.
+     *
+     * A no-op when the list did not change, so the 60Hz slider path never pays for a recomposition.
+     * When patches exist, [renderer] also receives the untouched decode as its comparison source, so
+     * press-and-hold shows the frame before the repair instead of the repaired pixels.
+     *
+     * @return True when the canvas source changed and a new frame is required.
+     */
+    fun applyInpaintOverlay(graph: EditGraph): Boolean {
+        val original = originalSource ?: return false
+        if (graph.inpaint == appliedInpaint) return false
+        appliedInpaint = graph.inpaint
+        if (graph.inpaint.isEmpty()) {
+            restoreOriginalSource(original)
+            return true
+        }
+        val overlay = InpaintOverlay.of(filesDir, graph) ?: return false
+        val composed = EditorSourceComposer.compose(original, overlay)
+        if (composed == null) {
+            Timber.w("Inpaint overlay could not be composed; keeping the unrepaired preview")
+            restoreOriginalSource(original)
+            return true
+        }
+        // The previous copy is only dropped here: the GL thread may still be uploading it, so it is
+        // left to the collector instead of being recycled under a live texture upload.
+        composedSource = composed
+        source = composed
+        renderer.setSource(composed)
+        renderer.setCompareSource(original)
+        return true
     }
 
     /**
@@ -74,6 +125,7 @@ internal class EditorPreviewSession(
      *   the caller should asynchronously call [preloadLut] and re-request a render.
      */
     fun applyGraph(graph: EditGraph, useProxy: Boolean = false): Boolean {
+        applyInpaintOverlay(graph)
         val lut = resolveCachedLut(graph)
         renderer.setLut3d(lut)
         renderer.applyState(graph, useFastProxy = useProxy)
@@ -107,6 +159,9 @@ internal class EditorPreviewSession(
      * [PreviewCacheWriter] (the CPU reference implementation) whenever the GPU cannot reproduce the
      * graph exactly.
      *
+     * The cache is always rendered from the **untouched** decode with `graph.inpaint` composed in, so
+     * a repeated save can never stack the same patch twice.
+     *
      * @param warpField Composed displacement grid (face MLS + body + liquify) so the cache matches
      *   the canvas exactly.
      * @param skinMask Portrait analysis mask, or `null` when the portrait group is unused.
@@ -117,14 +172,26 @@ internal class EditorPreviewSession(
         warpField: WarpDisplacementField? = null,
         skinMask: FloatArray? = null
     ): String? {
-        val current = source ?: return null
+        val base = originalSource ?: return null
+        return renderPreview(base, graph, warpField, skinMask)
+    }
+
+    private fun renderPreview(
+        current: EditorSource,
+        graph: EditGraph,
+        warpField: WarpDisplacementField?,
+        skinMask: FloatArray?
+    ): String? {
         val lut = loadLutFor(graph)
         if (!PreviewGraphAssets.isComplete(graph, lut)) {
             // Publishing without the LUT would commit a preview that shows a different look.
             Timber.e("The referenced 3D LUT is unavailable; keeping the previous preview")
             return null
         }
-        val subject = SubjectCompositeLoader.resolve(graph, current, filesDir)
+        // The cache renders from the untouched decode; both renderers compose the patches into a
+        // private copy, so a repeated save can never stack the same patch twice.
+        val inpaint = InpaintOverlay.of(filesDir, graph)
+        val subject = SubjectCompositeLoader.resolve(graph, current, filesDir, inpaint)
         val accelerated = OffscreenPreviewRenderer.renderNow(
             OffscreenPreviewRequest(
                 source = current,
@@ -133,7 +200,8 @@ internal class EditorPreviewSession(
                 skinMask = skinMask,
                 lut = lut,
                 outDir = File(cacheDir, EditorCachePaths.photoEditDirName(photoId)),
-                subject = subject
+                subject = subject,
+                inpaint = inpaint
             )
         )
         if (accelerated != null) return accelerated.absolutePath
@@ -146,7 +214,8 @@ internal class EditorPreviewSession(
                 warpField = warpField,
                 lut = lut,
                 skinMask = skinMask,
-                subject = subject
+                subject = subject,
+                inpaint = inpaint
             )
             is EditorSource.BitmapSource -> PreviewCacheWriter.writePreviewCache(
                 source = current.full,
@@ -156,15 +225,28 @@ internal class EditorPreviewSession(
                 warpField = warpField,
                 lut = lut,
                 skinMask = skinMask,
-                subject = subject
+                subject = subject,
+                inpaint = inpaint
             )
         }
     }
 
+    private fun restoreOriginalSource(original: EditorSource) {
+        composedSource = null
+        source = original
+        renderer.setSource(original)
+        renderer.setCompareSource(null)
+    }
+
     /** Releases staged textures and recycles any bitmaps owned by the source. */
     fun release() {
-        source?.release()
+        composedSource?.release()
+        composedSource = null
+        originalSource?.release()
+        originalSource = null
         source = null
+        appliedInpaint = emptyList()
+        renderer.setCompareSource(null)
         renderer.releaseSource()
     }
 

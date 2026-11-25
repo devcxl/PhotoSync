@@ -32,6 +32,7 @@ import cn.devcxl.photosync.editor.export.SurfacelessEglContext
  * @property skinMask `256 x 256` portrait mask, or `null` when the portrait group is unused.
  * @property lut Imported 3D LUT samples referenced by [graph], or `null` when none.
  * @property outDir Directory that receives one new, uniquely named JPEG.
+ * @property inpaint Pre-Pass A overlay composed into a private copy of [source], or `null`.
  */
 internal data class OffscreenPreviewRequest(
     val source: EditorSource,
@@ -41,7 +42,9 @@ internal data class OffscreenPreviewRequest(
     val lut: Lut3dSamples? = null,
     val outDir: File,
     /** Source-space subject composite of `graph.subject`, or `null` when the stage is inactive. */
-    val subject: SubjectComposite? = null
+    val subject: SubjectComposite? = null,
+    /** Repair patches of `graph.inpaint`; blended before the source is uploaded. */
+    val inpaint: InpaintOverlay? = null
 )
 
 /**

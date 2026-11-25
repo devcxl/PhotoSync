@@ -27,13 +27,27 @@ internal object SubjectCompositeLoader {
     /**
      * Resolves the composite referenced by [graph] from an already-decoded [source].
      *
+     * @param inpaint Pre-Pass A repair overlay the caller is about to blend into [source]. When it is
+     *   present the composite is re-read from a composed copy, so a cut-out never carries the
+     *   un-repaired pixels the user erased; the copy is private to this call.
      * @return `null` when the subject is inactive, the mask is unavailable or the source cannot be
      *   converted into a proxy image.
      */
-    fun resolve(graph: EditGraph, source: EditorSource, filesDir: File): SubjectComposite? {
+    fun resolve(
+        graph: EditGraph,
+        source: EditorSource,
+        filesDir: File,
+        inpaint: InpaintOverlay? = null
+    ): SubjectComposite? {
         if (graph.subject.bgMode == SubjectBackgroundMode.ORIGINAL) return null
         val mask = loadMask(filesDir, graph) ?: return null
-        return fromSource(source, mask)
+        if (inpaint == null) return fromSource(source, mask)
+        val composed = EditorSourceComposer.compose(source, inpaint)
+        return try {
+            fromSource(composed ?: source, mask)
+        } finally {
+            composed?.release()
+        }
     }
 
     /**

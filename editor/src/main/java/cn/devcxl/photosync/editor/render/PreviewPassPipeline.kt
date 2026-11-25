@@ -38,6 +38,7 @@ internal class PreviewPassPipeline {
     private val effectsStage = EffectsOutputStage(exposureProgram, capabilities)
     private val geometryTarget = OffscreenColorTarget(capabilities)
     private val textures = EditorSourceTextures()
+    private val compareTextures = EditorSourceTextures()
     private val warpTexture = WarpTexture()
     private val skinMaskTexture = SkinMaskTexture()
     private val subjectTexture = SubjectMaskTexture()
@@ -71,6 +72,7 @@ internal class PreviewPassPipeline {
         subjectTexture.invalidate()
         curveLutTexture.invalidate()
         textures.invalidateContext()
+        compareTextures.invalidateContext()
         if (preferEs3 && !geometryProgram.init()) {
             capabilities.markMinimalFallback("Pass A GeometryCa")
         }
@@ -79,8 +81,17 @@ internal class PreviewPassPipeline {
     /** Stages [source] for upload on the GL thread. */
     fun setSource(source: EditorSource) = textures.stage(source)
 
+    /** Stages the untouched decode the Before/After comparison must show. */
+    fun setCompareSource(source: EditorSource) = compareTextures.stage(source)
+
+    /** Drops the staged comparison source, so compare falls back to the edited source. */
+    fun clearCompareSource() = compareTextures.clear()
+
     /** Drops the staged source without touching GL objects. */
-    fun releaseSource() = textures.clear()
+    fun releaseSource() {
+        textures.clear()
+        compareTextures.clear()
+    }
 
     /** Stages the composed `uWarpTex` field (face MLS + body + liquify). */
     fun stageWarpField(field: WarpDisplacementField?): Boolean = warpTexture.stage(field)
@@ -115,9 +126,18 @@ internal class PreviewPassPipeline {
     fun activeDimensions(useFastProxy: Boolean): Pair<Int, Int> =
         textures.activeDimensions(useFastProxy)
 
+    /** Texture of the un-edited decode, or `0` when compare must fall back to [activeTexture]. */
+    fun compareActiveTexture(useFastProxy: Boolean): Int =
+        compareTextures.activeTexture(useFastProxy)
+
+    /** Pixel dimensions of the compare texture. */
+    fun compareActiveDimensions(useFastProxy: Boolean): Pair<Int, Int> =
+        compareTextures.activeDimensions(useFastProxy)
+
     /** Uploads everything staged on the GL thread. */
     fun uploadPending(preferEs3: Boolean): Boolean {
         textures.uploadPending()
+        compareTextures.uploadPending()
         val warpFailed = warpTexture.uploadIfNeeded()
         skinMaskTexture.uploadIfNeeded()
         subjectTexture.uploadIfNeeded()

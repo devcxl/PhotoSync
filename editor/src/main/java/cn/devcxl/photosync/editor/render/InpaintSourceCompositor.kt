@@ -1,5 +1,6 @@
 package cn.devcxl.photosync.editor.render
 
+import java.nio.ByteBuffer
 import kotlin.math.roundToInt
 
 import android.graphics.Bitmap
@@ -157,6 +158,69 @@ class InpaintSourceCompositor(
         return InpaintComposeReport(applied, skipped, blended)
     }
 
+    /**
+     * Blends [patches] into an interleaved `RGBA` half-float (`GL_RGBA16F`) buffer in place.
+     *
+     * This is the Pre-Pass A overlay of the 16-bit paths that keep their pixels as half-float
+     * texels: the linear RAW preview, the downscaled Tier 2 proxy and the Tier 2 bake slices.
+     * Patch boxes are normalized against the **pre-crop source**, so a slice passes its own origin
+     * and the full source size and only the pixels inside the slice are touched.
+     *
+     * @param buffer Little-endian half-float texels covering at least [width] x [height].
+     * @param width Width of the buffer being composed.
+     * @param height Height of the buffer being composed.
+     * @param originX Left edge of the buffer inside the source, in source pixels.
+     * @param originY Top edge of the buffer inside the source, in source pixels.
+     * @param sourceWidth Pre-crop source width the normalized boxes resolve against.
+     * @param sourceHeight Pre-crop source height the normalized boxes resolve against.
+     */
+    fun applyToLinearRgba16f(
+        buffer: ByteBuffer,
+        width: Int,
+        height: Int,
+        patches: List<InpaintPatchRef>,
+        originX: Int = 0,
+        originY: Int = 0,
+        sourceWidth: Int = width,
+        sourceHeight: Int = height
+    ): InpaintComposeReport {
+        if (patches.isEmpty()) return InpaintComposeReport.EMPTY
+        require(width > 0 && height > 0) { "Source dimensions must be positive" }
+        require(sourceWidth > 0 && sourceHeight > 0) { "Patch space must be positive" }
+        require(buffer.capacity() >= width * height * RGBA16F_BYTES) {
+            "Source buffer does not match its size"
+        }
+        val window = InpaintPixelRect(0, 0, width, height)
+        var applied = 0
+        var skipped = 0
+        var blended = 0L
+        for (patch in patches) {
+            val rect = patch.bbox.toPixelRect(sourceWidth, sourceHeight)
+            val decoded = if (rect == null) null else decode(patch)
+            if (rect == null || decoded == null) {
+                skipped++
+                continue
+            }
+            val local = translate(rect, originX, originY)
+            if (!local.intersects(window)) {
+                // The patch lives entirely outside this slice: nothing to blend, nothing skipped.
+                applied++
+                continue
+            }
+            blended += blender.blendLinearHalfFloat(buffer, width, height, local, decoded)
+            applied++
+        }
+        return InpaintComposeReport(applied, skipped, blended)
+    }
+
+    private fun translate(rect: InpaintPixelRect, originX: Int, originY: Int): InpaintPixelRect =
+        InpaintPixelRect(
+            left = rect.left - originX,
+            top = rect.top - originY,
+            right = rect.right - originX,
+            bottom = rect.bottom - originY
+        )
+
     private fun decode(patch: InpaintPatchRef): InpaintDecodedPatch? {
         val patchDigest = patch.sha256.takeIf(::isSha256Hex) ?: digestFromPath(patch.patchRelPath)
         if (patchDigest == null) {
@@ -207,6 +271,7 @@ class InpaintSourceCompositor(
 
     private companion object {
         const val RGB_CHANNELS = 3
+        const val RGBA16F_BYTES = 8
         const val SHA256_HEX_LENGTH = 64
     }
 }

@@ -362,6 +362,7 @@ object BackgroundPreviewRenderer {
         source: EditorSource
     ): OffscreenPreviewRequest {
         val portrait = resolvePortrait(context, filesDir, sourcePath, isRaw, graph, source)
+        val inpaint = InpaintOverlay.of(filesDir, graph)
         return OffscreenPreviewRequest(
             source = source,
             graph = graph,
@@ -369,7 +370,8 @@ object BackgroundPreviewRenderer {
             skinMask = portrait.skinMask,
             lut = loadLut(filesDir, graph),
             outDir = outDir,
-            subject = SubjectCompositeLoader.resolve(graph, source, filesDir)
+            subject = SubjectCompositeLoader.resolve(graph, source, filesDir, inpaint),
+            inpaint = inpaint
         )
     }
 
@@ -387,7 +389,8 @@ object BackgroundPreviewRenderer {
                 warpField = request.warpField,
                 lut = request.lut,
                 skinMask = request.skinMask,
-                subject = request.subject
+                subject = request.subject,
+                inpaint = request.inpaint
             )
             is EditorSource.BitmapSource -> PreviewCacheWriter.writeBitmapPreviewTo(
                 source = source.full,
@@ -396,7 +399,8 @@ object BackgroundPreviewRenderer {
                 warpField = request.warpField,
                 lut = request.lut,
                 skinMask = request.skinMask,
-                subject = request.subject
+                subject = request.subject,
+                inpaint = request.inpaint
             )
         }
         written?.let(::File)

@@ -15,6 +15,7 @@ import cn.devcxl.photosync.editor.domain.SourceResidencyTier
 import cn.devcxl.photosync.editor.domain.SourceSliceRequest
 import cn.devcxl.photosync.editor.render.EditorBitmapLoader
 import cn.devcxl.photosync.editor.render.EditorTextureUploader
+import cn.devcxl.photosync.editor.render.InpaintOverlay
 import cn.devcxl.photosync.wrapper.LinearRawBuffer
 import cn.devcxl.photosync.wrapper.NativeRgb16Image
 import cn.devcxl.photosync.wrapper.RawWrapper
@@ -28,6 +29,12 @@ import cn.devcxl.photosync.wrapper.RawWrapper
  *
  * Every texture is created with `GL_CLAMP_TO_EDGE` sampling; all uploads are top-down like the
  * editor's source path, so `vTexCoord` stays a top-down image coordinate in every pass.
+ *
+ * ## Inpainting
+ * An [InpaintOverlay] is composed **before** the GPU sees the pixels: the bitmap and the linear frame
+ * right after decoding (so the proxy and the full texture agree), and every Tier 2 slice after its
+ * extraction. The patch boxes are normalized against the pre-crop source, so a slice passes its
+ * origin and the full size and only the pixels it owns are blended.
  */
 internal class BakeSourceTextures private constructor(
     val width: Int,
@@ -36,6 +43,7 @@ internal class BakeSourceTextures private constructor(
     val autoBrightGain: Float,
     private val native: NativeRgb16Image?,
     private val plan: SourceResidencyPlan,
+    private val inpaint: InpaintOverlay?,
     private var fullTextureId: Int,
     private var proxyTextureId: Int
 ) : AutoCloseable {
@@ -63,6 +71,11 @@ internal class BakeSourceTextures private constructor(
     /**
      * Extracts and uploads the source sub-rectangle of [request].
      *
+     * When the graph carries repair patches, the slice is composed with every patch it intersects
+     * **before** it is uploaded, using the slice origin and the full source size to map the
+     * normalized boxes. A slice therefore holds exactly the pixels the same band of a full-frame
+     * texture would hold.
+     *
      * @return The slice texture, or `0` when extraction or upload failed.
      */
     fun uploadSlice(request: SourceSliceRequest): Int {
@@ -76,6 +89,15 @@ internal class BakeSourceTextures private constructor(
             reuse = sliceBuffer
         ) ?: return 0
         sliceBuffer = buffer
+        inpaint?.applyToLinearBuffer(
+            buffer = buffer,
+            width = bounds.width,
+            height = bounds.height,
+            originX = bounds.left,
+            originY = bounds.top,
+            sourceWidth = width,
+            sourceHeight = height
+        )
         val uploaded = EditorTextureUploader.uploadLinearHalfFloat(
             LinearRawBuffer(
                 width = bounds.width,
@@ -100,6 +122,9 @@ internal class BakeSourceTextures private constructor(
         if (reducedTextureId != 0) return reducedTextureId
         val image = native ?: return 0
         val proxy = image.extractRgba16fScaled(maxEdge) ?: return 0
+        // Normalized boxes resolve against the reduced frame, so the repaired areas land in the same
+        // relative place as on the full-resolution export.
+        inpaint?.applyToLinearBuffer(proxy)
         reducedTextureId = EditorTextureUploader.uploadLinearHalfFloat(proxy, 0)
         return reducedTextureId
     }
@@ -128,32 +153,36 @@ internal class BakeSourceTextures private constructor(
          *
          * @param sourceLongEdge Longest edge of the upright frame, used to trigger the half-size
          *   LibRaw decode for Tier 3.
+         * @param inpaint Pre-Pass A repair overlay; composed into the decode and into every Tier 2
+         *   slice before upload. `null` keeps the plain source.
          * @return The staged textures, or `null` when decoding failed.
          */
         fun open(
             sourcePath: String,
             isRaw: Boolean,
             plan: SourceResidencyPlan,
-            sourceLongEdge: Int
+            sourceLongEdge: Int,
+            inpaint: InpaintOverlay? = null
         ): BakeSourceTextures? {
             if (!File(sourcePath).isFile) {
                 Timber.e("Bake source is missing")
                 return null
             }
             return if (isRaw) {
-                openRaw(sourcePath, plan, sourceLongEdge)
+                openRaw(sourcePath, plan, sourceLongEdge, inpaint)
             } else {
-                openBitmap(sourcePath, plan)
+                openBitmap(sourcePath, plan, inpaint)
             }
         }
 
         private fun openRaw(
             sourcePath: String,
             plan: SourceResidencyPlan,
-            sourceLongEdge: Int
+            sourceLongEdge: Int,
+            inpaint: InpaintOverlay?
         ): BakeSourceTextures? {
             if (plan.tier == SourceResidencyTier.NATIVE_SLICE) {
-                return openNativeSlice(sourcePath, plan)
+                return openNativeSlice(sourcePath, plan, inpaint)
             }
             val maxEdge = if (plan.decodeHalfSize) {
                 // Half size keeps a 100MP sensor inside the budget; the texture cap keeps the
@@ -168,6 +197,9 @@ internal class BakeSourceTextures private constructor(
                 Timber.e(oom, "OOM while decoding the bake RAW source")
                 null
             } ?: return null
+            // Compose before the proxy is derived and before the texture upload, so the proxy and the
+            // full frame always describe the same repaired pixels.
+            inpaint?.applyToLinearBuffer(linear)
             val proxyBuffer = linear.downscaledTo(PROXY_MAX_EDGE_PX)
             val full = EditorTextureUploader.uploadLinearHalfFloat(linear, 0)
             if (full == 0) return null
@@ -183,6 +215,7 @@ internal class BakeSourceTextures private constructor(
                 autoBrightGain = linear.autoBrightGain,
                 native = null,
                 plan = plan,
+                inpaint = inpaint,
                 fullTextureId = full,
                 proxyTextureId = proxy
             )
@@ -190,7 +223,8 @@ internal class BakeSourceTextures private constructor(
 
         private fun openNativeSlice(
             sourcePath: String,
-            plan: SourceResidencyPlan
+            plan: SourceResidencyPlan,
+            inpaint: InpaintOverlay?
         ): BakeSourceTextures? {
             val native = try {
                 cn.devcxl.photosync.wrapper.NativeRgb16.decode(sourcePath, halfSize = false)
@@ -203,6 +237,7 @@ internal class BakeSourceTextures private constructor(
                 native.close()
                 return null
             }
+            inpaint?.applyToLinearBuffer(proxyBuffer)
             val proxy = EditorTextureUploader.uploadLinearHalfFloat(proxyBuffer, 0)
             if (proxy == 0) {
                 native.close()
@@ -215,18 +250,29 @@ internal class BakeSourceTextures private constructor(
                 autoBrightGain = native.autoBrightGain,
                 native = native,
                 plan = plan,
+                inpaint = inpaint,
                 fullTextureId = 0,
                 proxyTextureId = proxy
             )
         }
 
-        private fun openBitmap(sourcePath: String, plan: SourceResidencyPlan): BakeSourceTextures? {
+        private fun openBitmap(
+            sourcePath: String,
+            plan: SourceResidencyPlan,
+            inpaint: InpaintOverlay?
+        ): BakeSourceTextures? {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeFile(sourcePath, bounds)
             if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
             val sourceEdge = maxOf(bounds.outWidth, bounds.outHeight)
             val maxEdge = if (sourceEdge <= plan.textureEdgeCapPx) 0 else plan.textureEdgeCapPx
-            val bitmap = decodeUpright(sourcePath, maxEdge) ?: return null
+            val decoded = decodeUpright(sourcePath, maxEdge) ?: return null
+            // The decoded frame is owned by this bake, so the overlay blends into it directly unless
+            // the EXIF upright pass produced the immutable bitmap `Bitmap.createBitmap` returns.
+            val bitmap = composeInpaint(decoded, inpaint) ?: run {
+                decoded.recycle()
+                return null
+            }
             val bitmapWidth = bitmap.width
             val bitmapHeight = bitmap.height
             val proxy = EditorBitmapLoader.createProxyBitmap(bitmap)
@@ -248,9 +294,28 @@ internal class BakeSourceTextures private constructor(
                 autoBrightGain = 1.0f,
                 native = null,
                 plan = plan,
+                inpaint = inpaint,
                 fullTextureId = full,
                 proxyTextureId = proxyTexture
             )
+        }
+
+        /**
+         * Composes [inpaint] into [decoded] and returns the bitmap the upload must use.
+         *
+         * `Bitmap.createBitmap` with a transform matrix — the EXIF upright pass — returns an
+         * immutable bitmap whose pixels reject `setPixels`, so such a frame is composed into a
+         * private mutable copy and the original is recycled. The result is owned by the caller.
+         */
+        private fun composeInpaint(decoded: Bitmap, inpaint: InpaintOverlay?): Bitmap? {
+            if (inpaint == null) return decoded
+            if (decoded.isMutable) {
+                inpaint.applyToBitmap(decoded)
+                return decoded
+            }
+            val composed = inpaint.applyToBitmapCopy(decoded) ?: return null
+            decoded.recycle()
+            return composed
         }
 
         /** Decodes a JPEG upright, optionally sampled down so its long edge fits [maxLongEdge]. */

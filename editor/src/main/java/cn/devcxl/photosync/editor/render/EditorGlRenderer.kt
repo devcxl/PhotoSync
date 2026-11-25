@@ -98,12 +98,18 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
 
         val state = frameState
-        val activeTexture = pipeline.activeTexture(state.useFastProxy)
+        val compareTexture = if (compareOriginal) pipeline.compareActiveTexture(state.useFastProxy) else 0
+        val useCompare = compareTexture != 0
+        val activeTexture = if (useCompare) compareTexture else pipeline.activeTexture(state.useFastProxy)
         if (activeTexture == 0) {
             lastPassCDrawCalls = 0
             return
         }
-        val (srcW, srcH) = pipeline.activeDimensions(state.useFastProxy)
+        val (srcW, srcH) = if (useCompare) {
+            pipeline.compareActiveDimensions(state.useFastProxy)
+        } else {
+            pipeline.activeDimensions(state.useFastProxy)
+        }
         pipeline.drawFrame(
             PreviewFrameRequest(
                 sourceTextureId = activeTexture,
@@ -138,6 +144,16 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
     fun releaseSource() {
         stagedSource = null
         pipeline.releaseSource()
+    }
+
+    /**
+     * Stages the untouched decode that press-and-hold comparison must show.
+     *
+     * `null` restores the old behaviour, where "before" is the same source the canvas samples (that
+     * is exact while no repair patch exists).
+     */
+    fun setCompareSource(source: EditorSource?) {
+        if (source == null) pipeline.clearCompareSource() else pipeline.setCompareSource(source)
     }
 
     /** Stages the liquify displacement grid for the next frame. */

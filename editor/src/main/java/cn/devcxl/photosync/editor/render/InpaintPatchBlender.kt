@@ -1,9 +1,12 @@
 package cn.devcxl.photosync.editor.render
 
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import kotlin.math.floor
 import kotlin.math.roundToInt
 
 import cn.devcxl.photosync.editor.domain.ExposureShaderMath
+import cn.devcxl.photosync.editor.domain.HalfFloatBits
 import cn.devcxl.photosync.editor.domain.InpaintPixelRect
 import cn.devcxl.photosync.editor.vision.InpaintDecodedPatch
 
@@ -87,6 +90,52 @@ internal class InpaintPatchBlender {
         return blended
     }
 
+    /**
+     * Blends [decoded] into an interleaved `RGBA` half-float buffer holding scene-linear light.
+     *
+     * ## Why half floats
+     * The linear RAW preview and the Tier 2 bake slice both keep their pixels as `GL_RGBA16F`
+     * texels. Composing straight into that layout keeps the slice and the full frame on one code
+     * path: the only difference between them is the window that is handed in.
+     *
+     * @param buffer Little-endian half-float texels covering at least [bufferWidth] x [bufferHeight].
+     * @param rect Patch bbox in **buffer** pixel coordinates; its extent defines how the patch scales.
+     * @param clip Sub-rectangle of [rect] that lies inside [buffer]; defaults to the whole bbox.
+     * @return Number of pixels whose alpha was greater than zero.
+     */
+    fun blendLinearHalfFloat(
+        buffer: ByteBuffer,
+        bufferWidth: Int,
+        bufferHeight: Int,
+        rect: InpaintPixelRect,
+        decoded: InpaintDecodedPatch,
+        clip: InpaintPixelRect = rect
+    ): Long {
+        val clipped = clip.clampedTo(bufferWidth, bufferHeight)
+        if (clipped.isEmpty) return 0L
+        val view = buffer.duplicate().order(ByteOrder.nativeOrder())
+        var blended = 0L
+        for (y in clipped.top until clipped.bottom) {
+            for (x in clipped.left until clipped.right) {
+                val alpha = sampleAlpha(decoded, x - rect.left, y - rect.top, rect.width, rect.height)
+                if (alpha == 0) continue
+                blended++
+                val patch = sampleRgb(decoded, x - rect.left, y - rect.top, rect.width, rect.height)
+                val texel = (y * bufferWidth + x) * RGBA_TEXEL_BYTES
+                val weight = alpha / 255.0f
+                for (channel in 0 until RGB_CHANNELS) {
+                    val offset = texel + channel * HALF_BYTES
+                    val current = HalfFloatBits.fromBits(view.getShort(offset))
+                    val target = sRGB_LUT[(patch shr (16 - channel * 8)) and 0xFF]
+                    val value = current + (target - current) * weight
+                    // Half floats carry HDR highlights fine; only a negative sample is impossible.
+                    view.putShort(offset, HalfFloatBits.toBits(value.coerceAtLeast(0.0f)))
+                }
+            }
+        }
+        return blended
+    }
+
     /** Nearest-neighbour alpha sample; the mask is already feathered, so interpolating is waste. */
     private fun sampleAlpha(
         decoded: InpaintDecodedPatch,
@@ -150,5 +199,12 @@ internal class InpaintPatchBlender {
 
     private companion object {
         const val RGB_CHANNELS = 3
+        const val RGBA_TEXEL_BYTES = 8
+        const val HALF_BYTES = 2
+
+        /** sRGB-decoded 8-bit patch samples, the domain every `GL_RGBA16F` source lives in. */
+        val sRGB_LUT = FloatArray(256) { sample ->
+            ExposureShaderMath.decodeSrgb(sample / 255.0f)
+        }
     }
 }

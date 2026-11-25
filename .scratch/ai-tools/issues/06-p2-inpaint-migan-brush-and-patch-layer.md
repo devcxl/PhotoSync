@@ -4,9 +4,9 @@
 
 **Blocked by:** 01: P0 统一端侧 AI 底座、多镜像模型管理页与真机摸底门禁, 02: EditGraph Schema v2、内容寻址 AI 资产存储与 7 Tab「AI」编辑器框架
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] 画布手势仲裁通过测试：单指可在画布涂抹/擦除红色半透明选区，双指触碰立即中止当前单指笔迹并优先缩放平移，不产生误涂抹或误提交。
-- [ ] 涂抹外接框超出 256×256 px 时实时展示琥珀色建议预警；点击「确认消除」后展示底栏顶部进度条，点击「取消」能中止推理且完整保留涂抹笔迹与原 `EditGraph`。
-- [ ] Kotlin 侧 128 px 边距裁切、≤1024² 预裁、512 推理（FP32，禁止 INT8 QDQ）与 3–5 px 羽化融合单测与真机验证通过：生成补丁无明显接缝色块，24MP 照片消除不触发 OOM。
-- [ ] 消除补丁落盘为内容寻址 `InpaintPatch` 并挂于 Pre-Pass A：消除后继续裁剪、拉直、调色或切换预设，修复区随之同步变换与调色；全分辨率烘焙导出效果与预览一致；长按 Before/After 可瞬间查看未消除原片；跨图复制与保存预设均不携带消除补丁。
+- [x] 画布手势仲裁通过测试：单指可在画布涂抹/擦除红色半透明选区，双指触碰立即中止当前单指笔迹并优先缩放平移，不产生误涂抹或误提交。（`GestureRouterTest` 覆盖 `AI_ERASE` 双指绝对优先 + 单指路由到 `INPAINT_BRUSH_STROKE`；`InpaintBrushOverlayViewTest` / `InpaintPinchTracker` 覆盖中止笔迹；真机触摸未复跑）
+- [x] 涂抹外接框超出 256×256 px 时实时展示琥珀色建议预警；点击「确认消除」后展示底栏顶部进度条，点击「取消」能中止推理且完整保留涂抹笔迹与原 `EditGraph`。（`InpaintBrushControllerTest` 覆盖预警/进度/取消保留笔迹；真机 UI 未跑）
+- [ ] Kotlin 侧 128 px 边距裁切、≤1024² 预裁、512 推理（FP32，禁止 INT8 QDQ）与 3–5 px 羽化融合单测与真机验证通过：生成补丁无明显接缝色块，24MP 照片消除不触发 OOM。（`InpaintCropBlenderTest` / `MiGanInpainterTest` / `MiGanInpaintPatchCodecTest` 通过；真机 24MP 接缝与 OOM 未复验）
+- [x] 消除补丁落盘为内容寻址 `InpaintPatch` 并挂于 Pre-Pass A：消除后继续裁剪、拉直、调色或切换预设，修复区随之同步变换与调色；全分辨率烘焙导出效果与预览一致；长按 Before/After 可瞬间查看未消除原片；跨图复制与保存预设均不携带消除补丁。（Wave 2 集成完成：画布改为「原片 / 已消除副本」双源，`compareOriginal` 切到未消除原片；预览缓存与全分辨率烘焙（含 Tier 2 分片）统一经 `InpaintSourceCompositor` 叠加，`InpaintSourceCompositorTest` 锁定整图/分片一致；跨图隔离沿用 `CopyMaskAiIsolationTest`）

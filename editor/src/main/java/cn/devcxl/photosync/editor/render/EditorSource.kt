@@ -60,7 +60,9 @@ internal sealed interface EditorSource {
 internal object EditorSourceLoader {
 
     private const val LINEAR_PREVIEW_MAX_EDGE_PX = 2048
-    private const val LINEAR_PROXY_MAX_EDGE_PX = 1024
+
+    /** Longest edge of the drag proxy derived from the linear preview. */
+    internal const val LINEAR_PROXY_MAX_EDGE_PX = 1024
 
     /**
      * Fingerprint of everything [load] bakes into its output besides the file content: the linear

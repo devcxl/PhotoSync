@@ -25,11 +25,11 @@ import cn.devcxl.photosync.editor.ui.widgets.DialSeekBar
 
 /**
  * Binds the three-tier bottom drawer to the edit graph: seven category tabs, the sub-tool chips of
- * the active category, the tier-1 control slot (`DialSeekBar`, color, spatial-detail, effect or
- * liquify panels), the crop aspect chips and the value read-out.
+ * the active category, the tier-1 control slot (`DialSeekBar`, color, spatial-detail, effect,
+ * liquify, subject or inpaint panels), the crop aspect chips and the value read-out.
  *
- * The seventh `AI` tab hosts the subject cut-out in this wave; the erase and sky tools land in later
- * waves inside the same chip container.
+ * The seventh `AI` tab hosts the subject cut-out and the MI-GAN erase tool; the sky tool lands in a
+ * later wave inside the same chip container.
  */
 internal class EditorPanelController(
     private val context: Context,
@@ -173,6 +173,7 @@ internal class EditorPanelController(
         effectsPanels.showFor(null)
         portraitPanels.showFor(null)
         subjectPanels.setVisible(false)
+        binding.inpaintPanelView.visibility = View.GONE
         presetPanels.setVisible(false)
         aspectRow.setVisible(false)
     }
@@ -266,6 +267,7 @@ internal class EditorPanelController(
         effectsPanels.showFor(null)
         portraitPanels.showFor(null)
         subjectPanels.setVisible(false)
+        binding.inpaintPanelView.visibility = View.GONE
         presetPanels.setVisible(false)
         rotateFlipPanel.setVisible(false)
         aspectRow.setVisible(false)
@@ -316,6 +318,8 @@ internal class EditorPanelController(
         effectsPanels.showFor(spec.controlStyle)
         portraitPanels.showFor(spec.controlStyle)
         subjectPanels.setVisible(spec.controlStyle == EditorControlStyle.SUBJECT)
+        binding.inpaintPanelView.visibility =
+            if (spec.controlStyle == EditorControlStyle.INPAINT) View.VISIBLE else View.GONE
         presetPanels.setVisible(spec.controlStyle == EditorControlStyle.PRESET)
         rotateFlipPanel.setVisible(spec.controlStyle == EditorControlStyle.ROTATE_FLIP)
         val dial = spec.dial

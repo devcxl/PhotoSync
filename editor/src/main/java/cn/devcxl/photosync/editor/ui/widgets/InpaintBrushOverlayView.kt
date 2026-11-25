@@ -80,13 +80,17 @@ class InpaintBrushOverlayView @JvmOverloads constructor(
 
     override var sourceWidth: Int = 0
         set(value) {
-            field = value.coerceAtLeast(0)
+            val next = value.coerceAtLeast(0)
+            if (field == next) return
+            field = next
             notifyBounds()
         }
 
     override var sourceHeight: Int = 0
         set(value) {
-            field = value.coerceAtLeast(0)
+            val next = value.coerceAtLeast(0)
+            if (field == next) return
+            field = next
             notifyBounds()
         }
 

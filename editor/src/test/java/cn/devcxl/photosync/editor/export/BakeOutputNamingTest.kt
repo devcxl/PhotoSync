@@ -5,6 +5,8 @@ import org.junit.Test
 
 import cn.devcxl.photosync.editor.contract.GallerySink
 import cn.devcxl.photosync.editor.domain.EditGraph
+import cn.devcxl.photosync.editor.domain.InpaintBBox
+import cn.devcxl.photosync.editor.domain.InpaintPatchRef
 import cn.devcxl.photosync.editor.domain.SubjectBackgroundMode
 import cn.devcxl.photosync.editor.domain.SubjectOps
 
@@ -26,6 +28,30 @@ class BakeOutputNamingTest {
             BakeOutputNaming.outputFormatFor(
                 EditGraph(subject = SubjectOps(bgMode = SubjectBackgroundMode.SOLID))
             )
+        )
+    }
+
+    @Test
+    fun shouldRouteToJpeg_whenTheGraphOnlyCarriesInpaintPatches() {
+        val inpainted = EditGraph(
+            inpaint = listOf(
+                InpaintPatchRef(
+                    bbox = InpaintBBox(0.2f, 0.2f, 0.6f, 0.6f),
+                    patchRelPath = "edits/7/inpaint_patch_a.png",
+                    maskRelPath = "edits/7/inpaint_mask_a.png",
+                    sha256 = ""
+                )
+            )
+        )
+
+        assertEquals(
+            "an opaque repaired frame must not pay for an RGBA container",
+            BakeOutputFormat.JPEG,
+            BakeOutputNaming.outputFormatFor(inpainted)
+        )
+        assertEquals(
+            "DSC04821_edited.jpg",
+            BakeOutputNaming.displayName("/photos/DSC04821.ARW", 7L, BakeOutputFormat.JPEG)
         )
     }
 

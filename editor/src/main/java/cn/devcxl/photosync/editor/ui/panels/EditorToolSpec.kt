@@ -66,6 +66,9 @@ internal enum class EditorControlStyle {
     /** Subject cut-out panel: original / transparent / solid background and preset swatches. */
     SUBJECT,
 
+    /** Inpainting brush panel: paint/erase mode, brush size, clear and confirm. */
+    INPAINT,
+
     /** Preset library panel: save the current look, apply a preset, clear preset axes. */
     PRESET
 }
@@ -104,7 +107,7 @@ internal data class EditorToolSpec(
  * Registry of the tools delivered so far: geometry (including liquify), tone, white balance,
  * display color, the Pass C spatial-detail group, the Pass D effect panels (3D LUT, film grain,
  * post-crop vignette), lens dispersion / defringe, the Portrait group (skin, face and body) and the
- * AI subject cut-out.
+ * AI group (subject cut-out and smart erase).
  */
 internal object EditorToolCatalog {
 
@@ -118,7 +121,8 @@ internal object EditorToolCatalog {
                 EditorSpatialDetailSpecs.spatialDetailSpecs() +
                 EditorToneDetailSpecs.detailSpecs() +
                 EditorPortraitSpecs.portraitSpecs() +
-                AiSubjectSpecs.subjectSpecs()
+                AiSubjectSpecs.subjectSpecs() +
+                AiEraseSpecs.eraseSpecs()
             )
             .associateBy { it.tool }
 

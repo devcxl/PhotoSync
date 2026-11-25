@@ -12,4 +12,10 @@
     <string name="editor_inpaint_inference_running">正在智能消除…</string>
     <string name="editor_inpaint_failed">消除失败，请重试；首次使用请先下载 MI-GAN 模型</string>
     <string name="editor_inpaint_no_strokes">请先涂抹要消除的区域</string>
+    <string name="editor_inpaint_plan_too_large">消除范围过大，请分次小面积涂抹</string>
+    <!-- Tool chip labels of the AI group -->
+    <string name="editor_tool_ai_erase">消除</string>
+    <string name="editor_tool_ai_erase_modified">消除 •</string>
+    <string name="editor_inpaint_model_downloading">正在下载 MI-GAN 模型…</string>
+    <string name="editor_inpaint_model_importing">正在校验本地 MI-GAN 模型…</string>
 </resources>

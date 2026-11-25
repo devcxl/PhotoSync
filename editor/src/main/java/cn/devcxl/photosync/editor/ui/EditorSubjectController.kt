@@ -60,7 +60,8 @@ internal class EditorSubjectController(
     private val scope: CoroutineScope,
     private val sourceProvider: () -> EditorSource?,
     private val onGraphCommitted: (EditGraph, EditParameterKey) -> Unit,
-    private val onImportRequested: () -> Unit
+    private val onImportRequested: () -> Unit,
+    private val onRepaintRequested: () -> Unit
 ) {
 
     private val assets = AiAssetStore(filesDir)
@@ -179,6 +180,26 @@ internal class EditorSubjectController(
                     )
                 }
             )
+        }
+    }
+
+    /**
+     * Re-reads the subject composite after the pixels under it changed, for example a completed
+     * erase.
+     *
+     * The mask stays valid — it describes where the subject is, not what it looks like — but the
+     * foreground colours baked into the composite are the pre-repair ones. Rebuilding them keeps the
+     * cut-out in lock-step with the canvas; an absent mask or mode is simply a no-op.
+     */
+    fun refreshSourceComposite(graph: EditGraph) {
+        if (graph.subject.maskRef.isBlank()) return
+        cachedComposite = null
+        cachedMaskRef = ""
+        // Deliberately not through launchWork: this refresh must never cancel an in-flight mask run.
+        scope.launch {
+            val composite = loadComposite(graph, graph.subject) ?: return@launch
+            previewSession.applySubjectComposite(composite)
+            onRepaintRequested()
         }
     }
 

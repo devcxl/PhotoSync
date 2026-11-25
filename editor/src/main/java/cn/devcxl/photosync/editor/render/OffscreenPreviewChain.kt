@@ -58,6 +58,10 @@ internal class OffscreenPreviewChain(
     /**
      * Renders [request] and writes one new preview JPEG into its output directory.
      *
+     * A requested [OffscreenPreviewRequest.inpaint] overlay is composed into a private copy for the
+     * duration of this call, so the leased source the caller handed over is never mutated and the
+     * copy is reclaimed before this method returns.
+     *
      * @param guard Aborts the render when the caller went away or the context stopped being current.
      * @return The written file, or `null` when this context cannot reproduce the graph exactly.
      */
@@ -65,7 +69,19 @@ internal class OffscreenPreviewChain(
         request: OffscreenPreviewRequest,
         guard: PreviewRenderGuard = PreviewRenderGuard.NONE
     ): File? {
-        val source = request.source
+        val composed = request.inpaint?.let { EditorSourceComposer.compose(request.source, it) }
+        return try {
+            renderSource(composed ?: request.source, request, guard)
+        } finally {
+            composed?.release()
+        }
+    }
+
+    private fun renderSource(
+        source: EditorSource,
+        request: OffscreenPreviewRequest,
+        guard: PreviewRenderGuard
+    ): File? {
         val graph = request.graph
         val (outWidth, outHeight) = OffscreenPreviewFrames.outputSize(graph, source.width, source.height)
         if (outWidth <= 0 || outHeight <= 0) {

@@ -48,6 +48,9 @@ internal class EditorSessionLoader(
                 preferLinear = preferLinear
             )
             val graph = dropMissingArtifacts(stored)
+            // Composing on the IO dispatcher keeps the first frame correct without a UI freeze: the
+            // repaired copy of a 24MP preview is a ~33MB buffer copy plus the patch boxes.
+            if (source != null) previewSession.applyInpaintOverlay(graph)
             LoadedState(graph = graph, hasSource = source != null)
         }
 

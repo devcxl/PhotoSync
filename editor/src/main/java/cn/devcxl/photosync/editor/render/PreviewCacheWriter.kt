@@ -34,6 +34,10 @@ import cn.devcxl.photosync.wrapper.LinearRawBuffer
  * (`BaseLook`, D65-anchored white balance, linear tone, display tone) + Pass C (noise reduction,
  * dehaze, clarity/texture, sharpening) + Pass D (3D LUT, grain, post-crop vignette) contract so the
  * cached thumbnail matches the GL canvas.
+ *
+ * An [InpaintOverlay] is composed into a **private copy** of the decoded source before Pass A, so the
+ * leased pixels the caller owns are never mutated and the repaired areas travel through exactly the
+ * same geometry and colour stages as the rest of the frame.
  */
 internal object PreviewCacheWriter {
 
@@ -50,9 +54,10 @@ internal object PreviewCacheWriter {
         warpField: WarpDisplacementField? = null,
         lut: Lut3dSamples? = null,
         skinMask: FloatArray? = null,
-        subject: SubjectComposite? = null
+        subject: SubjectComposite? = null,
+        inpaint: InpaintOverlay? = null
     ): String? {
-        val rendered = renderBitmapFrame(source, graph, warpField, lut, skinMask, subject)
+        val rendered = renderBitmapFrame(source, graph, warpField, lut, skinMask, subject, inpaint)
             ?: return null
         return compressAndWrite(rendered, cacheDir, photoId)
     }
@@ -66,9 +71,10 @@ internal object PreviewCacheWriter {
         warpField: WarpDisplacementField? = null,
         lut: Lut3dSamples? = null,
         skinMask: FloatArray? = null,
-        subject: SubjectComposite? = null
+        subject: SubjectComposite? = null,
+        inpaint: InpaintOverlay? = null
     ): String? {
-        val rendered = renderLinearFrame(source, graph, warpField, lut, skinMask, subject)
+        val rendered = renderLinearFrame(source, graph, warpField, lut, skinMask, subject, inpaint)
             ?: return null
         return compressAndWrite(rendered, cacheDir, photoId)
     }
@@ -86,9 +92,10 @@ internal object PreviewCacheWriter {
         warpField: WarpDisplacementField? = null,
         lut: Lut3dSamples? = null,
         skinMask: FloatArray? = null,
-        subject: SubjectComposite? = null
+        subject: SubjectComposite? = null,
+        inpaint: InpaintOverlay? = null
     ): String? {
-        val rendered = renderBitmapFrame(source, graph, warpField, lut, skinMask, subject)
+        val rendered = renderBitmapFrame(source, graph, warpField, lut, skinMask, subject, inpaint)
             ?: return null
         return compressAndWriteTo(rendered, outDir)
     }
@@ -101,14 +108,30 @@ internal object PreviewCacheWriter {
         warpField: WarpDisplacementField? = null,
         lut: Lut3dSamples? = null,
         skinMask: FloatArray? = null,
-        subject: SubjectComposite? = null
+        subject: SubjectComposite? = null,
+        inpaint: InpaintOverlay? = null
     ): String? {
-        val rendered = renderLinearFrame(source, graph, warpField, lut, skinMask, subject)
+        val rendered = renderLinearFrame(source, graph, warpField, lut, skinMask, subject, inpaint)
             ?: return null
         return compressAndWriteTo(rendered, outDir)
     }
 
     private fun renderLinearFrame(
+        source: LinearRawBuffer,
+        graph: EditGraph,
+        warpField: WarpDisplacementField?,
+        lut: Lut3dSamples?,
+        skinMask: FloatArray?,
+        subject: SubjectComposite?,
+        inpaint: InpaintOverlay?
+    ): Bitmap? {
+        // A composed half-float copy is JVM-owned, so dropping the reference after this frame is the
+        // whole cleanup; the caller's buffer is never mutated.
+        val frame = inpaint?.applyToLinearCopy(source) ?: source
+        return renderLinearFrameSource(frame, graph, warpField, lut, skinMask, subject)
+    }
+
+    private fun renderLinearFrameSource(
         source: LinearRawBuffer,
         graph: EditGraph,
         warpField: WarpDisplacementField?,
@@ -166,6 +189,25 @@ internal object PreviewCacheWriter {
     }
 
     private fun renderBitmapFrame(
+        source: Bitmap,
+        graph: EditGraph,
+        warpField: WarpDisplacementField?,
+        lut: Lut3dSamples?,
+        skinMask: FloatArray?,
+        subject: SubjectComposite?,
+        inpaint: InpaintOverlay?
+    ): Bitmap? {
+        val composed = inpaint?.applyToBitmapCopy(source)
+        val frame = composed ?: source
+        return try {
+            renderBitmapFrameSource(frame, graph, warpField, lut, skinMask, subject)
+        } finally {
+            // The composed copy is private to this frame; the caller keeps its immutable source.
+            if (composed != null) composed.recycle()
+        }
+    }
+
+    private fun renderBitmapFrameSource(
         source: Bitmap,
         graph: EditGraph,
         warpField: WarpDisplacementField?,
