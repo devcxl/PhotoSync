@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- P2 inpainting brush, panel and progress copy; kept in its own file to avoid merge churn. -->
+    <string name="editor_inpaint_mode_paint">Brush</string>
+    <string name="editor_inpaint_mode_erase">Eraser</string>
+    <string name="editor_inpaint_brush_size">Brush size</string>
+    <string name="editor_inpaint_brush_value_fmt">%1$d%%</string>
+    <string name="editor_inpaint_clear">Clear strokes</string>
+    <string name="editor_inpaint_confirm">Remove</string>
+    <string name="editor_inpaint_empty_hint">Paint over what you want to remove</string>
+    <string name="editor_inpaint_oversize_warning">Large area (%1$d × %2$d px). Split into %3$d strokes.</string>
+    <string name="editor_inpaint_inference_running">Removing objects on device…</string>
+    <string name="editor_inpaint_failed">Removal failed. Try again, or download the MI-GAN model first.</string>
+    <string name="editor_inpaint_no_strokes">Paint the area to remove first</string>
+</resources>

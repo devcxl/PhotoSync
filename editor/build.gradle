@@ -24,6 +24,13 @@ android {
     buildFeatures {
         viewBinding = true
     }
+
+    testOptions {
+        unitTests {
+            // Widget unit tests inflate the real editor layouts and resolve the module colours.
+            includeAndroidResources = true
+        }
+    }
 }
 
 dependencies {

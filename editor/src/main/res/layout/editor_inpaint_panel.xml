@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Tier-1 controls of the AI > 消除 tool. Inflated into InpaintPanelView. -->
+<merge xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    tools:parentTag="android.widget.LinearLayout">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/inpaintModePaintChip"
+            android:layout_width="wrap_content"
+            android:layout_height="30dp"
+            android:background="@color/editor_surface_elevated"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:paddingStart="13dp"
+            android:paddingEnd="13dp"
+            android:text="@string/editor_inpaint_mode_paint"
+            android:textColor="@color/editor_text_primary"
+            android:textSize="11sp" />
+
+        <TextView
+            android:id="@+id/inpaintModeEraseChip"
+            android:layout_width="wrap_content"
+            android:layout_height="30dp"
+            android:layout_marginStart="6dp"
+            android:background="@color/editor_surface_elevated"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:paddingStart="13dp"
+            android:paddingEnd="13dp"
+            android:text="@string/editor_inpaint_mode_erase"
+            android:textColor="@color/editor_text_primary"
+            android:textSize="11sp" />
+
+        <TextView
+            android:id="@+id/inpaintEmptyHint"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="@string/editor_inpaint_empty_hint"
+            android:textColor="@color/editor_text_muted"
+            android:textSize="10sp" />
+
+        <TextView
+            android:id="@+id/inpaintClearButton"
+            android:layout_width="wrap_content"
+            android:layout_height="30dp"
+            android:layout_marginEnd="6dp"
+            android:background="@color/editor_surface_elevated"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:paddingStart="11dp"
+            android:paddingEnd="11dp"
+            android:text="@string/editor_inpaint_clear"
+            android:textColor="@color/editor_text_secondary"
+            android:textSize="11sp" />
+
+        <TextView
+            android:id="@+id/inpaintConfirmButton"
+            android:layout_width="wrap_content"
+            android:layout_height="30dp"
+            android:background="@color/editor_accent_blue"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:text="@string/editor_inpaint_confirm"
+            android:textColor="@color/editor_text_primary"
+            android:textSize="11sp" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/inpaintOversizeWarning"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:textColor="@color/editor_zero_pin"
+        android:textSize="11sp"
+        android:visibility="gone"
+        tools:text="涂抹范围较大（320 × 180 px），建议分 4 次小面积涂抹" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/editor_inpaint_brush_size"
+            android:textColor="@color/editor_text_secondary"
+            android:textSize="11sp" />
+
+        <cn.devcxl.photosync.editor.ui.widgets.DialSeekBar
+            android:id="@+id/inpaintBrushDial"
+            android:layout_width="0dp"
+            android:layout_height="36dp"
+            android:layout_weight="1" />
+
+        <TextView
+            android:id="@+id/inpaintBrushValue"
+            android:layout_width="44dp"
+            android:layout_height="wrap_content"
+            android:gravity="end"
+            android:textColor="@color/editor_text_primary"
+            android:textSize="11sp"
+            tools:text="4%" />
+    </LinearLayout>
+
+</merge>
