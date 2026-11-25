@@ -1,6 +1,6 @@
 # P0 端侧 AI 底座验收记录（ORT 1.22.0、模型分发与真机门禁）
 
-- 日期：2026-11-26（同日补测 MI-GAN 生成器-only 导出与 Redmi K20 Pro 真机数据）
+- 日期：2026-11-26（同日补测 MI-GAN 生成器-only 导出、Redmi K20 Pro 真机数据与 ORT 会话缓存策略对照）
 - 关联工单：`.scratch/ai-tools/issues/01-p0-ort-runtime-model-manager-and-device-gate.md`
 - 关联规范：`.scratch/ai-tools/spec.md` §2、§7–§8
 - 上游调研：`docs/research/2026-11-26-ort-android-and-matting-models.md`、`docs/research/2026-11-26-on-device-inpainting-and-sky-models.md`
@@ -214,8 +214,9 @@ cn.devcxl.photosync.editor.vision.OrtModelDeviceBenchmarkTest
 
 harness 说明：
 
-* 用**生产** `OnnxRuntimeSessionFactory`（CPU + XNNPACK、`intra_op_num_threads=2`、`ALL_OPT`）
-  与生产 `OrtSessionManager`，不修改任何推理配置；
+* 用**生产** `OnnxRuntimeSessionFactory` 与生产 `OrtSessionManager`，CPU + XNNPACK、
+  `intra_op_num_threads=2`、`ALL_OPT` 保持不变；§1.7 的对照只切换 `SessionOptions` 的
+  `setCPUArenaAllocator` / `setMemoryPatternOptimization` 两个开关；
 * 模型先按 `AiModelSpec.byteSize` + `AiModelSpec.sha256` 校验（在真机上重算 SHA-256）再拷进
   测试 `cacheDir`，因此测的就是 `AiModelCatalog` 固化的那份字节；
 * 每阶段前写 `/proc/self/clear_refs=5` 复位 `VmHWM`，读 `/proc/self/status` 的 `VmRSS`/`VmHWM`
@@ -262,7 +263,63 @@ ORT/XNNPACK 的分配器预留量，不当作 RSS。
 3. **峰值内存是主要风险**：MI-GAN 512 fp32 单模型峰值 **778 MiB**，MODNet **342 MiB**。
    关闭会话后 RSS 只回落 25–45 MiB（arena 不还给 OS），所以同进程先后使用两个模型时峰值会
    累加到 **~1.09 GiB**。7.3 GiB 设备无压力，但对 4 GB 级设备（典型单进程预算 0.5–1.5 GiB）
-   已处于 OOM 边缘，见 §2.2。
+   已处于 OOM 边缘，见 §2.2。§1.7 的缓存策略对照已把同进程峰值压到 **~0.78 GiB**。
+
+### 1.7 ORT 会话缓存策略对照（2026-11-26 补测）
+
+**动机**：§2.2 列出“关闭 CPU arena / memory pattern”为待验证候选；本次先在 Redmi K20 Pro 上
+量化它的收益与代价，再决定是否改生产默认值。
+
+**可用开关**（`javap ai.onnxruntime.OrtSession$SessionOptions`，本地 gradle cache 的
+`onnxruntime-android-1.22.0` AAR，commit `4a84feb` 时依赖）：
+
+```text
+public void setCPUArenaAllocator(boolean) throws OrtException;
+public void setMemoryPatternOptimization(boolean) throws OrtException;
+public void addConfigEntry(String, String) throws OrtException;
+```
+
+Java API 没有独立的 denormal / prepacking 开关，本次只切换前两个语义明确的 setter。
+
+**方法**：`OrtModelDeviceBenchmarkTest` 增加两条对照用例，各自在**独立 instrumentation 进程**
+（逐条 `am instrument -e class ...#method`）里顺序执行 MODNet → MI-GAN，每个阶段前写
+`/proc/self/clear_refs=5` 复位 `VmHWM`；每个配置重复 3 次，下表为 3 次均值（括号内为范围）。
+模型仍按 `AiModelSpec` 的字节数 + SHA-256 在真机上校验。
+
+| 配置（`cpuArena` / `memPattern`） | 模型 | 会话加载 ms | 首次推理 ms | 热身 3 次 ms | 阶段峰值 VmRSS MiB | 关闭后回落 VmRSS MiB |
+|---|---|---:|---:|---:|---:|---:|
+| 默认（`true` / `true`） | MODNet | 74.3（70.3–77.8） | 803.2（776.3–828.1） | 810.1（787.0–835.2） | **344.2**（333.7–351.4） | — |
+| 默认（`true` / `true`） | MI-GAN | 105.4（103.4–106.4） | 1244.7（1220.3–1264.1） | 1191.1（1134.2–1239.2） | **1,092.2**（1,080.9–1,099.4） | 1,065.6（1,059.2–1,077.4） |
+| 关闭（`false` / `false`） | MODNet | 77.4（71.7–81.1） | 826.6（780.8–866.3） | 816.6（813.1–819.7） | **302.7**（294.7–310.3） | — |
+| 关闭（`false` / `false`） | MI-GAN | 122.5（115.5–129.1） | 1306.4（1257.9–1390.2） | 1187.7（1172.8–1212.7） | **779.5**（767.7–794.6） | **750.0**（739.0–760.2） |
+
+“关闭后回落”指 MI-GAN 会话 `close()` 且 `activeSessionCount == 0` 后等待 2 s 的 `VmRSS`；关闭前
+驻留值分别为默认 **1,087.6 MiB**、关闭 **761.6 MiB**。
+
+**单变量补充**（各 1–2 次，用于定位收益来源）：
+
+| 配置（`cpuArena` / `memPattern`） | MI-GAN 峰值 VmRSS MiB | MI-GAN 热身均值 ms | 关闭后 VmRSS MiB |
+|---|---:|---:|---:|
+| `false` / `true`（只关 arena） | 1,081.4 | 1,211.3 | 1,104.1 |
+| `true` / `false`（只关 pattern） | 770.0 | 1,205.5 | 772.1 |
+| `false` / `false`（两者都关） | 779.5 | 1,187.7 | 750.0 |
+
+**结论**：
+
+1. 收益来自 **`setMemoryPatternOptimization(false)`**，不是 CPU arena：只关 arena 与默认值在
+   噪声内相同（1,081 MiB vs 1,092 MiB）；只关 pattern 即降到 ~770 MiB。
+2. 生产默认改为**两者都关**（`OrtSessionCachePolicy.DISABLED`）：3 次均值 MI-GAN 峰值
+   1,092.2 → **779.5 MiB（−312.7 MiB，−28.6%）**，MODNet 344.2 → **302.7 MiB（−41.5 MiB）**，
+   关闭后驻留 1,087.6 → **761.6 MiB**、回落值 1,065.6 → **750.0 MiB**（比只关 pattern 再低
+   ~22 MiB）。
+3. 代价在噪声内：MI-GAN 热身 1,191.1 → 1,187.7 ms（−0.3%），MODNet 810.1 → 816.6 ms（+0.8%），
+   会话加载 +3 / +17 ms。该设备三次重复的批间波动本身就有 ±5%，没有可判定的耗时退化。
+4. **仍未真正“还内存”**：即使两者都关，`close()` 后也只回落 0–40 MiB（个别批次因后台波动反而
+   上升），进程仍驻留 ~750 MiB，`Debug.getNativeHeapAllocatedSize()` 仍有 1.33 GB——释放回
+   glibc 的页没有 `munmap` 给 OS。要彻底释放只能走 §2.2 的独立进程方案；本次策略只把
+   “同进程峰值/驻留”整体下移约 300 MiB。
+5. 4 GB 设备风险仍在：780 MiB 峰值虽比 1.09 GiB 好，仍不足以承诺低端机可用；分块推理或独立
+   进程仍需在 P2 决策。
 
 ---
 
@@ -280,17 +337,19 @@ ORT/XNNPACK 的分配器预留量，不当作 RSS。
 
 ### 2.2 MI-GAN 峰值内存（P2 前置风险）
 
-真机数据表明 512² fp32 生成器单模型峰值 778 MiB，主要来自高分辨率特征图与 XNNPACK/ORT 的
-权重打包与 arena 预留。按当前配置，**MI-GAN 不能承诺在 4 GB 设备上可用**，P2 落地前必须选一条：
+真机数据表明 512² fp32 生成器单模型峰值最初为 778 MiB（干净进程），经 §1.7 关闭 ORT
+跨轮缓存后同进程峰值为 **779.5 MiB**、关闭会话后驻留 **750.0 MiB**，主要来自高分辨率特征图
+与 XNNPACK/ORT 的权重打包和激活。按当前配置，**MI-GAN 仍不能承诺在 4 GB 设备上可用**，
+P2 落地前必须选一条：
 
 | 候选手段 | 预期收益 | 代价 | 状态 |
 |---|---|---|---|
 | 分块推理（256² 或 384² 滑窗 + 重叠回贴） | 激活内存约降到 1/4–1/2 | 需要处理接缝，耗时随块数上升 | 未验证 |
 | fp16 / int8 权重与激活 | 权重减半，RSS 可降 | CPU 上 fp16 未必加速；int8 需校准且可能掉质量 | 未验证（此前 fp16 pipeline 曾在加载期报类型冲突） |
-| 关闭 CPU arena / memory pattern（`disableCpuMemArena`、`setMemoryPatternOptimization(false)`） | 峰值可能下降，且释放更彻底 | 每轮重新分配，耗时上升 | 未验证 |
-| 把 AI 推理放进可被杀死的独立进程 | 释放即整进程回收，主进程不受累 | 需要跨进程传 bitmap | 未验证 |
+| 关闭 CPU arena / memory pattern（`setCPUArenaAllocator(false)`、`setMemoryPatternOptimization(false)`） | 实测同进程峰值 1,092 → **779.5 MiB**，关闭后驻留 1,088 → **761.6 MiB**，耗时无显著退化 | 每轮重新分配，加载 +3–17 ms | **已落地**（§1.7，`OrtSessionCachePolicy.DISABLED`） |
+| 把 AI 推理放进可被杀死的独立进程 | 释放即整进程回收，主进程不受累 | 需要跨进程传 bitmap | 未验证；关闭缓存后仍驻留 ~750 MiB，这一条是唯一能真正归零的路径 |
 
-在上述任一项落地并复测之前，设置页不应把 MI-GAN 描述成“低端机可用”；模型仍按需下载 +
+在上述剩余方案落地并复测之前，设置页不应把 MI-GAN 描述成“低端机可用”；模型仍按需下载 +
 SHA-256 校验，是否在低端机上提供入口由 P2 的实现决定。
 
 ---

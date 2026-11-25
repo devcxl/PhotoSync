@@ -128,7 +128,9 @@ class ExecutorIdleReleaseScheduler(
  *   closed, and the caller receives a failed [Result] carrying [OrtSessionUnavailableException].
  *
  * The manager uses CPU/XNNPACK only. NNAPI and QNN are deliberately not enabled: NNAPI is
- * deprecated from Android 15 and QNN's license is not open source.
+ * deprecated from Android 15 and QNN's license is not open source. Sessions are created without
+ * ORT's cross-run caches (see [OrtSessionCachePolicy]); the manager still keeps a warm session on
+ * [DeviceMemoryTier.STANDARD], but the native buffers behind it are not pre-reserved.
  */
 class OrtSessionManager(
     private val tier: DeviceMemoryTier,

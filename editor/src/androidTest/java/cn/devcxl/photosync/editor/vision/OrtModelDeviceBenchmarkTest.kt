@@ -75,6 +75,23 @@ class OrtModelDeviceBenchmarkTest {
 
     @Test
     fun shouldBenchmarkModnetAndMiganGenerators_onTheStandardTier() {
+        benchmarkSequence(CacheProfile.ORT_DEFAULT)
+    }
+
+    @Test
+    fun shouldBenchmarkTheSameSequence_whenTheCpuArenaAndMemoryPatternAreDisabled() {
+        benchmarkSequence(CacheProfile.DISABLED)
+    }
+
+    /**
+     * Runs MODNet and then MI-GAN through one manager, exactly as "cut out, then erase" would, and
+     * reports the cost of the cache policy in [profile]:
+     *
+     * - per-phase latency and `VmHWM`, reset before each phase;
+     * - RSS while the MI-GAN session is resident and after it is closed, so the caches' retained
+     *   memory shows up as the difference between the two profiles.
+     */
+    private fun benchmarkSequence(profile: CacheProfile) {
         val modnet = stageModel(AiModelCatalog.MODNET_PORTRAIT, MODNET_SOURCE)
         val migan = stageModel(AiModelCatalog.MI_GAN_GENERATOR, MIGAN_SOURCE)
         assumeTrue(
@@ -82,8 +99,7 @@ class OrtModelDeviceBenchmarkTest {
             modnet != null || migan != null
         )
 
-        val environment = OrtEnvironment.getEnvironment()
-        val factory = RecordingSessionFactory()
+        val factory = RecordingSessionFactory(profile.createFactory())
         val manager = OrtSessionManager(
             tier = DeviceMemoryTier.STANDARD,
             sessionFactory = factory,
@@ -93,6 +109,7 @@ class OrtModelDeviceBenchmarkTest {
             if (modnet != null) {
                 benchmarkPhase(
                     label = "modnet-portrait",
+                    cacheProfile = profile,
                     tier = DeviceMemoryTier.STANDARD,
                     modelFile = modnet,
                     outputChannels = 1,
@@ -105,6 +122,7 @@ class OrtModelDeviceBenchmarkTest {
             if (migan != null) {
                 val phase = benchmarkPhase(
                     label = "migan-generator",
+                    cacheProfile = profile,
                     tier = DeviceMemoryTier.STANDARD,
                     modelFile = migan,
                     outputChannels = 3,
@@ -118,6 +136,27 @@ class OrtModelDeviceBenchmarkTest {
                     assertSwitchClosedTheFirstSession(factory)
                 }
                 assertEquals(1, phase.runs.last().sessionsResidentAfter)
+
+                val resident = snapshot()
+                manager.onMemoryPressure()
+                assertEquals(0, manager.activeSessionCount)
+                assertTrue("every session must be closed", factory.handles.all { it.closed })
+                val immediatelyAfterClose = snapshot()
+                SystemClock.sleep(POST_CLOSE_SETTLE_MS)
+                val settled = snapshot()
+                report(
+                    String.format(
+                        Locale.US,
+                        "ORT-BENCH phase=sequence-close cacheProfile=%s rssResidentKb=%d " +
+                            "rssAfterCloseKb=%d rssSettledKb=%d peakRssKb=%d nativeHeapMb=%.2f",
+                        profile,
+                        resident.rssKb,
+                        immediatelyAfterClose.rssKb,
+                        settled.rssKb,
+                        settled.peakRssKb,
+                        settled.nativeHeapMb
+                    )
+                )
             }
         } finally {
             manager.close()
@@ -127,7 +166,8 @@ class OrtModelDeviceBenchmarkTest {
         report(
             String.format(
                 Locale.US,
-                "ORT-BENCH phase=standard-release rssKb=%d peakRssKb=%d nativeHeapMb=%.2f",
+                "ORT-BENCH phase=standard-release cacheProfile=%s rssKb=%d peakRssKb=%d nativeHeapMb=%.2f",
+                profile,
                 released.rssKb,
                 released.peakRssKb,
                 released.nativeHeapMb
@@ -150,6 +190,7 @@ class OrtModelDeviceBenchmarkTest {
         try {
             val phase = benchmarkPhase(
                 label = "migan-generator",
+                cacheProfile = CacheProfile.DISABLED,
                 tier = DeviceMemoryTier.LOW,
                 modelFile = modelFile,
                 outputChannels = 3,
@@ -238,6 +279,7 @@ class OrtModelDeviceBenchmarkTest {
      */
     private fun benchmarkPhase(
         label: String,
+        cacheProfile: CacheProfile,
         tier: DeviceMemoryTier,
         modelFile: File,
         outputChannels: Int,
@@ -254,7 +296,7 @@ class OrtModelDeviceBenchmarkTest {
             runs += runInference(manager, factory, modelFile, input, outputChannels)
             repeat(warmRuns) { runs += runInference(manager, factory, modelFile, input, outputChannels) }
             val after = snapshot()
-            val phase = PhaseRecord(label, tier, modelFile.length(), runs, baseline, after)
+            val phase = PhaseRecord(label, cacheProfile, tier, modelFile.length(), runs, baseline, after)
             report(phase.toLogLine(highWaterMarkReset))
             return phase
         } finally {
@@ -443,6 +485,7 @@ class OrtModelDeviceBenchmarkTest {
 
     private data class PhaseRecord(
         val label: String,
+        val cacheProfile: CacheProfile,
         val tier: DeviceMemoryTier,
         val modelBytes: Long,
         val runs: List<RunRecord>,
@@ -454,11 +497,12 @@ class OrtModelDeviceBenchmarkTest {
             val warm = runs.drop(1).joinToString("/") { String.format(Locale.US, "%.1f", it.inferenceMillis) }
             return String.format(
                 Locale.US,
-                "ORT-BENCH phase=%s tier=%s bytes=%d loadMs=%.1f firstInferenceMs=%.1f " +
+                "ORT-BENCH phase=%s cacheProfile=%s tier=%s bytes=%d loadMs=%.1f firstInferenceMs=%.1f " +
                     "warmInferenceMs=[%s] rssBaseKb=%d rssPeakKb=%d rssAfterKb=%d " +
                     "peakDeltaKb=%d nativeHeapBaseMb=%.2f nativeHeapMb=%.2f javaHeapMb=%.2f " +
                     "min=%.3f max=%.3f hwmReset=%s",
                 label,
+                cacheProfile,
                 tier,
                 modelBytes,
                 runs.first().sessionLoadMillis,
@@ -478,6 +522,23 @@ class OrtModelDeviceBenchmarkTest {
         }
     }
 
+    /**
+     * The two `SessionOptions` cache configurations this benchmark compares.
+     *
+     * [ORT_DEFAULT] is ONNX Runtime's own default and was the shipping configuration at the time of
+     * the P0 gate; [DISABLED] is what [OnnxRuntimeSessionFactory] ships by default, so the pair
+     * quantifies the memory/throughput trade-off on real hardware.
+     */
+    private enum class CacheProfile(private val policy: OrtSessionCachePolicy) {
+        ORT_DEFAULT(OrtSessionCachePolicy.ORT_DEFAULT),
+        DISABLED(OrtSessionCachePolicy.DISABLED);
+
+        fun createFactory(): OnnxRuntimeSessionFactory =
+            OnnxRuntimeSessionFactory(cachePolicy = policy)
+
+        override fun toString(): String = name.lowercase(Locale.US)
+    }
+
     private companion object {
 
         const val TAG = "ORT-BENCH"
@@ -491,6 +552,7 @@ class OrtModelDeviceBenchmarkTest {
         const val MIGAN_SOURCE = "migan_generator_512.onnx"
         const val COPY_BUFFER_BYTES = 1 shl 20
         const val IDLE_RELEASE_TIMEOUT_MS = 40_000L
+        const val POST_CLOSE_SETTLE_MS = 2_000L
         const val BYTES_PER_MB = 1024.0 * 1024.0
         const val BYTES_PER_MB_LONG = 1024L * 1024L
         const val NANOS_PER_MILLI = 1_000_000.0
