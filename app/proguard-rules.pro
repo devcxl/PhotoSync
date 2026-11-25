@@ -27,3 +27,12 @@
 -dontwarn com.google.ai.edge.litertlm.**
 -dontwarn com.google.auto.value.extension.memoized.**
 -dontwarn com.google.mediapipe.proto.**
+
+# Keep line numbers and source files: Flogger's LogSite resolves the caller from the stack, and
+# MediaPipe's Graph initializer logs through it. Without these attributes the lookup fails with
+# "no caller found on the stack" and crashes the first MediaPipe task (the preset-strip prewarm).
+-keepattributes SourceFile,LineNumberTable
+
+# MediaPipe's Graph initializer also needs Flogger's classes to keep their names and members so
+# the stack frames stay resolvable.
+-keep class com.google.common.flogger.** { *; }
