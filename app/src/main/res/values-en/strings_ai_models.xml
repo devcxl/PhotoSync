@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- AI model management entry and page chrome -->
+    <string name="ai_models_entry">AI models</string>
+    <string name="ai_models_title">AI model management</string>
+    <string name="ai_models_back">Back</string>
+    <string name="ai_models_intro">Downloaded on demand; a model is loaded only when its AI tool is used, and stored in the app-private directory.</string>
+    <string name="ai_models_total_usage">Local model storage: %1$s</string>
+    <string name="ai_models_total_usage_loading">Measuring model storage…</string>
+    <string name="ai_models_footer">Deleting a model frees only its model files and never touches saved edits; the tool will offer the download again next time.</string>
+
+    <!-- Model metadata -->
+    <string name="ai_models_model_modnet">MODNet portrait matting</string>
+    <string name="ai_models_model_modnet_desc">512×512 FP32 · portrait subject mask for bokeh and transparent export</string>
+    <string name="ai_models_model_migan">MI-GAN smart erase</string>
+    <string name="ai_models_model_migan_desc">512×512 generator-only · content-aware fill for brushed areas (P2)</string>
+    <string name="ai_models_model_unknown">Unknown model</string>
+    <string name="ai_models_meta">Size: %1$s · Version: %2$s</string>
+    <string name="ai_models_license">License: %1$s</string>
+    <string name="ai_models_size_unknown">TBD</string>
+
+    <!-- Model state -->
+    <string name="ai_models_status_installed">Installed</string>
+    <string name="ai_models_status_not_installed">Not downloaded</string>
+    <string name="ai_models_status_partial">%1$d%% cached</string>
+    <string name="ai_models_status_pending">Not released (waiting for the P0 gate to pin bytes and SHA-256)</string>
+    <string name="ai_models_status_downloading">Downloading %1$d%%</string>
+    <string name="ai_models_status_importing">Verifying the local file…</string>
+
+    <!-- Model actions -->
+    <string name="ai_models_download">Download</string>
+    <string name="ai_models_continue_download">Resume download</string>
+    <string name="ai_models_redownload">Download again</string>
+    <string name="ai_models_import">Import local</string>
+    <string name="ai_models_delete">Delete</string>
+    <string name="ai_models_download_success">Model downloaded and verified with SHA-256</string>
+    <string name="ai_models_download_failed">Download failed: %1$s</string>
+    <string name="ai_models_import_success">Model imported and verified with SHA-256</string>
+    <string name="ai_models_import_failed">Import failed: %1$s</string>
+    <string name="ai_models_import_wrong_type">Choose an .onnx model file</string>
+    <string name="ai_models_delete_title">Delete model</string>
+    <string name="ai_models_delete_message">Delete “%1$s”? Saved edits are unaffected, but the tool will need the model again next time.</string>
+    <string name="ai_models_delete_confirm">Delete</string>
+    <string name="ai_models_deleted">Model deleted and storage freed</string>
+    <string name="ai_models_delete_failed">Could not delete the model; try again later</string>
+
+    <!-- Recoverable failure reasons -->
+    <string name="ai_models_reason_not_available">This model has not been released yet</string>
+    <string name="ai_models_reason_download_failed">All mirrors failed; check the network and retry</string>
+    <string name="ai_models_reason_size_mismatch">The file size does not match the pinned value</string>
+    <string name="ai_models_reason_checksum_mismatch">SHA-256 mismatch; the file may be corrupted or tampered with</string>
+    <string name="ai_models_reason_storage_failure">Could not write the model directory; check free storage</string>
+</resources>

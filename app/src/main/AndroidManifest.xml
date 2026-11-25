@@ -33,6 +33,22 @@
                 android:resource="@xml/device_filter"/>
         </activity>
 
+        <activity android:name=".activity.AiModelSettingsActivity"
+                  android:exported="false"
+                  android:label="@string/ai_models_title"
+                  android:screenOrientation="landscape"
+                  android:theme="@style/Theme.PhotoSync"/>
+
+        <!-- ONNX Runtime 1.22.0 does not ship this provider, but later releases merge a
+             telemetry ContentProvider that calls System.loadLibrary before Application.onCreate
+             and talks to Microsoft 1DS. Removing it here keeps a future version bump from
+             silently reintroducing cold-start telemetry. -->
+        <provider
+            android:name="ai.onnxruntime.TelemetryInitializer"
+            android:authorities="${applicationId}.onnxruntime_telemetry_initializer"
+            tools:ignore="MissingClass"
+            tools:node="remove"/>
+
     </application>
 
 </manifest>

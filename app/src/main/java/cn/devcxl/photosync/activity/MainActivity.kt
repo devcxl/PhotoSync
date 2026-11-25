@@ -915,6 +915,9 @@ class MainActivity : AppCompatActivity() {
             true
         }
         binding.deleteButton.setOnClickListener { showDeleteConfirmDialog() }
+        binding.aiModelsButton.setOnClickListener {
+            startActivity(Intent(this, AiModelSettingsActivity::class.java))
+        }
         binding.connectButton.setOnClickListener { onConnectButtonClick() }
         binding.emptyActionButton.setOnClickListener {
             connectionController.connectToAvailableCamera()

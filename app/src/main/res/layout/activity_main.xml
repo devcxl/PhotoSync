@@ -246,6 +246,19 @@
                 android:textStyle="bold"/>
         </LinearLayout>
 
+        <!-- AI model management entry -->
+        <ImageButton
+            android:id="@+id/aiModelsButton"
+            android:layout_width="@dimen/top_bar_control_height"
+            android:layout_height="@dimen/top_bar_control_height"
+            android:layout_marginEnd="8dp"
+            android:background="@drawable/bg_glass_icon_btn"
+            android:contentDescription="@string/ai_models_entry"
+            android:padding="9dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_ai_models_24"
+            app:tint="@color/darkroom_text_secondary"/>
+
         <!-- Info drawer toggle -->
         <ImageButton
             android:id="@+id/infoToggleButton"

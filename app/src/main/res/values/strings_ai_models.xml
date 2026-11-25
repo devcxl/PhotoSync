@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- AI model management entry and page chrome -->
+    <string name="ai_models_entry">AI 模型</string>
+    <string name="ai_models_title">AI 模型管理</string>
+    <string name="ai_models_back">返回</string>
+    <string name="ai_models_intro">按需下载，模型只在对应 AI 工具首次使用时加载；文件保存在应用私有目录。</string>
+    <string name="ai_models_total_usage">本地模型占用：%1$s</string>
+    <string name="ai_models_total_usage_loading">正在统计模型占用…</string>
+    <string name="ai_models_footer">删除模型只释放模型文件，不会影响已保存的编辑记录；下次打开对应工具时会重新提示下载。</string>
+
+    <!-- Model metadata -->
+    <string name="ai_models_model_modnet">MODNet 人像抠图</string>
+    <string name="ai_models_model_modnet_desc">512×512 FP32 · 生成人像主体蒙版，用于主体虚化与透明导出</string>
+    <string name="ai_models_model_migan">MI-GAN 智能消除</string>
+    <string name="ai_models_model_migan_desc">512×512 生成器-only · 涂抹区域内容修复（P2）</string>
+    <string name="ai_models_model_unknown">未知模型</string>
+    <string name="ai_models_meta">体积：%1$s · 版本：%2$s</string>
+    <string name="ai_models_license">许可证：%1$s</string>
+    <string name="ai_models_size_unknown">待定</string>
+
+    <!-- Model state -->
+    <string name="ai_models_status_installed">已安装</string>
+    <string name="ai_models_status_not_installed">未下载</string>
+    <string name="ai_models_status_partial">已缓存 %1$d%%</string>
+    <string name="ai_models_status_pending">待发布（等待 P0 门禁固化字节数与 SHA-256）</string>
+    <string name="ai_models_status_downloading">正在下载 %1$d%%</string>
+    <string name="ai_models_status_importing">正在校验本地文件…</string>
+
+    <!-- Model actions -->
+    <string name="ai_models_download">下载</string>
+    <string name="ai_models_continue_download">继续下载</string>
+    <string name="ai_models_redownload">重新下载</string>
+    <string name="ai_models_import">本地导入</string>
+    <string name="ai_models_delete">删除</string>
+    <string name="ai_models_download_success">模型下载完成并通过 SHA-256 校验</string>
+    <string name="ai_models_download_failed">下载失败：%1$s</string>
+    <string name="ai_models_import_success">模型已导入并通过 SHA-256 校验</string>
+    <string name="ai_models_import_failed">导入失败：%1$s</string>
+    <string name="ai_models_import_wrong_type">请选择 .onnx 模型文件</string>
+    <string name="ai_models_delete_title">删除模型</string>
+    <string name="ai_models_delete_message">确定删除「%1$s」吗？已保存的编辑记录不会受影响，但下次使用该工具时需要重新下载。</string>
+    <string name="ai_models_delete_confirm">删除</string>
+    <string name="ai_models_deleted">已删除模型，占用空间已释放</string>
+    <string name="ai_models_delete_failed">删除失败，请稍后重试</string>
+
+    <!-- Recoverable failure reasons -->
+    <string name="ai_models_reason_not_available">该模型尚未发布</string>
+    <string name="ai_models_reason_download_failed">所有镜像均不可用，请检查网络后重试</string>
+    <string name="ai_models_reason_size_mismatch">文件大小与固化值不一致</string>
+    <string name="ai_models_reason_checksum_mismatch">SHA-256 校验失败，文件可能已损坏或被篡改</string>
+    <string name="ai_models_reason_storage_failure">无法写入模型目录，请检查存储空间</string>
+</resources>

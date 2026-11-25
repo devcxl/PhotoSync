@@ -20,6 +20,7 @@ viewpager2 = "1.1.0"
 photoview = "2.3.0"
 subsampling = "3.10.0"
 mediapipe = "1.2.3"
+onnxruntime = "1.22.0"
 
 [libraries]
 androidx-activity-ktx = { group = "androidx.activity", name = "activity-ktx", version.ref = "activity" }
@@ -40,6 +41,7 @@ androidx-viewpager2 = { group = "androidx.viewpager2", name = "viewpager2", vers
 photoview = { group = "com.github.chrisbanes", name = "PhotoView", version.ref = "photoview" }
 subsampling-scale-image = { group = "com.davemorrissey.labs", name = "subsampling-scale-image-view-androidx", version.ref = "subsampling" }
 mediapipe-tasks-vision = { group = "com.google.mediapipe", name = "tasks-vision", version.ref = "mediapipe" }
+onnxruntime-android = { group = "com.microsoft.onnxruntime", name = "onnxruntime-android", version.ref = "onnxruntime" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

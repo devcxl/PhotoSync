@@ -32,6 +32,8 @@ import cn.devcxl.photosync.editor.contract.EditorHostRegistry
 import cn.devcxl.photosync.editor.domain.BuiltinPresets
 import cn.devcxl.photosync.editor.render.BackgroundPreviewRenderer
 import cn.devcxl.photosync.editor.render.RecentEditorSourceCache
+import cn.devcxl.photosync.editor.vision.DeviceMemoryTier
+import cn.devcxl.photosync.editor.vision.OrtSessionManager
 import cn.devcxl.photosync.export.MediaStoreGallerySink
 import cn.devcxl.photosync.ptp.manager.UsbPtpConnectionController
 import cn.devcxl.photosync.receiver.UsbPermissionReceiver
@@ -88,6 +90,17 @@ class App : Application() {
 
     val usbPtpConnectionController: UsbPtpConnectionController by lazy {
         UsbPtpConnectionController(this)
+    }
+
+    /**
+     * Process-wide ORT session owner.
+     *
+     * Lazy on purpose: nothing on the cold-start path, the gallery or the preset strip may load
+     * ONNX Runtime or a model. The first AI tool that needs inference touches this property; the
+     * manager itself only creates a session when `withSession` is called.
+     */
+    val ortSessionManager: OrtSessionManager by lazy {
+        OrtSessionManager(tier = DeviceMemoryTier.detect(this))
     }
 
     /** Photo ids that arrived from the camera while the app was already running. */
@@ -150,6 +163,7 @@ class App : Application() {
         if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
             RecentEditorSourceCache.shared.onMemoryPressure()
             BackgroundPreviewRenderer.onMemoryPressure()
+            ortSessionManager.onMemoryPressure()
         }
     }
 
@@ -157,6 +171,7 @@ class App : Application() {
         super.onLowMemory()
         RecentEditorSourceCache.shared.onMemoryPressure()
         BackgroundPreviewRenderer.onMemoryPressure()
+        ortSessionManager.onMemoryPressure()
     }
 
     /**
