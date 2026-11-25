@@ -163,6 +163,33 @@ public class AiAssetStore(private val filesDir: File) {
     }
 
     /**
+     * Every `edits/...` payload path [graph] still references, so an offline sweep can keep them.
+     *
+     * Values are collected from all AI groups; blank entries are dropped, duplicates collapse into
+     * one and sky asset ids that are not store paths (procedural or pack ids) are ignored.
+     */
+    fun referencedRelativePaths(graph: EditGraph): Set<String> {
+        val paths = LinkedHashSet<String>()
+        fun add(path: String) {
+            val normalized = path.trim()
+            if (normalized.isNotEmpty()) paths.add(normalized)
+        }
+        add(graph.subject.maskRef)
+        graph.inpaint.forEach { patch ->
+            add(patch.patchRelPath)
+            add(patch.maskRelPath)
+        }
+        add(graph.sky.maskRef)
+        val skyAsset = graph.sky.assetIdOrRelPath.trim()
+        if (skyAsset.startsWith("$EDITS_DIR/")) add(skyAsset)
+        graph.cloudLayer?.let { layer ->
+            add(layer.imageRelPath)
+            layer.maskRelPath?.let(::add)
+        }
+        return paths
+    }
+
+    /**
      * Removes the whole `edits/<photoId>/` directory, including every liquify mesh and AI payload.
      *
      * @return True when the directory no longer exists after the call.

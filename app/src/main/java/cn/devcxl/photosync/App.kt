@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.IntentFilter
 import android.hardware.usb.UsbManager
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -29,7 +30,9 @@ import cn.devcxl.photosync.data.TetheredIngestResult
 import cn.devcxl.photosync.data.TetheredPhotoIngestor
 import cn.devcxl.photosync.editor.R as EditorR
 import cn.devcxl.photosync.editor.contract.EditorHostRegistry
+import cn.devcxl.photosync.editor.domain.AiAssetStore
 import cn.devcxl.photosync.editor.domain.BuiltinPresets
+import cn.devcxl.photosync.editor.domain.EditGraphJsonCodec
 import cn.devcxl.photosync.editor.render.BackgroundPreviewRenderer
 import cn.devcxl.photosync.editor.render.RecentEditorSourceCache
 import cn.devcxl.photosync.editor.vision.DeviceMemoryTier
@@ -130,7 +133,10 @@ class App : Application() {
             userPresetDao = db.userPresetDao(),
             liveTetherPrefs = getSharedPreferences(EDITOR_PREFS_NAME, MODE_PRIVATE),
             onClearPhotoEditCache = { photoId -> clearPhotoEditCacheDir(cacheDir, photoId) },
-            builtinNameResolver = ::resolveBuiltinPresetName
+            builtinNameResolver = ::resolveBuiltinPresetName,
+            onClearPhotoExternalAssets = { photoId ->
+                AiAssetStore(filesDir).deletePhotoAssets(photoId)
+            }
         )
         EditorHostRegistry.editStore = editStore
         EditorHostRegistry.gallerySink = MediaStoreGallerySink(contentResolver)
@@ -138,6 +144,7 @@ class App : Application() {
         applicationScope.launch {
             File(cacheDir, TetheredPhotoIngestor.STAGING_DIR_NAME).deleteRecursively()
             seedPresets(editStore)
+            collectOrphanAiAssets(db)
         }
         tetheredIngestor = createIngestor(editStore)
 
@@ -258,6 +265,44 @@ class App : Application() {
             editStore.seedBuiltinPresets()
         } catch (e: RuntimeException) {
             Timber.e(e, "Failed to seed the built-in preset library")
+        }
+    }
+
+    /**
+     * Sweeps AI payloads that no persisted edit row references any more.
+     *
+     * Cold start is the only moment when no editor or export can be streaming a payload. A row
+     * that fails to decode aborts the sweep: an unreadable graph may still own its bytes, and a
+     * failed read must never be mistaken for "no references".
+     */
+    private suspend fun collectOrphanAiAssets(db: AppDatabase) {
+        try {
+            val rows = db.photoEditDao().getAllEdits()
+            val graphs = rows.mapNotNull { row ->
+                EditGraphJsonCodec.decode(row.graphJson).also { graph ->
+                    if (graph == null) {
+                        Timber.w("AI asset GC skipped: a persisted edit graph could not be decoded")
+                    }
+                }
+            }
+            if (graphs.size != rows.size) return
+            val store = AiAssetStore(filesDir)
+            val referenced = graphs.flatMapTo(HashSet()) { graph ->
+                store.referencedRelativePaths(graph)
+            }
+            val report = store.collectOrphanAssets({ referenced }, emptySet())
+            if (report.deletedFiles > 0) {
+                Timber.i(
+                    "AI asset GC removed %d orphan files (%d bytes) from %d photo directories",
+                    report.deletedFiles,
+                    report.reclaimedBytes,
+                    report.scannedPhotoDirectories
+                )
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: RuntimeException) {
+            Timber.e(e, "AI asset GC failed")
         }
     }
 

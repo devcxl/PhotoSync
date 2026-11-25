@@ -176,6 +176,56 @@ class AiAssetStoreTest {
         assertArrayEquals(byteArrayOf(1), store().read(asset))
     }
 
+    @Test
+    fun shouldCollectEveryReferencedPath_whenListingAGraphsAssetReferences() {
+        val graph = EditGraph(
+            subject = SubjectOps(maskRef = "edits/7/subject_mask_a.png"),
+            inpaint = listOf(
+                InpaintPatchRef(
+                    patchRelPath = "edits/7/inpaint_patch_a.png",
+                    maskRelPath = "edits/7/inpaint_mask_a.png"
+                ),
+                InpaintPatchRef(
+                    patchRelPath = "edits/7/inpaint_patch_b.png",
+                    maskRelPath = "edits/7/inpaint_mask_b.png"
+                )
+            ),
+            sky = SkyOps(
+                maskRef = "edits/7/sky_mask_a.png",
+                assetType = SkyAssetType.CUSTOM,
+                assetIdOrRelPath = "edits/7/sky_asset_a.png"
+            ),
+            cloudLayer = CloudEditLayerRef(
+                imageRelPath = "edits/7/cloud_layer_a.png",
+                maskRelPath = "edits/7/cloud_mask_a.png"
+            )
+        )
+
+        assertEquals(
+            setOf(
+                "edits/7/subject_mask_a.png",
+                "edits/7/inpaint_patch_a.png",
+                "edits/7/inpaint_mask_a.png",
+                "edits/7/inpaint_patch_b.png",
+                "edits/7/inpaint_mask_b.png",
+                "edits/7/sky_mask_a.png",
+                "edits/7/sky_asset_a.png",
+                "edits/7/cloud_layer_a.png",
+                "edits/7/cloud_mask_a.png"
+            ),
+            store().referencedRelativePaths(graph)
+        )
+    }
+
+    @Test
+    fun shouldIgnoreProceduralSkyIdsAndBlankPaths_whenListingAGraphsAssetReferences() {
+        val graph = EditGraph(
+            sky = SkyOps(assetType = SkyAssetType.PROCEDURAL, assetIdOrRelPath = "procedural_sunset")
+        )
+
+        assertTrue(store().referencedRelativePaths(graph).isEmpty())
+    }
+
     private fun photoFiles(photoId: Long): List<File> =
         File(root, "edits/$photoId").listFiles()?.toList().orEmpty()
 }

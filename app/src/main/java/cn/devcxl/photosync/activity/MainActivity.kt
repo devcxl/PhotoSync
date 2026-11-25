@@ -72,6 +72,7 @@ import cn.devcxl.photosync.editor.contract.EditorHostRegistry
 import cn.devcxl.photosync.editor.contract.EditorLaunchArgs
 import cn.devcxl.photosync.editor.contract.GallerySink
 import cn.devcxl.photosync.editor.contract.PhotoEditRecord
+import cn.devcxl.photosync.editor.domain.AiAssetStore
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.EditGraphJsonCodec
 import cn.devcxl.photosync.editor.export.BakeExporter
@@ -1782,6 +1783,9 @@ class MainActivity : AppCompatActivity() {
                 val file = File(entity.path)
                 val fileDeleted = if (file.exists()) file.delete() else true
                 clearPhotoEditCacheDir(cacheDir, entity.id)
+                // The Room cascade below removes the edit row without going through
+                // RoomEditStore.deleteEditForPhoto, so the external AI payloads are cleared here.
+                AiAssetStore(filesDir).deletePhotoAssets(entity.id)
 
                 // Remove from database
                 dao.delete(entity)

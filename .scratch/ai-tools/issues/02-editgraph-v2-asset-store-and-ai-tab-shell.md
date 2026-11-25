@@ -4,10 +4,10 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] `EditGraph` Schema v2 编解码器与校验器通过 JVM 单测：无损读取所有历史 v1 JSON（新增 AI 节点默认为恒等状态）；拒绝 `NaN`/`Infinity` 并对越界参数自动钳位；未启用 AI 层时 `isIdentity()` 与渲染零开销短路行为不变。
-- [ ] `CopyMask` 与 `PresetGraphMerger` 单测明确验证：`InpaintPatch` 与 `CloudEditLayer` 永远不会被跨照片复制或写入 `Preset`。
-- [ ] 内容寻址外置 AI 资产存储通过单测：写盘采用原子重命名不覆盖旧资产；读取校验 SHA-256 并拒绝损坏文件；单张照片 `Delete` 时级联删除其外置资产目录；离线 GC 仅清理未被持久化编辑记录引用的过期资产且跳过活跃编辑/导出中的照片。
-- [ ] 编辑器底栏展示 7 个等宽 Tab（含「AI」），在 360dp 竖屏与横屏下无文字截断或溢出；底栏顶部异步进度条支持展示进度、文案与点击「取消」中止当前协程作业。
-- [ ] `CONTEXT.md` 已补充 `AiModel`、`SubjectMask`、`InpaintPatch`、`SkyLayer` 与 `CloudEditLayer` 的规范定义与禁用混用词。
+- [x] `EditGraph` Schema v2 编解码器与校验器通过 JVM 单测：无损读取所有历史 v1 JSON（新增 AI 节点默认为恒等状态）；拒绝 `NaN`/`Infinity` 并对越界参数自动钳位；未启用 AI 层时 `isIdentity()` 与渲染零开销短路行为不变。
+- [x] `CopyMask` 与 `PresetGraphMerger` 单测明确验证：`InpaintPatch` 与 `CloudEditLayer` 永远不会被跨照片复制或写入 `Preset`。
+- [x] 内容寻址外置 AI 资产存储通过单测：写盘采用原子重命名不覆盖旧资产；读取校验 SHA-256 并拒绝损坏文件；单张照片 `Delete` 时级联删除其外置资产目录；离线 GC 仅清理未被持久化编辑记录引用的过期资产且跳过活跃编辑/导出中的照片。
+- [x] 编辑器底栏展示 7 个等宽 Tab（含「AI」），在 360dp 竖屏与横屏下无文字截断或溢出；底栏顶部异步进度条支持展示进度、文案与点击「取消」中止当前协程作业。
+- [x] `CONTEXT.md` 已补充 `AiModel`、`SubjectMask`、`InpaintPatch`、`SkyLayer` 与 `CloudEditLayer` 的规范定义与禁用混用词。
