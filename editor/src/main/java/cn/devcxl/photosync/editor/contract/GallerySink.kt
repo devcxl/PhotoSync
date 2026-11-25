@@ -40,6 +40,10 @@ interface GallerySink {
 
     companion object {
         const val JPEG_MIME = "image/jpeg"
+
+        /** Lossless RGBA container used by transparent cut-out bakes. */
+        const val PNG_MIME = "image/png"
+
         const val GALLERY_DIR_NAME = "PhotoSync"
     }
 }

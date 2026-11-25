@@ -5,18 +5,32 @@ import android.net.Uri
 import cn.devcxl.photosync.editor.domain.EditGraph
 
 /**
+ * Encoded container of a bake.
+ *
+ * @property JPEG Baseline JPEG, used by every opaque edit.
+ * @property PNG_RGBA Lossless 8-bit RGBA PNG, used when a transparent cut-out must keep its alpha.
+ */
+enum class BakeOutputFormat {
+    JPEG,
+    PNG_RGBA
+}
+
+/**
  * Inputs of one full-resolution non-destructive bake.
  *
  * @property sourcePath Absolute path of the original JPEG or RAW file.
  * @property displayName File name to publish in the system gallery.
  * @property isRaw True when [sourcePath] is a RAW file decoded through `:libraw`.
  * @property graph The edit graph to render; an identity graph still re-renders the pixels.
+ * @property outputFormat Container to encode; defaults to [BakeOutputFormat.JPEG] so existing
+ *   opaque exports keep their behaviour.
  */
 data class BakeRequest(
     val sourcePath: String,
     val displayName: String,
     val isRaw: Boolean,
-    val graph: EditGraph
+    val graph: EditGraph,
+    val outputFormat: BakeOutputFormat = BakeOutputFormat.JPEG
 )
 
 /**

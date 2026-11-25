@@ -28,7 +28,6 @@ import cn.devcxl.photosync.editor.domain.SourceDimensions
 import cn.devcxl.photosync.editor.domain.SourceResidencyPlan
 import cn.devcxl.photosync.editor.domain.SourceResidencyPlanner
 import cn.devcxl.photosync.editor.lut.CubeLutStore
-import cn.devcxl.photosync.wrapper.JpegStreamWriter
 
 /**
  * Process-wide concurrency gate for the full-resolution bake pipeline.
@@ -44,11 +43,13 @@ object BakeConcurrencyGate {
 
 /**
  * Full-resolution non-destructive bake: 1024px Pre-pass, three-tier source residency, column-band
- * streaming render and a `libjpeg-turbo` baseline encode written straight into a [GallerySink].
+ * streaming render and either a `libjpeg-turbo` baseline encode or a lossless RGBA8 PNG encode
+ * written straight into a [GallerySink].
  *
  * The GPU work runs on a headless [SurfacelessEglContext] so a bake never needs a visible window and
  * can run while the user keeps browsing. Peak memory stays inside 512MB because only one row strip
- * (`cropWidth x 512`) and one band FBO (`<= 2048 x 640`) exist at a time.
+ * (`cropWidth x 512`) and one band FBO (`<= 2048 x 640`) exist at a time; the PNG path keeps the
+ * encoder itself at `O(image width)`.
  */
 class BakeExporter(
     private val context: Context,
@@ -59,8 +60,8 @@ class BakeExporter(
     /**
      * Bakes [request] into the system gallery.
      *
-     * Cancellation is observed once per column band; a cancelled bake aborts the encoder and lets
-     * the sink delete its pending entry. RAW requests additionally wait for
+     * Cancellation is observed once per column band (and once per PNG row); a cancelled bake aborts
+     * the encoder and lets the sink delete its pending entry. RAW requests additionally wait for
      * [BakeConcurrencyGate.rawBakeMutex] so at most one RAW bake occupies memory at a time.
      */
     suspend fun bake(request: BakeRequest): BakeResult {
@@ -173,32 +174,38 @@ class BakeExporter(
         var encoded = false
         val (outWidth, outHeight) = outSize
         val isActive = { coroutine.isActive }
+        val format = request.outputFormat
         val uri = gallerySink.save(
             displayName = request.displayName,
-            mime = GallerySink.JPEG_MIME,
+            mime = BakeOutputNaming.mimeType(format),
             write = { output ->
-                JpegStreamWriter(output, outWidth, outHeight).use { jpeg ->
-                    BakeBandEncoder(
-                        chain = chain,
-                        source = source,
-                        sink = JpegStripSink(jpeg),
-                        frameTemplate = frame,
-                        sourceToPostCropInverse = BakeFrameFactory.inverseMatrix(graph, source),
-                        cropWidth = outWidth,
-                        cropHeight = outHeight
-                    ).encode(isActive)
-                    jpeg.finish()
-                }
+                BakeStripWriter.write(
+                    output = output,
+                    request = request,
+                    graph = graph,
+                    chain = chain,
+                    source = source,
+                    frame = frame,
+                    outWidth = outWidth,
+                    outHeight = outHeight,
+                    isActive = isActive
+                )
                 encoded = true
             },
-            writeExif = { writer ->
-                BakeExifWriter.apply(
-                    sourcePath = request.sourcePath,
-                    isRaw = request.isRaw,
-                    width = outWidth,
-                    height = outHeight,
-                    target = writer
-                )
+            writeExif = if (format == BakeOutputFormat.JPEG) {
+                { writer ->
+                    BakeExifWriter.apply(
+                        sourcePath = request.sourcePath,
+                        isRaw = request.isRaw,
+                        width = outWidth,
+                        height = outHeight,
+                        target = writer
+                    )
+                }
+            } else {
+                // The PNG path embeds its eXIf chunk during the stream; rewriting the gallery
+                // entry afterwards would copy the whole file through a FUSE descriptor.
+                null
             }
         )
         if (!isActive()) {
