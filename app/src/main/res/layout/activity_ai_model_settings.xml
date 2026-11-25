@@ -70,6 +70,35 @@
                 android:textColor="@color/darkroom_text_secondary"
                 android:textSize="12sp"/>
 
+            <LinearLayout
+                android:id="@+id/aiModelsCloudEntryCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/bg_glass_card"
+                android:clickable="true"
+                android:focusable="true"
+                android:foreground="?attr/selectableItemBackground"
+                android:orientation="vertical"
+                android:padding="14dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/ai_models_cloud_entry_title"
+                    android:textColor="@color/darkroom_text_primary"
+                    android:textSize="14sp"
+                    android:textStyle="bold"/>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="@string/ai_models_cloud_entry_desc"
+                    android:textColor="@color/darkroom_text_muted"
+                    android:textSize="12sp"/>
+            </LinearLayout>
+
             <Button
                 android:id="@+id/aiModelsClearAllButton"
                 android:layout_width="wrap_content"

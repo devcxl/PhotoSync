@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- AI model management entry and page chrome -->
+    <string name="ai_models_cloud_entry_title">Cloud generative edits (BYOK)</string>
+    <string name="ai_models_cloud_entry_desc">Off by default · use your own OpenAI-compatible, Gemini or ComfyUI endpoint; secrets stay encrypted on this device.</string>
     <string name="ai_models_entry">AI models</string>
     <string name="ai_models_title">AI model management</string>
     <string name="ai_models_back">Back</string>

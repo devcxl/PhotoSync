@@ -1,0 +1,608 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/darkroom_bg"
+    android:fillViewport="true"
+    android:fitsSystemWindows="true"
+    tools:context=".activity.CloudSettingsActivity">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingBottom="32dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="8dp"
+            android:paddingEnd="16dp">
+
+            <ImageButton
+                android:id="@+id/cloudBackButton"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/cloud_settings_back"
+                android:padding="9dp"
+                android:scaleType="centerInside"
+                android:src="@drawable/ic_arrow_back_24"
+                app:tint="@color/darkroom_text_primary"/>
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:text="@string/cloud_settings_title"
+                android:textColor="@color/darkroom_text_primary"
+                android:textSize="20sp"
+                android:textStyle="bold"/>
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_glass_card"
+                android:orientation="vertical"
+                android:padding="14dp">
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/cloudEnabledSwitch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/cloud_master_title"
+                    android:textColor="@color/darkroom_text_primary"
+                    android:textSize="15sp"
+                    android:textStyle="bold"/>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="@string/cloud_master_desc"
+                    android:textColor="@color/darkroom_text_secondary"
+                    android:textSize="12sp"/>
+
+                <TextView
+                    android:id="@+id/cloudDisabledHint"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/cloud_master_off_hint"
+                    android:textColor="@color/badge_raw_text"
+                    android:textSize="12sp"/>
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/cloud_intro"
+                android:textColor="@color/darkroom_text_muted"
+                android:textSize="12sp"/>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="18dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/cloud_profiles_title"
+                    android:textColor="@color/darkroom_text_primary"
+                    android:textSize="15sp"
+                    android:textStyle="bold"/>
+
+                <Button
+                    android:id="@+id/cloudNewProfileButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="34dp"
+                    android:background="@drawable/bg_glass_pill"
+                    android:minWidth="0dp"
+                    android:minHeight="0dp"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp"
+                    android:text="@string/cloud_new_profile"
+                    android:textAllCaps="false"
+                    android:textColor="@color/darkroom_text_primary"
+                    android:textSize="12sp"
+                    android:textStyle="bold"/>
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/cloudProfilesEmptyText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/cloud_profiles_empty"
+                android:textColor="@color/darkroom_text_muted"
+                android:textSize="12sp"/>
+
+            <LinearLayout
+                android:id="@+id/cloudProfileList"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:orientation="vertical"/>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:text="@string/cloud_form_title"
+                android:textColor="@color/darkroom_text_primary"
+                android:textSize="15sp"
+                android:textStyle="bold"/>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/cloud_field_name"
+                android:textColor="@color/darkroom_text_secondary"
+                android:textSize="12sp"/>
+
+            <EditText
+                android:id="@+id/cloudProfileNameInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:background="@drawable/bg_glass_card"
+                android:hint="@string/cloud_field_name"
+                android:importantForAutofill="no"
+                android:inputType="text"
+                android:minHeight="44dp"
+                android:padding="12dp"
+                android:singleLine="true"
+                android:textColor="@color/darkroom_text_primary"
+                android:textColorHint="@color/darkroom_text_muted"
+                android:textSize="14sp"/>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/cloud_field_kind"
+                android:textColor="@color/darkroom_text_secondary"
+                android:textSize="12sp"/>
+
+            <Spinner
+                android:id="@+id/cloudKindSpinner"
+                android:layout_width="match_parent"
+                android:layout_height="44dp"
+                android:layout_marginTop="4dp"
+                android:background="@drawable/bg_glass_card"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"/>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/cloud_field_base_url"
+                android:textColor="@color/darkroom_text_secondary"
+                android:textSize="12sp"/>
+
+            <EditText
+                android:id="@+id/cloudBaseUrlInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:background="@drawable/bg_glass_card"
+                android:hint="@string/cloud_base_url_hint"
+                android:importantForAutofill="no"
+                android:inputType="textUri"
+                android:minHeight="44dp"
+                android:padding="12dp"
+                android:singleLine="true"
+                android:textColor="@color/darkroom_text_primary"
+                android:textColorHint="@color/darkroom_text_muted"
+                android:textSize="14sp"/>
+
+            <LinearLayout
+                android:id="@+id/cloudModelGroup"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="@string/cloud_field_model"
+                    android:textColor="@color/darkroom_text_secondary"
+                    android:textSize="12sp"/>
+
+                <EditText
+                    android:id="@+id/cloudModelInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:background="@drawable/bg_glass_card"
+                    android:hint="@string/cloud_model_hint"
+                    android:importantForAutofill="no"
+                    android:inputType="text"
+                    android:minHeight="44dp"
+                    android:padding="12dp"
+                    android:singleLine="true"
+                    android:textColor="@color/darkroom_text_primary"
+                    android:textColorHint="@color/darkroom_text_muted"
+                    android:textSize="14sp"/>
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/cloud_field_api_key"
+                android:textColor="@color/darkroom_text_secondary"
+                android:textSize="12sp"/>
+
+            <EditText
+                android:id="@+id/cloudApiKeyInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:background="@drawable/bg_glass_card"
+                android:hint="@string/cloud_api_key_hint_empty"
+                android:importantForAutofill="no"
+                android:inputType="textPassword"
+                android:minHeight="44dp"
+                android:padding="12dp"
+                android:singleLine="true"
+                android:textColor="@color/darkroom_text_primary"
+                android:textColorHint="@color/darkroom_text_muted"
+                android:textSize="14sp"/>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/cloud_field_auth_header_name"
+                android:textColor="@color/darkroom_text_secondary"
+                android:textSize="12sp"/>
+
+            <EditText
+                android:id="@+id/cloudAuthHeaderNameInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:background="@drawable/bg_glass_card"
+                android:hint="@string/cloud_field_auth_header_name"
+                android:importantForAutofill="no"
+                android:inputType="text"
+                android:minHeight="44dp"
+                android:padding="12dp"
+                android:singleLine="true"
+                android:textColor="@color/darkroom_text_primary"
+                android:textColorHint="@color/darkroom_text_muted"
+                android:textSize="14sp"/>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/cloud_field_auth_header_value"
+                android:textColor="@color/darkroom_text_secondary"
+                android:textSize="12sp"/>
+
+            <EditText
+                android:id="@+id/cloudAuthHeaderValueInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:background="@drawable/bg_glass_card"
+                android:hint="@string/cloud_auth_header_hint"
+                android:importantForAutofill="no"
+                android:inputType="textPassword"
+                android:minHeight="44dp"
+                android:padding="12dp"
+                android:singleLine="true"
+                android:textColor="@color/darkroom_text_primary"
+                android:textColorHint="@color/darkroom_text_muted"
+                android:textSize="14sp"/>
+
+            <LinearLayout
+                android:id="@+id/cloudComfyGroup"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="18dp"
+                    android:text="@string/cloud_comfy_section"
+                    android:textColor="@color/darkroom_text_primary"
+                    android:textSize="15sp"
+                    android:textStyle="bold"/>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/cloudWorkflowImportButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="34dp"
+                        android:background="@drawable/bg_glass_pill"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:paddingStart="14dp"
+                        android:paddingEnd="14dp"
+                        android:text="@string/cloud_workflow_import"
+                        android:textAllCaps="false"
+                        android:textColor="@color/darkroom_text_primary"
+                        android:textSize="12sp"
+                        android:textStyle="bold"/>
+
+                    <TextView
+                        android:id="@+id/cloudWorkflowFileNameText"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="10dp"
+                        android:layout_weight="1"
+                        android:text="@string/cloud_workflow_none"
+                        android:textColor="@color/darkroom_text_muted"
+                        android:textSize="12sp"/>
+                </LinearLayout>
+
+                <EditText
+                    android:id="@+id/cloudWorkflowInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:background="@drawable/bg_glass_card"
+                    android:gravity="start|top"
+                    android:hint="@string/cloud_workflow_hint"
+                    android:importantForAutofill="no"
+                    android:inputType="textMultiLine"
+                    android:minLines="4"
+                    android:padding="12dp"
+                    android:textColor="@color/darkroom_text_primary"
+                    android:textColorHint="@color/darkroom_text_muted"
+                    android:textSize="12sp"/>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="@string/cloud_node_image"
+                    android:textColor="@color/darkroom_text_secondary"
+                    android:textSize="12sp"/>
+
+                <EditText
+                    android:id="@+id/cloudImageNodeInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:background="@drawable/bg_glass_card"
+                    android:hint="@string/cloud_node_image"
+                    android:importantForAutofill="no"
+                    android:inputType="text"
+                    android:minHeight="44dp"
+                    android:padding="12dp"
+                    android:singleLine="true"
+                    android:textColor="@color/darkroom_text_primary"
+                    android:textColorHint="@color/darkroom_text_muted"
+                    android:textSize="14sp"/>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="@string/cloud_node_mask"
+                    android:textColor="@color/darkroom_text_secondary"
+                    android:textSize="12sp"/>
+
+                <EditText
+                    android:id="@+id/cloudMaskNodeInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:background="@drawable/bg_glass_card"
+                    android:hint="@string/cloud_node_mask"
+                    android:importantForAutofill="no"
+                    android:inputType="text"
+                    android:minHeight="44dp"
+                    android:padding="12dp"
+                    android:singleLine="true"
+                    android:textColor="@color/darkroom_text_primary"
+                    android:textColorHint="@color/darkroom_text_muted"
+                    android:textSize="14sp"/>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="@string/cloud_node_prompt"
+                    android:textColor="@color/darkroom_text_secondary"
+                    android:textSize="12sp"/>
+
+                <EditText
+                    android:id="@+id/cloudPromptNodeInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:background="@drawable/bg_glass_card"
+                    android:hint="@string/cloud_node_prompt"
+                    android:importantForAutofill="no"
+                    android:inputType="text"
+                    android:minHeight="44dp"
+                    android:padding="12dp"
+                    android:singleLine="true"
+                    android:textColor="@color/darkroom_text_primary"
+                    android:textColorHint="@color/darkroom_text_muted"
+                    android:textSize="14sp"/>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="@string/cloud_node_negative"
+                    android:textColor="@color/darkroom_text_secondary"
+                    android:textSize="12sp"/>
+
+                <EditText
+                    android:id="@+id/cloudNegativeNodeInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:background="@drawable/bg_glass_card"
+                    android:hint="@string/cloud_node_negative"
+                    android:importantForAutofill="no"
+                    android:inputType="text"
+                    android:minHeight="44dp"
+                    android:padding="12dp"
+                    android:singleLine="true"
+                    android:textColor="@color/darkroom_text_primary"
+                    android:textColorHint="@color/darkroom_text_muted"
+                    android:textSize="14sp"/>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="@string/cloud_node_seed"
+                    android:textColor="@color/darkroom_text_secondary"
+                    android:textSize="12sp"/>
+
+                <EditText
+                    android:id="@+id/cloudSeedNodeInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:background="@drawable/bg_glass_card"
+                    android:hint="@string/cloud_node_seed"
+                    android:importantForAutofill="no"
+                    android:inputType="text"
+                    android:minHeight="44dp"
+                    android:padding="12dp"
+                    android:singleLine="true"
+                    android:textColor="@color/darkroom_text_primary"
+                    android:textColorHint="@color/darkroom_text_muted"
+                    android:textSize="14sp"/>
+            </LinearLayout>
+
+            <CheckBox
+                android:id="@+id/cloudLanCleartextCheck"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/cloud_lan_cleartext"
+                android:textColor="@color/darkroom_text_primary"
+                android:textSize="13sp"/>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/cloud_lan_warning"
+                android:textColor="@color/badge_raw_text"
+                android:textSize="11sp"/>
+
+            <LinearLayout
+                android:id="@+id/cloudBackgroundGroup"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:orientation="vertical">
+
+                <CheckBox
+                    android:id="@+id/cloudBackgroundCheck"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/cloud_background"
+                    android:textColor="@color/darkroom_text_primary"
+                    android:textSize="13sp"/>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/cloud_background_desc"
+                    android:textColor="@color/darkroom_text_muted"
+                    android:textSize="11sp"/>
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/cloudStatusText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:minHeight="20dp"
+                android:text="@string/cloud_status_idle"
+                android:textColor="@color/darkroom_text_secondary"
+                android:textSize="12sp"/>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/cloudTestButton"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_glass_pill"
+                    android:minWidth="0dp"
+                    android:minHeight="0dp"
+                    android:text="@string/cloud_test_connection"
+                    android:textAllCaps="false"
+                    android:textColor="@color/darkroom_text_primary"
+                    android:textSize="13sp"
+                    android:textStyle="bold"/>
+
+                <Space
+                    android:layout_width="10dp"
+                    android:layout_height="1dp"/>
+
+                <Button
+                    android:id="@+id/cloudSaveButton"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_primary_cta"
+                    android:minWidth="0dp"
+                    android:minHeight="0dp"
+                    android:text="@string/cloud_save"
+                    android:textAllCaps="false"
+                    android:textColor="@color/darkroom_text_primary"
+                    android:textSize="13sp"
+                    android:textStyle="bold"/>
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/cloudDeleteButton"
+                android:layout_width="match_parent"
+                android:layout_height="40dp"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/bg_danger_pill"
+                android:minHeight="0dp"
+                android:text="@string/cloud_delete"
+                android:textAllCaps="false"
+                android:textColor="@color/danger_text"
+                android:textSize="12sp"/>
+        </LinearLayout>
+    </LinearLayout>
+</ScrollView>

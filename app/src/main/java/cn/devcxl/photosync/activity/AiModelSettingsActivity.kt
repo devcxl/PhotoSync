@@ -3,6 +3,7 @@ package cn.devcxl.photosync.activity
 import java.io.File
 import java.io.IOException
 
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
@@ -57,6 +58,9 @@ class AiModelSettingsActivity : AppCompatActivity() {
         setContentView(binding.root)
         binding.aiModelsBackButton.setOnClickListener { finish() }
         binding.aiModelsClearAllButton.setOnClickListener { confirmClearAll() }
+        binding.aiModelsCloudEntryCard.setOnClickListener {
+            startActivity(Intent(this, CloudSettingsActivity::class.java))
+        }
         renderModelRows()
         refreshUsageAndStates()
     }

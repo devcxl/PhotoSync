@@ -38,6 +38,11 @@
                   android:label="@string/ai_models_title"
                   android:theme="@style/Theme.PhotoSync"/>
 
+        <activity android:name=".activity.CloudSettingsActivity"
+                  android:exported="false"
+                  android:label="@string/cloud_settings_title"
+                  android:theme="@style/Theme.PhotoSync"/>
+
         <!-- ONNX Runtime 1.22.0 does not ship this provider, but later releases merge a
              telemetry ContentProvider that calls System.loadLibrary before Application.onCreate
              and talks to Microsoft 1DS. Removing it here keeps a future version bump from

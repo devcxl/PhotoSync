@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Page chrome -->
+    <string name="cloud_settings_title">Cloud generative edits (BYOK)</string>
+    <string name="cloud_settings_back">Back</string>
+    <string name="cloud_master_title">Enable cloud generative edits (BYOK)</string>
+    <string name="cloud_master_desc">Off by default. When enabled, only edits you start send an EXIF-free copy to the endpoint you configured; secrets are encrypted with the on-device AndroidKeyStore.</string>
+    <string name="cloud_master_off_hint">Cloud features are off: the app sends nothing to any external endpoint until you enable the switch above.</string>
+    <string name="cloud_intro">Pure BYOK. The app ships no backend; enter your own OpenAI-compatible gateway, Gemini or self-hosted ComfyUI endpoint.</string>
+
+    <!-- Profile list -->
+    <string name="cloud_profiles_title">Provider profiles</string>
+    <string name="cloud_new_profile">New profile</string>
+    <string name="cloud_profile_active">In use</string>
+    <string name="cloud_profile_summary">%1$s · %2$s</string>
+    <string name="cloud_profiles_empty">No profiles yet. Add one to enter its address, model and secret.</string>
+    <string name="cloud_kind_openai">OpenAI compatible</string>
+    <string name="cloud_kind_gemini">Gemini Interactions</string>
+    <string name="cloud_kind_comfy">ComfyUI (self-hosted)</string>
+    <string-array name="cloud_provider_kinds">
+        <item>@string/cloud_kind_openai</item>
+        <item>@string/cloud_kind_gemini</item>
+        <item>@string/cloud_kind_comfy</item>
+    </string-array>
+
+    <!-- Form -->
+    <string name="cloud_form_title">Profile details</string>
+    <string name="cloud_field_name">Name</string>
+    <string name="cloud_field_kind">Provider</string>
+    <string name="cloud_field_base_url">Base URL</string>
+    <string name="cloud_base_url_hint">Gateway root without /v1: https://… or an explicitly allowed LAN http://192.168.x.x:8188</string>
+    <string name="cloud_field_model">Model</string>
+    <string name="cloud_model_hint">Enter a model your gateway actually serves (no retired model is hardcoded)</string>
+    <string name="cloud_field_api_key">API key / token</string>
+    <string name="cloud_api_key_hint_saved">Saved: %1$s (leave blank to keep)</string>
+    <string name="cloud_api_key_hint_empty">Enter a secret; it is encrypted on this device</string>
+    <string name="cloud_field_auth_header_name">Custom auth header (optional)</string>
+    <string name="cloud_field_auth_header_value">Auth header value (optional)</string>
+    <string name="cloud_auth_header_hint">For a reverse proxy: Authorization + Basic …, or X-API-Key</string>
+    <string name="cloud_auth_header_hint_saved">Saved: %1$s (leave blank to keep)</string>
+    <string name="cloud_comfy_section">ComfyUI workflow</string>
+    <string name="cloud_workflow_import">Import workflow JSON</string>
+    <string name="cloud_workflow_none">No workflow imported</string>
+    <string name="cloud_workflow_loaded">Loaded: %1$s</string>
+    <string name="cloud_workflow_existing">Workflow JSON loaded</string>
+    <string name="cloud_workflow_hint">Export with File → Export (API) in ComfyUI, then import or paste the JSON</string>
+    <string name="cloud_node_image">Image node id</string>
+    <string name="cloud_node_mask">Mask node id (optional)</string>
+    <string name="cloud_node_prompt">Prompt node id</string>
+    <string name="cloud_node_negative">Negative prompt node id (optional)</string>
+    <string name="cloud_node_seed">Seed node id (optional)</string>
+    <string name="cloud_lan_cleartext">Allow LAN cleartext HTTP (self-hosted ComfyUI only)</string>
+    <string name="cloud_lan_warning">Warning: cleartext HTTP is visible to others on the same network. Only literal private IPv4 (10.x, 172.16–31.x, 192.168.x or 127.0.0.1) is accepted, and the resolved addresses are checked again.</string>
+    <string name="cloud_background">Use background polling (Gemini)</string>
+    <string name="cloud_background_desc">More robust for long jobs; a timed-out submit is never retried automatically, so it cannot double-bill.</string>
+
+    <!-- Actions and status -->
+    <string name="cloud_test_connection">Test connection</string>
+    <string name="cloud_save">Save profile</string>
+    <string name="cloud_delete">Delete profile</string>
+    <string name="cloud_status_idle">Not tested yet</string>
+    <string name="cloud_status_testing">Testing connectivity…</string>
+    <string name="cloud_status_saved">Profile saved</string>
+    <string name="cloud_status_deleted">Profile deleted</string>
+    <string name="cloud_status_save_failed">Save failed: %1$s</string>
+    <string name="cloud_status_enable_first">Enable the master switch before any network request</string>
+    <string name="cloud_status_reachable">Connected (%1$d ms)</string>
+    <string name="cloud_status_failed">Connection failed: %1$s</string>
+    <string name="cloud_status_building">Incomplete profile: %1$s</string>
+
+    <!-- Errors -->
+    <string name="cloud_error_auth">Authentication failed; check the API key or proxy auth header</string>
+    <string name="cloud_error_invalid">Request rejected</string>
+    <string name="cloud_error_invalid_detail">Request rejected: %1$s</string>
+    <string name="cloud_error_too_large">The image or response exceeds the size limit</string>
+    <string name="cloud_error_rate_limited">Too many requests; try again later</string>
+    <string name="cloud_error_rate_limited_retry">Too many requests; retry after %1$d s</string>
+    <string name="cloud_error_server">Server error (HTTP %1$d)</string>
+    <string name="cloud_error_timeout">Request timed out; it was stopped and is not retried automatically</string>
+    <string name="cloud_error_cancelled">Request cancelled</string>
+    <string name="cloud_error_redirect">The endpoint redirected the request, which is refused for safety</string>
+    <string name="cloud_error_network">Network unreachable; check the address and connectivity</string>
+    <string name="cloud_error_malformed">The response did not match the expected shape</string>
+    <string name="cloud_error_unknown">Unknown error</string>
+
+    <!-- Endpoint policy reasons -->
+    <string name="cloud_error_url_malformed">The base URL is malformed</string>
+    <string name="cloud_error_url_credentials">Credentials embedded in the URL are not accepted</string>
+    <string name="cloud_error_url_scheme">Only https:// or an explicitly allowed LAN http:// is supported</string>
+    <string name="cloud_error_cleartext">Cleartext HTTP is forbidden for public endpoints</string>
+    <string name="cloud_error_lan_disabled">Cleartext LAN HTTP requires the explicit opt-in</string>
+    <string name="cloud_error_dns">The endpoint host could not be resolved</string>
+    <string name="cloud_error_dns_private">The host resolved outside the private network</string>
+
+    <!-- Validation -->
+    <string name="cloud_validation_name">Enter a profile name</string>
+    <string name="cloud_validation_base_url">Enter a base URL</string>
+    <string name="cloud_validation_model">Enter a model name</string>
+    <string name="cloud_validation_workflow">Import a ComfyUI workflow JSON first</string>
+    <string name="cloud_validation_workflow_invalid">The workflow JSON is invalid; import a ComfyUI API-format export</string>
+    <string name="cloud_validation_nodes">Enter the image and prompt node ids</string>
+    <string name="cloud_validation_header">An auth header value requires an auth header name</string>
+    <string name="cloud_validation_workflow_too_large">The workflow JSON is too large (512 KB max)</string>
+    <string name="cloud_validation_workflow_unreadable">The selected workflow file could not be read</string>
+
+    <!-- Delete dialog -->
+    <string name="cloud_delete_title">Delete profile</string>
+    <string name="cloud_delete_message">Delete “%1$s”? Its encrypted secret is deleted as well.</string>
+    <string name="cloud_delete_confirm">Delete</string>
+</resources>

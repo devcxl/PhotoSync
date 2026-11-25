@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- AI model management entry and page chrome -->
+    <string name="ai_models_cloud_entry_title">云端生成式增强（BYOK）</string>
+    <string name="ai_models_cloud_entry_desc">默认关闭 · 使用你自己的 OpenAI 兼容、Gemini 或 ComfyUI 端点；密钥仅在本机加密保存。</string>
     <string name="ai_models_entry">AI 模型</string>
     <string name="ai_models_title">AI 模型管理</string>
     <string name="ai_models_back">返回</string>
