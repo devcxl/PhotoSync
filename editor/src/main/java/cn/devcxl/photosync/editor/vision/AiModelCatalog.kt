@@ -93,17 +93,28 @@ object AiModelCatalog {
     /**
      * MI-GAN-512 generator-only export used by the P2 inpainting tool (MIT, code and weights).
      *
-     * The artifact is not published yet: the P0 gate still requires exporting it from the official
-     * `.pt` weights and pinning its exact byte count and SHA-256. Until then the entry is visible
-     * in the settings page, but [isPinned] is false so neither download nor SAF import is offered.
+     * Exported from the official `migan_512_places2.pt` checkpoint with the legacy TorchScript
+     * exporter (opset 17, input `float32 [1,4,512,512]`, output `float32 [1,3,512,512]`). The
+     * dynamic crop/paste-back control flow of the upstream pipeline is gone: the graph has no
+     * `NonZero`, `ScatterND`, `GatherND`, `Where`, `Range`, `Loop`, `If`, `Scan` or `TopK`, and
+     * every `Resize`/`Reshape`/`Slice`/`Pad` shape parameter is constant-foldable.
+     *
+     * The export was verified bit-exactly against `migan_pipeline_v2.onnx` on all 20 Places2
+     * samples (MAE = 0, PSNR = ∞). The GitHub Releases asset is the primary source; the release
+     * asset is not uploaded yet, so until it lands the SAF import path is the working install
+     * route — it accepts only a file matching the pinned size and SHA-256 below, and so does every
+     * mirror.
      */
     val MI_GAN_GENERATOR = AiModelSpec(
         id = "migan-generator-512",
-        version = "unreleased",
-        fileName = "migan_generator_512.onnx",
-        mirrorUrls = emptyList(),
-        byteSize = 0L,
-        sha256 = "",
+        version = "1",
+        fileName = "migan_generator_512_v1.onnx",
+        mirrorUrls = listOf(
+            "https://github.com/devcxl/PhotoSync/releases/download/ai-models-v1/" +
+                "migan_generator_512.onnx"
+        ),
+        byteSize = 28_026_303L,
+        sha256 = "522048b4fc3fae7adff3af48859cd8d19412d02a8a9420614f3d4474a0901bfe",
         license = AiModelLicense(
             name = "MIT",
             url = "https://github.com/Picsart-AI-Research/MI-GAN/blob/main/LICENSE-WEIGHTS"

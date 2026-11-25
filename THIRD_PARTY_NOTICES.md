@@ -62,6 +62,20 @@ LGPL-2.1 第 6 条要求：把该库组合进非 LGPL 应用分发二进制时�
   路径都先校验固化的精确字节数与 SHA-256 才会启用模型。
 - **用途**：生成人像主体蒙版，用于主体虚化与透明 PNG 导出。
 
+## MI-GAN
+
+- **版本**：MI-GAN-512 生成器-only ONNX 导出（`migan_generator_512_v1.onnx`，28,026,303 B）
+- **源码**：https://github.com/Picsart-AI-Research/MI-GAN
+- **许可**：MIT（代码 `LICENSE` 与权重 `LICENSE-WEIGHTS` 均为 MIT）
+- **权重来源**：官方发布的 `migan_512_places2.pt` 检查点，导出脚本按上游
+  `scripts/create_onnx_pipeline.py` 的裁切前逻辑取生成器子图，未修改任何权重数值。
+- **分发方式**：**不内置于安装包**。设置页「AI 模型管理」按需下载（GitHub Releases 主源），
+  或由用户通过 SAF 导入本地 `.onnx` 文件；两条路径都先校验固化的精确字节数与 SHA-256
+  （`522048b4fc3fae7adff3af48859cd8d19412d02a8a9420614f3d4474a0901bfe`）才会启用模型。
+- **用途**：涂抹区域内容感知修复（智能消除），生成器输出由应用侧的预处理/回贴与 `clamp` 完成。
+- **合规说明**：仓库自身以 MIT 分发，随应用分发的声明保留在上游仓库
+  `LICENSE-WEIGHTS` 与本文件；若上游权重许可发生变化，删除该按需模型即可，不影响安装包其余部分。
+
 ## Android NDK 运行时
 
 - **libc++_shared**（`lib/<abi>/libc++_shared.so`）：Apache-2.0 with LLVM exceptions。
