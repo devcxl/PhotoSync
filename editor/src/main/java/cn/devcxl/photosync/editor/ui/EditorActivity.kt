@@ -21,6 +21,7 @@ import cn.devcxl.photosync.editor.R
 import cn.devcxl.photosync.editor.contract.EditorHostRegistry
 import cn.devcxl.photosync.editor.contract.EditorLaunchArgs
 import cn.devcxl.photosync.editor.databinding.ActivityEditorBinding
+import cn.devcxl.photosync.editor.domain.ActivePhotoEditRegistry
 import cn.devcxl.photosync.editor.domain.BaseLook
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.EditParameterKey
@@ -93,6 +94,8 @@ class EditorActivity : AppCompatActivity(),
         setContentView(binding.root)
 
         photoId = intent.getLongExtra(EXTRA_PHOTO_ID, 0L)
+        // Keep the photo's AI assets out of the offline GC sweep for the whole editor session.
+        ActivePhotoEditRegistry.acquire(photoId)
         sourcePath = intent.getStringExtra(EXTRA_SOURCE_PATH).orEmpty()
         isRaw = intent.getBooleanExtra(EXTRA_IS_RAW, false)
         initCoordinators()
@@ -259,6 +262,7 @@ class EditorActivity : AppCompatActivity(),
         aiInferenceBar.dismiss()
         aiInferenceJob?.cancel()
         aiInferenceJob = null
+        ActivePhotoEditRegistry.release(photoId)
         canvas.detachOverlays()
         portraitHost.release()
         // A save may still be resampling the staged source on a worker thread; recycling it here

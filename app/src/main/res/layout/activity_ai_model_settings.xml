@@ -70,6 +70,24 @@
                 android:textColor="@color/darkroom_text_secondary"
                 android:textSize="12sp"/>
 
+            <Button
+                android:id="@+id/aiModelsClearAllButton"
+                android:layout_width="wrap_content"
+                android:layout_height="34dp"
+                android:layout_gravity="end"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/bg_glass_pill"
+                android:enabled="false"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                android:text="@string/ai_models_clear_all"
+                android:textAllCaps="false"
+                android:textColor="@color/darkroom_text_primary"
+                android:textSize="12sp"
+                android:textStyle="bold"/>
+
             <LinearLayout
                 android:id="@+id/aiModelsList"
                 android:layout_width="match_parent"

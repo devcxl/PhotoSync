@@ -4,7 +4,6 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
-import java.security.MessageDigest
 
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -64,7 +63,7 @@ class AiModelDownloadManager(
     private val modelsRootDir: File,
     private val http: ModelHttpSource = HttpUrlConnectionSource(),
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
-    private val digest: (File) -> String = ::sha256Of
+    private val digest: (File) -> String = AiModelTransferHelper::sha256Of
 ) {
 
     /** The per-model directory under `<modelsRoot>/<model-id>/`. */
@@ -88,7 +87,7 @@ class AiModelDownloadManager(
     }
 
     /** Bytes currently occupied by [spec], including a partial download. */
-    fun bytesOnDisk(spec: AiModelSpec): Long = modelDir(spec).totalBytes()
+    fun bytesOnDisk(spec: AiModelSpec): Long = AiModelTransferHelper.totalBytes(modelDir(spec))
 
     /**
      * Bytes occupied by every model directory under [modelsRootDir].
@@ -97,7 +96,10 @@ class AiModelDownloadManager(
      * there as a single `.tflite` file and is not managed by this catalog.
      */
     fun totalBytesOnDisk(): Long =
-        modelsRootDir.listFiles()?.filter { it.isDirectory }?.sumOf { it.totalBytes() } ?: 0L
+        modelsRootDir.listFiles()
+            ?.filter { it.isDirectory }
+            ?.sumOf { AiModelTransferHelper.totalBytes(it) }
+            ?: 0L
 
     /**
      * Ensures [spec] is installed, resuming a partial transfer or falling back across mirrors.
@@ -168,7 +170,7 @@ class AiModelDownloadManager(
         partFile(spec).delete()
         try {
             FileOutputStream(partFile(spec)).use { output ->
-                copyBounded(spec, input, output, onProgress)?.let { failure ->
+                AiModelTransferHelper.copyBounded(spec, input, output, onProgress)?.let { failure ->
                     partFile(spec).delete()
                     return@withContext installFailure(failure)
                 }
@@ -203,29 +205,6 @@ class AiModelDownloadManager(
         return directory.deleteRecursively()
     }
 
-    private fun copyBounded(
-        spec: AiModelSpec,
-        input: InputStream,
-        output: FileOutputStream,
-        onProgress: (Float) -> Unit
-    ): AiModelFailureReason? {
-        val buffer = ByteArray(BUFFER_BYTES)
-        var written = 0L
-        while (true) {
-            val read = input.read(buffer)
-            if (read <= 0) break
-            if (written + read > spec.byteSize) {
-                Timber.w("Local model import is larger than the pinned %d bytes", spec.byteSize)
-                return AiModelFailureReason.SIZE_MISMATCH
-            }
-            output.write(buffer, 0, read)
-            written += read
-            onProgress((written.toFloat() / spec.byteSize.toFloat()).coerceIn(0f, 1f))
-        }
-        output.flush()
-        return null
-    }
-
     private fun verifiedFileOnDisk(spec: AiModelSpec): File? {
         val file = modelFile(spec)
         if (!file.isFile) return null
@@ -256,7 +235,13 @@ class AiModelDownloadManager(
             response = http.open(url, start)
             val append = start > 0L && response.statusCode == HTTP_PARTIAL_CONTENT
             if (!append) partFile(spec).delete()
-            writeBody(spec, response.body, if (append) start else 0L, onProgress)
+            AiModelTransferHelper.writeBody(
+                spec = spec,
+                partFile = partFile(spec),
+                body = response.body,
+                alreadyWritten = if (append) start else 0L,
+                onProgress = onProgress
+            )
             true
         } catch (e: IOException) {
             Timber.w(e, "Model mirror failed; keeping the partial file for the next source")
@@ -267,27 +252,6 @@ class AiModelDownloadManager(
         } finally {
             runCatching { response?.body?.close() }
                 .onFailure { Timber.w(it, "Failed to close a model response body") }
-        }
-    }
-
-    private fun writeBody(
-        spec: AiModelSpec,
-        body: InputStream,
-        alreadyWritten: Long,
-        onProgress: (Float) -> Unit
-    ) {
-        FileOutputStream(partFile(spec), alreadyWritten > 0L).use { output ->
-            val buffer = ByteArray(BUFFER_BYTES)
-            var written = alreadyWritten
-            while (written < spec.byteSize) {
-                val read = body.read(buffer)
-                if (read <= 0) break
-                val allowed = minOf(read.toLong(), spec.byteSize - written).toInt()
-                output.write(buffer, 0, allowed)
-                written += allowed
-                onProgress((written.toFloat() / spec.byteSize.toFloat()).coerceIn(0f, 1f))
-            }
-            output.flush()
         }
     }
 
@@ -337,29 +301,7 @@ class AiModelDownloadManager(
         AiModelInstallException(reason, "AI model install failed: $reason", cause)
     )
 
-    private fun File.totalBytes(): Long {
-        if (!exists()) return 0L
-        if (isFile) return length()
-        return listFiles()?.sumOf { it.totalBytes() } ?: 0L
-    }
-
     private companion object {
         private const val HTTP_PARTIAL_CONTENT = 206
-        private const val BUFFER_BYTES = 64 * 1024
-
-        fun sha256Of(file: File): String {
-            val digest = MessageDigest.getInstance("SHA-256")
-            file.inputStream().use { input ->
-                val buffer = ByteArray(BUFFER_BYTES)
-                while (true) {
-                    val read = input.read(buffer)
-                    if (read <= 0) break
-                    digest.update(buffer, 0, read)
-                }
-            }
-            return digest.digest().joinToString("") { byte ->
-                (byte.toInt() and 0xFF).toString(16).padStart(2, '0')
-            }
-        }
     }
 }

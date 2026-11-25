@@ -172,7 +172,8 @@ class GallerySinkPngTest {
     }
 
     @Test
-    fun shouldAtomicallyRenamePngTempAndAnnounceImagePng_whenSavingOnLegacyApi24To28() {        val backend = FakeLegacyBackend()
+    fun shouldAtomicallyRenamePngTempAndAnnounceImagePng_whenSavingOnLegacyApi24To28() {
+        val backend = FakeLegacyBackend()
         val payload = pngHeaderBytes()
 
         val result = saveViaLegacyBackend(

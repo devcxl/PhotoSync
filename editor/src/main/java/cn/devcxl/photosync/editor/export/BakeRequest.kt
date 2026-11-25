@@ -24,13 +24,17 @@ enum class BakeOutputFormat {
  * @property graph The edit graph to render; an identity graph still re-renders the pixels.
  * @property outputFormat Container to encode; defaults to [BakeOutputFormat.JPEG] so existing
  *   opaque exports keep their behaviour.
+ * @property photoId Photo row id used to register the bake in
+ *   [cn.devcxl.photosync.editor.domain.ActivePhotoEditRegistry] so an offline AI asset sweep never
+ *   deletes payloads this bake is still streaming. `null` disables the registration.
  */
 data class BakeRequest(
     val sourcePath: String,
     val displayName: String,
     val isRaw: Boolean,
     val graph: EditGraph,
-    val outputFormat: BakeOutputFormat = BakeOutputFormat.JPEG
+    val outputFormat: BakeOutputFormat = BakeOutputFormat.JPEG,
+    val photoId: Long? = null
 )
 
 /**

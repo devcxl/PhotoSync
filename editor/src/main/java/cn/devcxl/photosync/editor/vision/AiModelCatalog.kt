@@ -65,14 +65,20 @@ object AiModelCatalog {
      * MODNet portrait matting, FP32, 512×512.
      *
      * Byte count and SHA-256 were measured against the HuggingFace artifact on 2026-11-26; the
-     * file is Apache-2.0, including the weights. `hf-mirror.com` is the ordered fallback for
-     * networks where the primary host is unreachable.
+     * file is Apache-2.0, including the weights.
+     *
+     * Mirror order follows the distribution policy: the GitHub Releases asset is the primary source,
+     * HuggingFace is the upstream fallback, and `hf-mirror.com` is the in-country reachable mirror.
+     * Every source must serve the exact pinned bytes, which the size and SHA-256 checks enforce
+     * before the file is promoted into place.
      */
     val MODNET_PORTRAIT = AiModelSpec(
         id = "modnet-portrait-512",
         version = "1",
         fileName = "modnet_portrait_512_v1.onnx",
         mirrorUrls = listOf(
+            "https://github.com/devcxl/PhotoSync/releases/download/ai-models-v1/" +
+                "modnet_photographic_portrait_matting.onnx",
             "https://huggingface.co/Xenova/modnet/resolve/main/onnx/model.onnx",
             "https://hf-mirror.com/Xenova/modnet/resolve/main/onnx/model.onnx"
         ),

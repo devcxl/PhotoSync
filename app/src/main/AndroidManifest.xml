@@ -36,7 +36,6 @@
         <activity android:name=".activity.AiModelSettingsActivity"
                   android:exported="false"
                   android:label="@string/ai_models_title"
-                  android:screenOrientation="landscape"
                   android:theme="@style/Theme.PhotoSync"/>
 
         <!-- ONNX Runtime 1.22.0 does not ship this provider, but later releases merge a

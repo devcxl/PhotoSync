@@ -17,6 +17,7 @@ import kotlinx.coroutines.withContext
 import timber.log.Timber
 
 import cn.devcxl.photosync.editor.contract.GallerySink
+import cn.devcxl.photosync.editor.domain.ActivePhotoEditRegistry
 import cn.devcxl.photosync.editor.domain.ColumnBandTiling
 import cn.devcxl.photosync.editor.domain.DeviceGlBudget
 import cn.devcxl.photosync.editor.domain.EditGraph
@@ -63,10 +64,20 @@ class BakeExporter(
      * Cancellation is observed once per column band (and once per PNG row); a cancelled bake aborts
      * the encoder and lets the sink delete its pending entry. RAW requests additionally wait for
      * [BakeConcurrencyGate.rawBakeMutex] so at most one RAW bake occupies memory at a time.
+     *
+     * When [BakeRequest.photoId] is set, the id stays registered in
+     * [cn.devcxl.photosync.editor.domain.ActivePhotoEditRegistry] for the whole bake, so the offline
+     * AI asset sweep skips the photo directory this bake is still reading.
      */
     suspend fun bake(request: BakeRequest): BakeResult {
-        if (!request.isRaw) return runBake(request)
-        return BakeConcurrencyGate.rawBakeMutex.withLock { runBake(request) }
+        val photoId = request.photoId
+        if (photoId != null) ActivePhotoEditRegistry.acquire(photoId)
+        try {
+            if (!request.isRaw) return runBake(request)
+            return BakeConcurrencyGate.rawBakeMutex.withLock { runBake(request) }
+        } finally {
+            if (photoId != null) ActivePhotoEditRegistry.release(photoId)
+        }
     }
 
     private suspend fun runBake(request: BakeRequest): BakeResult = withContext(Dispatchers.Default) {

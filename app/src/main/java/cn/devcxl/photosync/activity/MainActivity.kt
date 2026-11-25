@@ -76,6 +76,7 @@ import cn.devcxl.photosync.editor.domain.AiAssetStore
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.EditGraphJsonCodec
 import cn.devcxl.photosync.editor.export.BakeExporter
+import cn.devcxl.photosync.editor.export.BakeOutputNaming
 import cn.devcxl.photosync.editor.export.BakeRequest
 import cn.devcxl.photosync.editor.export.BakeResult
 import cn.devcxl.photosync.editor.export.ExifCopier
@@ -1478,12 +1479,15 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             try {
                 val sink = EditorHostRegistry.gallerySink ?: gallerySink
+                val outputFormat = BakeOutputNaming.outputFormatFor(graph)
                 val result = BakeExporter(this@MainActivity, sink, filesDir).bake(
                     BakeRequest(
                         sourcePath = entity.path,
-                        displayName = makeOutputName(entity.name, "_edited"),
+                        displayName = BakeOutputNaming.displayName(entity.path, entity.id, outputFormat),
                         isRaw = isRawPath(entity.path),
-                        graph = graph
+                        graph = graph,
+                        outputFormat = outputFormat,
+                        photoId = entity.id
                     )
                 )
                 when (result) {

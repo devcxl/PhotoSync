@@ -43,6 +43,25 @@ LGPL-2.1 第 6 条要求：把该库组合进非 LGPL 应用分发二进制时�
 - **链接方式**：以静态库形式链接进 `libraw_wrapper.so`，仅启用编码器；符号通过
   `-Wl,--exclude-libs,ALL` 隐藏，避免与系统 `libjpeg.so` 冲突。
 
+## ONNX Runtime
+
+- **版本**：1.22.0（`com.microsoft.onnxruntime:onnxruntime-android`）
+- **源码**：https://github.com/microsoft/onnxruntime
+- **许可**：MIT
+- **产物**：`lib/<abi>/libonnxruntime.so` 与 Java/Kotlin 绑定，随安装包分发
+- **隐私**：Manifest 显式移除上游后加入的遥测 `ContentProvider`
+  （`ai.onnxruntime.TelemetryInitializer`），本应用不向 Microsoft 1DS 发送任何数据。
+
+## MODNet
+
+- **版本**：ONNX FP32 导出（`Xenova/modnet`，512×512）
+- **源码**：https://github.com/ZHKKKe/MODNet
+- **许可**：Apache-2.0（代码与权重）
+- **分发方式**：**不内置于安装包**。设置页「AI 模型管理」按需下载（GitHub Releases 主源 →
+  HuggingFace → `hf-mirror.com` 镜像回退），或由用户通过 SAF 导入本地 `.onnx` 文件；两种
+  路径都先校验固化的精确字节数与 SHA-256 才会启用模型。
+- **用途**：生成人像主体蒙版，用于主体虚化与透明 PNG 导出。
+
 ## Android NDK 运行时
 
 - **libc++_shared**（`lib/<abi>/libc++_shared.so`）：Apache-2.0 with LLVM exceptions。

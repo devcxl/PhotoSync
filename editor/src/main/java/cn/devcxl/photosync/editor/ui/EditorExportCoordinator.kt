@@ -36,17 +36,18 @@ internal class EditorExportCoordinator(
      * Starts a bake for [graph].
      *
      * @param sourcePath Original JPEG/RAW file of the edited photo.
-     * @param photoId Photo id, used for the fallback display name.
+     * @param photoId Photo id, used for the fallback display name and to keep the photo registered
+     *   as active while the bake runs.
      * @param isRaw True for a RAW source decoded through `:libraw`.
-     * @param outputFormat Container to publish; transparent cut-outs pass
-     *   [BakeOutputFormat.PNG_RGBA] and land as `_edited.png`.
+     * @param outputFormat Container to publish; defaults to [BakeOutputNaming.outputFormatFor], so
+     *   transparent subject cut-outs land as `_edited.png` and opaque edits as `_edited.jpg`.
      */
     fun export(
         sourcePath: String,
         photoId: Long,
         isRaw: Boolean,
         graph: EditGraph,
-        outputFormat: BakeOutputFormat = BakeOutputFormat.JPEG
+        outputFormat: BakeOutputFormat = BakeOutputNaming.outputFormatFor(graph)
     ) {
         val sink = EditorHostRegistry.gallerySink
         if (sink == null) {
@@ -61,7 +62,8 @@ internal class EditorExportCoordinator(
                     displayName = BakeOutputNaming.displayName(sourcePath, photoId, outputFormat),
                     isRaw = isRaw,
                     graph = graph,
-                    outputFormat = outputFormat
+                    outputFormat = outputFormat,
+                    photoId = photoId
                 )
             )
             onExportingChanged(false)

@@ -43,6 +43,12 @@
     <string name="ai_models_delete_confirm">Delete</string>
     <string name="ai_models_deleted">Model deleted and storage freed</string>
     <string name="ai_models_delete_failed">Could not delete the model; try again later</string>
+    <string name="ai_models_clear_all">Clear all</string>
+    <string name="ai_models_clear_all_title">Clear all models</string>
+    <string name="ai_models_clear_all_message">Delete every cached AI model? Saved edits are unaffected, but the related tools will need the models again next time.</string>
+    <string name="ai_models_clear_all_confirm">Clear all</string>
+    <string name="ai_models_clear_all_done">All models deleted and storage freed</string>
+    <string name="ai_models_clear_all_failed">Some models could not be deleted; try again later</string>
 
     <!-- Recoverable failure reasons -->
     <string name="ai_models_reason_not_available">This model has not been released yet</string>

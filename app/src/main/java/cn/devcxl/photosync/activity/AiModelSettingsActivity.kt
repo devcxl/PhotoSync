@@ -6,7 +6,6 @@ import java.io.IOException
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
-import android.text.format.Formatter
 import android.widget.Toast
 
 import androidx.activity.result.contract.ActivityResultContracts
@@ -25,8 +24,6 @@ import cn.devcxl.photosync.databinding.ActivityAiModelSettingsBinding
 import cn.devcxl.photosync.databinding.ItemAiModelBinding
 import cn.devcxl.photosync.editor.vision.AiModelCatalog
 import cn.devcxl.photosync.editor.vision.AiModelDownloadManager
-import cn.devcxl.photosync.editor.vision.AiModelFailureReason
-import cn.devcxl.photosync.editor.vision.AiModelInstallException
 import cn.devcxl.photosync.editor.vision.AiModelSpec
 import cn.devcxl.photosync.editor.vision.isOnnxModelFileName
 
@@ -34,8 +31,8 @@ import cn.devcxl.photosync.editor.vision.isOnnxModelFileName
  * Settings page that lists every on-demand AI model with its size, license and install state.
  *
  * Actions delegate to [AiModelDownloadManager]: download (with ordered mirror fallback), SAF import
- * of a local `.onnx` file, delete and re-download. Deleting a model only removes model files, never
- * the edit records stored in Room.
+ * of a local `.onnx` file, delete and re-download, plus the spec-mandated clear-all sweep. Deleting a
+ * model only removes model files, never the edit records stored in Room.
  */
 class AiModelSettingsActivity : AppCompatActivity() {
 
@@ -59,6 +56,7 @@ class AiModelSettingsActivity : AppCompatActivity() {
         binding = ActivityAiModelSettingsBinding.inflate(layoutInflater)
         setContentView(binding.root)
         binding.aiModelsBackButton.setOnClickListener { finish() }
+        binding.aiModelsClearAllButton.setOnClickListener { confirmClearAll() }
         renderModelRows()
         refreshUsageAndStates()
     }
@@ -77,11 +75,11 @@ class AiModelSettingsActivity : AppCompatActivity() {
     }
 
     private fun bindStaticContent(spec: AiModelSpec, row: ItemAiModelBinding) {
-        row.modelNameText.setText(modelNameRes(spec))
-        row.modelDescriptionText.setText(modelDescriptionRes(spec))
+        row.modelNameText.setText(AiModelSettingsText.nameRes(spec))
+        row.modelDescriptionText.setText(AiModelSettingsText.descriptionRes(spec))
         row.modelMetaText.text = getString(
             R.string.ai_models_meta,
-            formatBytes(if (spec.isPinned) spec.byteSize else 0L),
+            AiModelSettingsText.formatBytes(this, if (spec.isPinned) spec.byteSize else 0L),
             spec.version
         )
         row.modelLicenseText.text = getString(R.string.ai_models_license, spec.license.name)
@@ -90,24 +88,19 @@ class AiModelSettingsActivity : AppCompatActivity() {
     private fun refreshUsageAndStates() {
         lifecycleScope.launch {
             val snapshot = withContext(Dispatchers.IO) {
-                val states = AiModelCatalog.onDemandModels.associate { spec ->
-                    spec.id to ModelState(
-                        installed = downloadManager.isInstalled(spec),
-                        partialBytes = downloadManager.partFile(spec)
-                            .takeIf { it.isFile }?.length() ?: 0L
-                    )
-                }
-                UsageSnapshot(states, downloadManager.totalBytesOnDisk())
+                AiModelUsageSnapshot.load(downloadManager)
             }
             binding.aiModelsUsageText.text = getString(
                 R.string.ai_models_total_usage,
-                formatBytes(snapshot.totalBytes)
+                AiModelSettingsText.formatBytes(this@AiModelSettingsActivity, snapshot.totalBytes)
             )
+            binding.aiModelsClearAllButton.isEnabled =
+                snapshot.totalBytes > 0L && busyModelId == null
             applyStates(snapshot)
         }
     }
 
-    private fun applyStates(snapshot: UsageSnapshot) {
+    private fun applyStates(snapshot: AiModelUsageSnapshot) {
         for (spec in AiModelCatalog.onDemandModels) {
             val row = rows[spec.id] ?: continue
             val state = snapshot.models[spec.id] ?: continue
@@ -156,39 +149,15 @@ class AiModelSettingsActivity : AppCompatActivity() {
     }
 
     private fun startDownload(spec: AiModelSpec) {
-        if (busyModelId != null) return
-        val row = rows[spec.id] ?: return
-        busyModelId = spec.id
-        row.modelProgressBar.isVisible = true
-        row.modelProgressBar.progress = 0
-        bindButtons(row, showDownload = false, showImport = false, showDelete = false)
+        val row = beginBusy(spec) ?: return
         lifecycleScope.launch {
             try {
                 withContext(Dispatchers.IO) {
                     if (downloadManager.isInstalled(spec)) downloadManager.delete(spec)
                 }
-                var lastPercent = -1
-                val result = downloadManager.download(spec) { ratio ->
-                    val percent = (ratio * 100).toInt().coerceIn(0, 100)
-                    if (percent != lastPercent) {
-                        lastPercent = percent
-                        runOnUiThread {
-                            row.modelStatusText.text =
-                                getString(R.string.ai_models_status_downloading, percent)
-                            row.modelProgressBar.progress = percent
-                        }
-                    }
-                }
-                if (result.isSuccess) {
-                    toast(R.string.ai_models_download_success)
-                } else {
-                    toast(
-                        getString(
-                            R.string.ai_models_download_failed,
-                            failureMessage(result)
-                        )
-                    )
-                }
+                val progress = progressReporter(row, R.string.ai_models_status_downloading)
+                val result = downloadManager.download(spec, progress)
+                reportResult(result, R.string.ai_models_download_success, R.string.ai_models_download_failed)
             } catch (e: IOException) {
                 Timber.e(e, "Model download failed before the manager could report it")
                 toastStorageFailure(R.string.ai_models_download_failed)
@@ -196,8 +165,7 @@ class AiModelSettingsActivity : AppCompatActivity() {
                 Timber.e(e, "The platform denied access to the model directory")
                 toastStorageFailure(R.string.ai_models_download_failed)
             } finally {
-                busyModelId = null
-                refreshUsageAndStates()
+                finishBusy()
             }
         }
     }
@@ -210,52 +178,23 @@ class AiModelSettingsActivity : AppCompatActivity() {
 
     private fun importFrom(uri: Uri) {
         val spec = pendingImportSpec ?: return
-        val displayName = queryDisplayName(uri)
-        if (!isOnnxModelFileName(displayName)) {
+        if (!isOnnxModelFileName(queryDisplayName(uri))) {
             toast(R.string.ai_models_import_wrong_type)
             return
         }
-        if (busyModelId != null) return
-        val row = rows[spec.id] ?: return
-        busyModelId = spec.id
+        val row = beginBusy(spec) ?: return
         row.modelStatusText.setText(R.string.ai_models_status_importing)
-        row.modelProgressBar.isVisible = true
-        row.modelProgressBar.progress = 0
-        bindButtons(row, showDownload = false, showImport = false, showDelete = false)
         lifecycleScope.launch {
             try {
-                var lastPercent = -1
                 val result = withContext(Dispatchers.IO) {
                     contentResolver.openInputStream(uri)?.use { stream ->
-                        downloadManager.importLocal(spec, stream) { ratio ->
-                            val percent = (ratio * 100).toInt().coerceIn(0, 100)
-                            if (percent != lastPercent) {
-                                lastPercent = percent
-                                runOnUiThread {
-                                    row.modelProgressBar.progress = percent
-                                }
-                            }
-                        }
+                        downloadManager.importLocal(spec, stream, progressReporter(row))
                     }
                 }
                 if (result == null) {
-                    toast(
-                        getString(
-                            R.string.ai_models_import_failed,
-                            getString(R.string.ai_models_reason_storage_failure)
-                        )
-                    )
-                    return@launch
-                }
-                if (result.isSuccess) {
-                    toast(R.string.ai_models_import_success)
+                    toastStorageFailure(R.string.ai_models_import_failed)
                 } else {
-                    toast(
-                        getString(
-                            R.string.ai_models_import_failed,
-                            failureMessage(result)
-                        )
-                    )
+                    reportResult(result, R.string.ai_models_import_success, R.string.ai_models_import_failed)
                 }
             } catch (e: IOException) {
                 Timber.e(e, "The selected ONNX document could not be opened")
@@ -264,9 +203,53 @@ class AiModelSettingsActivity : AppCompatActivity() {
                 Timber.e(e, "The platform denied reading the selected ONNX document")
                 toastStorageFailure(R.string.ai_models_import_failed)
             } finally {
-                busyModelId = null
-                refreshUsageAndStates()
+                finishBusy()
             }
+        }
+    }
+
+    /** Marks [spec] busy and returns its row, or `null` when another action already owns the page. */
+    private fun beginBusy(spec: AiModelSpec): ItemAiModelBinding? {
+        if (busyModelId != null) return null
+        val row = rows[spec.id] ?: return null
+        busyModelId = spec.id
+        row.modelProgressBar.isVisible = true
+        row.modelProgressBar.progress = 0
+        bindButtons(row, showDownload = false, showImport = false, showDelete = false)
+        return row
+    }
+
+    private fun finishBusy() {
+        busyModelId = null
+        refreshUsageAndStates()
+    }
+
+    /**
+     * Coalesces progress callbacks to whole percentages and posts them to the UI thread; when
+     * [statusRes] is set the status line also shows the percentage.
+     */
+    private fun progressReporter(
+        row: ItemAiModelBinding,
+        statusRes: Int? = null
+    ): (Float) -> Unit {
+        var lastPercent = -1
+        return { ratio ->
+            val percent = (ratio * 100).toInt().coerceIn(0, 100)
+            if (percent != lastPercent) {
+                lastPercent = percent
+                runOnUiThread {
+                    statusRes?.let { row.modelStatusText.text = getString(it, percent) }
+                    row.modelProgressBar.progress = percent
+                }
+            }
+        }
+    }
+
+    private fun reportResult(result: Result<*>, successRes: Int, failureRes: Int) {
+        if (result.isSuccess) {
+            toast(successRes)
+        } else {
+            toast(getString(failureRes, AiModelSettingsText.failureMessage(this, result)))
         }
     }
 
@@ -275,7 +258,10 @@ class AiModelSettingsActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle(R.string.ai_models_delete_title)
             .setMessage(
-                getString(R.string.ai_models_delete_message, getString(modelNameRes(spec)))
+                getString(
+                    R.string.ai_models_delete_message,
+                    getString(AiModelSettingsText.nameRes(spec))
+                )
             )
             .setPositiveButton(R.string.ai_models_delete_confirm) { _, _ -> deleteModel(spec) }
             .setNegativeButton(R.string.dialog_cancel, null)
@@ -287,9 +273,34 @@ class AiModelSettingsActivity : AppCompatActivity() {
         busyModelId = spec.id
         lifecycleScope.launch {
             val deleted = withContext(Dispatchers.IO) { downloadManager.delete(spec) }
-            busyModelId = null
+            finishBusy()
             toast(if (deleted) R.string.ai_models_deleted else R.string.ai_models_delete_failed)
-            refreshUsageAndStates()
+        }
+    }
+
+    private fun confirmClearAll() {
+        if (busyModelId != null) return
+        AlertDialog.Builder(this)
+            .setTitle(R.string.ai_models_clear_all_title)
+            .setMessage(R.string.ai_models_clear_all_message)
+            .setPositiveButton(R.string.ai_models_clear_all_confirm) { _, _ -> clearAllModels() }
+            .setNegativeButton(R.string.dialog_cancel, null)
+            .show()
+    }
+
+    private fun clearAllModels() {
+        if (busyModelId != null) return
+        busyModelId = CLEAR_ALL_BUSY_ID
+        binding.aiModelsClearAllButton.isEnabled = false
+        lifecycleScope.launch {
+            val allDeleted = withContext(Dispatchers.IO) {
+                AiModelCatalog.onDemandModels.map { downloadManager.delete(it) }.all { it }
+            }
+            finishBusy()
+            toast(
+                if (allDeleted) R.string.ai_models_clear_all_done
+                else R.string.ai_models_clear_all_failed
+            )
         }
     }
 
@@ -299,35 +310,6 @@ class AiModelSettingsActivity : AppCompatActivity() {
     } catch (e: SecurityException) {
         Timber.w(e, "Could not read the selected document name")
         null
-    }
-
-    private fun failureMessage(result: Result<*>): String {
-        val reason = (result.exceptionOrNull() as? AiModelInstallException)?.reason
-        val messageRes = when (reason) {
-            AiModelFailureReason.NOT_AVAILABLE -> R.string.ai_models_reason_not_available
-            AiModelFailureReason.DOWNLOAD_FAILED -> R.string.ai_models_reason_download_failed
-            AiModelFailureReason.SIZE_MISMATCH -> R.string.ai_models_reason_size_mismatch
-            AiModelFailureReason.CHECKSUM_MISMATCH -> R.string.ai_models_reason_checksum_mismatch
-            AiModelFailureReason.STORAGE_FAILURE -> R.string.ai_models_reason_storage_failure
-            null -> R.string.ai_models_reason_download_failed
-        }
-        return getString(messageRes)
-    }
-
-    private fun formatBytes(bytes: Long): String =
-        if (bytes <= 0L) getString(R.string.ai_models_size_unknown)
-        else Formatter.formatFileSize(this, bytes)
-
-    private fun modelNameRes(spec: AiModelSpec): Int = when (spec.id) {
-        AiModelCatalog.MODNET_PORTRAIT.id -> R.string.ai_models_model_modnet
-        AiModelCatalog.MI_GAN_GENERATOR.id -> R.string.ai_models_model_migan
-        else -> R.string.ai_models_model_unknown
-    }
-
-    private fun modelDescriptionRes(spec: AiModelSpec): Int = when (spec.id) {
-        AiModelCatalog.MODNET_PORTRAIT.id -> R.string.ai_models_model_modnet_desc
-        AiModelCatalog.MI_GAN_GENERATOR.id -> R.string.ai_models_model_migan_desc
-        else -> R.string.ai_models_model_unknown
     }
 
     private fun toast(messageRes: Int) {
@@ -342,13 +324,8 @@ class AiModelSettingsActivity : AppCompatActivity() {
         toast(getString(prefixRes, getString(R.string.ai_models_reason_storage_failure)))
     }
 
-    private class ModelState(
-        val installed: Boolean,
-        val partialBytes: Long
-    )
-
-    private class UsageSnapshot(
-        val models: Map<String, ModelState>,
-        val totalBytes: Long
-    )
+    private companion object {
+        /** Busy marker while the clear-all sweep runs; never matches a catalog id. */
+        const val CLEAR_ALL_BUSY_ID = "__clear_all__"
+    }
 }

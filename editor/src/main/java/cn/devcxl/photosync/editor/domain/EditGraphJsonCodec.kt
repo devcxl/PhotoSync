@@ -14,6 +14,16 @@ import java.util.Locale
  */
 object EditGraphJsonCodec {
 
+    /**
+     * Serializes [graph] into the compact schema v2 JSON document persisted in `photo_edits`.
+     *
+     * The graph is sanitized first, so the document never carries `NaN`/infinity or an escaping
+     * asset path regardless of where the graph came from. Every group is written, including the
+     * neutral AI defaults, which keeps decode symmetric for v2 rows.
+     *
+     * @param graph Graph to persist; it is sanitized, not mutated.
+     * @return The JSON document, safe to store as a Room text column.
+     */
     fun encode(graph: EditGraph): String {
         val clean = EditValidator.sanitize(graph)
         val sb = StringBuilder(2048)

@@ -7,6 +7,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 import android.security.keystore.KeyPermanentlyInvalidatedException
 
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -156,6 +157,57 @@ class ByokSecretStoreTest {
         assertEquals(ByokReadResult.Unavailable, result)
         assertTrue(secretBlob().exists())
         assertEquals(0, backend.deleteKeyCalls)
+    }
+
+    @Test
+    fun shouldKeepExistingCredentials_whenEncryptionFailsTransiently() {
+        val stored = ByokCredential("openai", apiKey = "sk-keep-me")
+        assertTrue(store.save(mapOf(stored.profileId to stored)).isSuccess)
+        val committedBlob = secretBlob().readBytes()
+
+        backend.failEncryptWith = RuntimeException("keystore busy")
+        val result = store.save(
+            mapOf("openai" to ByokCredential("openai", apiKey = "sk-replacement"))
+        )
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull() is IllegalStateException)
+        assertEquals(0, backend.deleteKeyCalls)
+        assertTrue(secretBlob().exists())
+        assertArrayEquals(committedBlob, secretBlob().readBytes())
+        backend.failEncryptWith = null
+        val loaded = store.load() as ByokReadResult.Loaded
+        assertEquals(stored, loaded.credentials["openai"])
+    }
+
+    @Test
+    fun shouldReturnUnavailableAndKeepBlob_whenEncryptionFailsWithGeneralSecurityException() {
+        store.save(mapOf("openai" to ByokCredential("openai", apiKey = "sk-survivor")))
+        backend.failEncryptWith = GeneralSecurityException("keystore rejected the operation")
+
+        val result = store.save(mapOf("openai" to ByokCredential("openai", apiKey = "sk-new")))
+
+        assertTrue(result.isFailure)
+        assertEquals(0, backend.deleteKeyCalls)
+        assertTrue(secretBlob().exists())
+        backend.failEncryptWith = null
+        assertEquals(
+            "sk-survivor",
+            (store.load() as ByokReadResult.Loaded).credentials.getValue("openai").apiKey
+        )
+    }
+
+    @Test
+    fun shouldClearExistingCredentials_whenTheKeyIsPermanentlyInvalidatedDuringEncryption() {
+        store.save(mapOf("openai" to ByokCredential("openai", apiKey = "sk-doomed")))
+        backend.failEncryptWith = KeyPermanentlyInvalidatedException()
+
+        val result = store.save(mapOf("openai" to ByokCredential("openai", apiKey = "sk-doomed")))
+
+        assertTrue(result.isFailure)
+        assertEquals(1, backend.deleteKeyCalls)
+        assertFalse(secretBlob().exists())
+        assertEquals(ByokReadResult.Empty, store.load())
     }
 
     @Test

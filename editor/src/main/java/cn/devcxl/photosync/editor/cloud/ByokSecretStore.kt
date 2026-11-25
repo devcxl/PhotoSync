@@ -193,6 +193,8 @@ class AndroidKeyStoreCipherBackend(
  * - a malformed envelope, failed GCM authentication or undecodable payload deletes both the
  *   damaged ciphertext and the key alias and returns [ByokReadResult.RecoveryRequired];
  * - a transient read failure returns [ByokReadResult.Unavailable] without deleting anything;
+ * - a transient encryption failure makes [save] return a failure without deleting anything, so the
+ *   last committed credentials stay readable; only a permanently invalidated key clears them;
  * - no plaintext credential and no ciphertext fragment is ever written to logs or exception text.
  */
 class ByokSecretStore internal constructor(
@@ -262,6 +264,11 @@ class ByokSecretStore internal constructor(
     /**
      * Encrypts and atomically replaces the stored credential map.
      *
+     * A transient backend failure never touches the artifacts already on disk: the previous
+     * ciphertext and its key alias stay intact so a later [load] can still return the last
+     * committed credentials. Only a [KeyPermanentlyInvalidatedException] proves the key can never
+     * be used again and therefore triggers the same clean re-entry as a failed [load].
+     *
      * @return success once the ciphertext file has been fsynced and renamed into place; failure
      *   with [IllegalArgumentException] for invalid input, or with an [IOException] when the file
      *   could not be written. Secrets are never included in the failure message.
@@ -278,12 +285,16 @@ class ByokSecretStore internal constructor(
         try {
             val sealed = try {
                 cipherBackend.encrypt(payload)
-            } catch (e: GeneralSecurityException) {
+            } catch (e: KeyPermanentlyInvalidatedException) {
                 clearUnrecoverableState()
+                Timber.w("BYOK key was permanently invalidated during encryption")
+                return Result.failure(IllegalStateException("BYOK keystore is unavailable", e))
+            } catch (e: GeneralSecurityException) {
+                // Transient: keep the existing ciphertext and alias, the previous credentials remain.
                 Timber.w("BYOK keystore rejected an encryption request (%s)", e.javaClass.simpleName)
                 return Result.failure(IllegalStateException("BYOK keystore is unavailable", e))
             } catch (e: RuntimeException) {
-                clearUnrecoverableState()
+                // Transient: a failed write must never destroy credentials that are still readable.
                 Timber.w("BYOK keystore failed unexpectedly (%s)", e.javaClass.simpleName)
                 return Result.failure(IllegalStateException("BYOK keystore is unavailable", e))
             }

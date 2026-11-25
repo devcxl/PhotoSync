@@ -30,6 +30,7 @@ import cn.devcxl.photosync.data.TetheredIngestResult
 import cn.devcxl.photosync.data.TetheredPhotoIngestor
 import cn.devcxl.photosync.editor.R as EditorR
 import cn.devcxl.photosync.editor.contract.EditorHostRegistry
+import cn.devcxl.photosync.editor.domain.ActivePhotoEditRegistry
 import cn.devcxl.photosync.editor.domain.AiAssetStore
 import cn.devcxl.photosync.editor.domain.BuiltinPresets
 import cn.devcxl.photosync.editor.domain.EditGraphJsonCodec
@@ -271,9 +272,11 @@ class App : Application() {
     /**
      * Sweeps AI payloads that no persisted edit row references any more.
      *
-     * Cold start is the only moment when no editor or export can be streaming a payload. A row
-     * that fails to decode aborts the sweep: an unreadable graph may still own its bytes, and a
-     * failed read must never be mistaken for "no references".
+     * Cold start is the only moment when no editor session is expected to exist yet, but the sweep
+     * still runs asynchronously and an editor or bake can start while it is in flight. The
+     * [ActivePhotoEditRegistry] snapshot therefore exempts every photo that is actively held at the
+     * moment the sweep starts. A row that fails to decode aborts the sweep: an unreadable graph may
+     * still own its bytes, and a failed read must never be mistaken for "no references".
      */
     private suspend fun collectOrphanAiAssets(db: AppDatabase) {
         try {
@@ -290,7 +293,10 @@ class App : Application() {
             val referenced = graphs.flatMapTo(HashSet()) { graph ->
                 store.referencedRelativePaths(graph)
             }
-            val report = store.collectOrphanAssets({ referenced }, emptySet())
+            val report = store.collectOrphanAssets(
+                referencedRelativePathsProvider = { referenced },
+                activePhotoIds = ActivePhotoEditRegistry.snapshot()
+            )
             if (report.deletedFiles > 0) {
                 Timber.i(
                     "AI asset GC removed %d orphan files (%d bytes) from %d photo directories",

@@ -9,6 +9,7 @@ import timber.log.Timber
 import cn.devcxl.photosync.data.entity.PhotoEditEntity
 import cn.devcxl.photosync.data.entity.PhotoEntity
 import cn.devcxl.photosync.editor.contract.EditorCachePaths
+import cn.devcxl.photosync.editor.domain.EditGraph
 
 /**
  * Room-backed [TetheredPhotoCommitter]: one transaction inserts the photo, publishes the staged
@@ -81,6 +82,7 @@ class RoomTetheredPhotoCommitter(
     }
 
     private companion object {
-        const val SCHEMA_VERSION = 1
+        /** Rows written here carry the same graph schema the editor persists. */
+        const val SCHEMA_VERSION = EditGraph.CURRENT_SCHEMA_VERSION
     }
 }

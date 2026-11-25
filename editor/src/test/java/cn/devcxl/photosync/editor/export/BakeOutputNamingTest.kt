@@ -5,8 +5,29 @@ import org.junit.Test
 
 import cn.devcxl.photosync.editor.contract.GallerySink
 import cn.devcxl.photosync.editor.domain.EditGraph
+import cn.devcxl.photosync.editor.domain.SubjectBackgroundMode
+import cn.devcxl.photosync.editor.domain.SubjectOps
 
 class BakeOutputNamingTest {
+
+    @Test
+    fun shouldRouteToPngOnly_whenTheSubjectBackgroundIsTransparent() {
+        val transparent = EditGraph(
+            subject = SubjectOps(
+                maskRef = "edits/7/subject_mask_a.png",
+                bgMode = SubjectBackgroundMode.TRANSPARENT
+            )
+        )
+
+        assertEquals(BakeOutputFormat.PNG_RGBA, BakeOutputNaming.outputFormatFor(transparent))
+        assertEquals(BakeOutputFormat.JPEG, BakeOutputNaming.outputFormatFor(EditGraph()))
+        assertEquals(
+            BakeOutputFormat.JPEG,
+            BakeOutputNaming.outputFormatFor(
+                EditGraph(subject = SubjectOps(bgMode = SubjectBackgroundMode.SOLID))
+            )
+        )
+    }
 
     @Test
     fun shouldAppendJpgSuffix_whenFormatIsJpeg() {

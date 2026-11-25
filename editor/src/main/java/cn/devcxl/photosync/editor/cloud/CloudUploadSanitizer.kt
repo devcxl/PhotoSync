@@ -10,7 +10,6 @@ import kotlin.math.roundToInt
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.Color
 import android.graphics.Matrix
 
 import androidx.exifinterface.media.ExifInterface
@@ -120,9 +119,9 @@ class CloudUploadSanitizer(
     /**
      * Converts a painted mask into an editable mask bitmap at the upload resolution.
      *
-     * Painted white strokes (coverage 1) become fully transparent (`alpha = 0`, editable), while
-     * untouched black or fully transparent pixels become opaque (`alpha = 255`, preserved). RGB is
-     * black; only the alpha channel carries the mask.
+     * Painted strokes become fully transparent (`alpha = 0`, editable); untouched pixels become
+     * opaque (`alpha = 255`, preserved). The conversion itself lives in [CloudMaskPngEncoder] so the
+     * encoder and its pure pixel math stay in one testable place.
      *
      * @param mask Painted overlay in any resolution. Its alpha channel is folded into coverage so
      *   anti-aliased strokes keep their soft edges.
@@ -130,30 +129,8 @@ class CloudUploadSanitizer(
      * @param height Target height, normally the sanitized upload height.
      * @return A new `ARGB_8888` bitmap owned by the caller.
      */
-    fun createEditableMaskBitmap(mask: Bitmap, width: Int, height: Int): Bitmap {
-        require(width > 0 && height > 0) { "Mask dimensions must be positive" }
-        val scaled = if (mask.width == width && mask.height == height) {
-            mask
-        } else {
-            Bitmap.createScaledBitmap(mask, width, height, true)
-        }
-        try {
-            val pixels = IntArray(width * height)
-            scaled.getPixels(pixels, 0, width, 0, 0, width, height)
-            for (index in pixels.indices) {
-                val color = pixels[index]
-                val alpha = Color.alpha(color)
-                val luminance = colorLuminance(color)
-                val coverage = luminance * alpha / 255
-                pixels[index] = Color.argb(255 - coverage, 0, 0, 0)
-            }
-            val editable = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-            editable.setPixels(pixels, 0, width, 0, 0, width, height)
-            return editable
-        } finally {
-            if (scaled !== mask) scaled.recycle()
-        }
-    }
+    fun createEditableMaskBitmap(mask: Bitmap, width: Int, height: Int): Bitmap =
+        CloudMaskPngEncoder.createEditableMaskBitmap(mask, width, height)
 
     /**
      * Writes [mask] as an editable PNG at [width] x [height].
@@ -163,23 +140,8 @@ class CloudUploadSanitizer(
      *
      * @return [outputFile] after a successful encode.
      */
-    fun writeEditableMaskPng(mask: Bitmap, width: Int, height: Int, outputFile: File): File {
-        val editable = createEditableMaskBitmap(mask, width, height)
-        var written = false
-        try {
-            outputFile.parentFile?.mkdirs()
-            FileOutputStream(outputFile).use { out ->
-                if (!editable.compress(Bitmap.CompressFormat.PNG, 100, out)) {
-                    throw CloudSanitizationException("Mask encoding failed")
-                }
-            }
-            written = true
-            return outputFile
-        } finally {
-            editable.recycle()
-            if (!written) outputFile.delete()
-        }
-    }
+    fun writeEditableMaskPng(mask: Bitmap, width: Int, height: Int, outputFile: File): File =
+        CloudMaskPngEncoder.writePng(mask, width, height, outputFile)
 
     private fun readOrientation(sourcePath: String): Int = try {
         ExifInterface(sourcePath).getAttributeInt(
@@ -322,13 +284,6 @@ class CloudUploadSanitizer(
                 sampleSize *= 2
             }
             return sampleSize
-        }
-
-        private fun colorLuminance(color: Int): Int {
-            val red = Color.red(color)
-            val green = Color.green(color)
-            val blue = Color.blue(color)
-            return (red * 299 + green * 587 + blue * 114) / 1000
         }
 
         private fun applyOrientation(source: Bitmap, orientation: Int): Bitmap {

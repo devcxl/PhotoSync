@@ -297,10 +297,6 @@ public class AiAssetStore(private val filesDir: File) {
     private fun hasAiAssetName(fileName: String): Boolean =
         AiAssetKind.entries.any { fileName.startsWith("${it.fileNamePrefix}_") }
 
-    private fun isSha256Hex(value: String): Boolean =
-        value.length == SHA256_HEX_LENGTH &&
-            value.all { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' }
-
     companion object {
         /** Prefix of the per-photo edit directory inside `filesDir`. */
         const val EDITS_DIR = "edits"
@@ -309,7 +305,6 @@ public class AiAssetStore(private val filesDir: File) {
         const val MAX_ASSET_BYTES = 64L * 1024L * 1024L
 
         private const val TEMP_SUFFIX = ".tmp"
-        private const val SHA256_HEX_LENGTH = 64
         private val SUPPORTED_EXTENSIONS = setOf("png", "jpg", "jpeg", "webp")
 
         /**

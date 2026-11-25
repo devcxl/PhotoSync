@@ -14,7 +14,7 @@ internal class FakeCipherBackend : KeyCipherBackend {
     val iv = ByteArray(12) { (0x10 + it).toByte() }
     var deleteKeyCalls = 0
         private set
-    var failEncryptWith: GeneralSecurityException? = null
+    var failEncryptWith: Throwable? = null
     var failDecryptWith: GeneralSecurityException? = null
     var failDecryptWithIo: IOException? = null
 

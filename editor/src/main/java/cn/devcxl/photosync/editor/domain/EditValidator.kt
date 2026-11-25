@@ -9,14 +9,23 @@ object EditValidator {
 
     private const val MIN_CROP_SPAN = 0.05f
     private const val MIN_INPAINT_SPAN = 0.001f
-    private const val SHA256_HEX_LENGTH = 64
     private const val MAX_INPAINT_PATCHES = 512
-    private const val MAX_RELATIVE_PATH_LENGTH = 512
-    private const val MAX_SKY_ASSET_REF_LENGTH = 512
     private const val MAX_GEOMETRY_DIGEST_LENGTH = 128
     private const val MAX_PROVIDER_TAG_LENGTH = 64
     private const val MAX_CLOUD_FEATHER_PX = 128.0f
 
+    /**
+     * Returns [graph] with every externally reachable value clamped or dropped into its legal
+     * domain.
+     *
+     * Numeric parameters are clamped into their documented range, `NaN`/infinity falls back to the
+     * neutral default, and asset references that could escape the app's private storage degrade to
+     * "no reference". The schema is raised to [EditGraph.CURRENT_SCHEMA_VERSION] whenever the graph
+     * carries AI groups, so a sanitized graph always serializes its full v2 shape.
+     *
+     * @param graph Untrusted graph, typically a decoded Room row or a UI draft.
+     * @return A new sanitized graph; [graph] itself is not mutated.
+     */
     fun sanitize(graph: EditGraph): EditGraph {
         val subject = sanitizeSubject(graph.subject)
         val inpaint = sanitizeInpaint(graph.inpaint)
@@ -75,10 +84,7 @@ object EditValidator {
         val path = ref.meshRelPath.trim()
         val pathIsConfined = path.isNotEmpty() && !path.startsWith("/") && !path.contains("..")
         val gridIsSupported = ref.gridSize == LiquifyMesh.GRID_SIZE
-        val digestIsValid = ref.sha256.isEmpty() || (
-            ref.sha256.length == SHA256_HEX_LENGTH &&
-                ref.sha256.all { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' }
-            )
+        val digestIsValid = ref.sha256.isEmpty() || isSha256Hex(ref.sha256)
         return if (pathIsConfined && gridIsSupported && digestIsValid) {
             LiquifyRef(meshRelPath = path, gridSize = ref.gridSize, sha256 = ref.sha256)
         } else {
@@ -265,54 +271,5 @@ object EditValidator {
             geometryDigest = layer.geometryDigest.trim().take(MAX_GEOMETRY_DIGEST_LENGTH),
             providerTag = layer.providerTag.trim().take(MAX_PROVIDER_TAG_LENGTH)
         )
-    }
-
-    /**
-     * Keeps a reference only when it stays inside the app's private storage: blank, absolute or
-     * parent-escaping paths degrade to `null` instead of pointing a loader at arbitrary files.
-     */
-    private fun sanitizeRelativePath(raw: String): String? {
-        val path = raw.trim()
-        val confined = path.isNotEmpty() &&
-            path.length <= MAX_RELATIVE_PATH_LENGTH &&
-            !path.startsWith("/") &&
-            !path.startsWith("\\") &&
-            !path.contains("..") &&
-            !path.contains('\\')
-        return if (confined) path else null
-    }
-
-    /** Sky assets may be procedural ids as well as relative paths, but never escape storage. */
-    private fun sanitizeAssetIdOrPath(raw: String): String {
-        val reference = raw.trim()
-        val confined = reference.length <= MAX_SKY_ASSET_REF_LENGTH &&
-            !reference.contains("..") &&
-            !reference.startsWith("/") &&
-            !reference.startsWith("\\") &&
-            !reference.contains('\\')
-        return if (confined) reference else ""
-    }
-
-    /** Empty means "pending"; anything else must be a full SHA-256 hex digest. */
-    private fun sanitizeSha256(raw: String): String {
-        val digest = raw.trim()
-        return if (digest.isEmpty() || isSha256Hex(digest)) digest else ""
-    }
-
-    private fun isSha256Hex(value: String): Boolean =
-        value.length == SHA256_HEX_LENGTH &&
-            value.all { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' }
-
-    private fun HslBandShift.sanitized() = HslBandShift(
-        hue = hue.clampSigned100(),
-        saturation = saturation.clampSigned100(),
-        luminance = luminance.clampSigned100()
-    )
-
-    private fun Int.clampSigned100(): Int = coerceIn(-100, 100)
-    private fun Int.clampUnsigned100(): Int = coerceIn(0, 100)
-
-    private fun sanitizeFloat(value: Float, defaultValue: Float, min: Float, max: Float): Float {
-        return if (value.isFinite()) value.coerceIn(min, max) else defaultValue
     }
 }
