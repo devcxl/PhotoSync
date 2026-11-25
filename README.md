@@ -10,37 +10,65 @@
 ![Kotlin](https://img.shields.io/badge/Kotlin-2.0.21-purple?style=flat-square&logo=kotlin&logoColor=purple)
 ![Gradle](https://img.shields.io/badge/Gradle-8.13-yellow?style=flat-square&logo=gradle)
 ![NDK](https://img.shields.io/badge/NDK-29.0.14033849-red?style=flat-square&logo=android-ndk)
+![Release](https://img.shields.io/github/v/release/devcxl/PhotoSync?style=flat-square)
 ![CI](https://img.shields.io/github/actions/workflow/status/devcxl/PhotoSync/release.yml?style=flat-square&logo=github-actions)
 ![Stars](https://img.shields.io/github/stars/devcxl/PhotoSync?style=flat-square&logo=github)
 
-[English version](./README.en.md) · [Русская версия](./README.ru.md)
+[English version](./README.en.md) · [Русская версия](./README.ru.md) · [下载最新版](https://github.com/devcxl/PhotoSync/releases)
 
 </div>
 
 ---
 
-PhotoSync 是一款 Android 相机伴侣应用，专为摄影师和影像爱好者设计。通过 USB PTP 协议直连相机，无需 Wi-Fi、无需电脑客户端，即可在手机/平板上即拍即传、浏览缩放预览、导出或删除 RAW/JPEG 照片。
+PhotoSync 是一款 Android 相机伴侣应用，专为摄影师和影像爱好者设计。通过 USB PTP 协议直连相机，无需 Wi-Fi、无需电脑客户端，即可在手机/平板上即拍即传、浏览预览、**现场调色与人像修饰**，并导出或删除 RAW / JPEG 照片。
 
 ## 功能亮点
 
+**联机同步与相册**
 - **USB PTP 直连** — 插入数据线后一键连接相机，无需网络
 - **即拍即传** — 相机拍摄后自动传输至本机，实时浏览
-- **RAW 解码** — LibRaw + lcms2 色彩管理，支持 ARW、CR3、NEF、DNG、RAF 等 20+ 格式
-- **流畅阅片** — 缩略图优先加载，JPEG 分块渲染，支持双指缩放和平移
-- **无损导出** — JPEG 直接拷贝至系统相册，RAW 解码后保存，无压缩、无云端上传
+- **流畅阅片** — 缩略图优先加载、JPEG 分块渲染、双指缩放与平移
+- **记住位置** — 重新打开 App 自动回到上次浏览的照片
 - **照片管理** — 支持从本机删除照片
+
+**非破坏性图像编辑器**
+- **调色** — 曝光、亮度、对比度、高光/阴影/白场/黑场、发光
+- **白平衡与色彩** — D65 Bradford 色温/色调、饱和度、自然饱和度、8 段 HSL、分离色调、褪色
+- **曲线** — RGB 与单通道曲线
+- **细节与效果** — 清晰度、纹理、去雾、锐化、降噪、3D LUT（.cube）、颗粒、暗角、横向色差/去边
+- **几何** — 裁剪、旋转/翻转、透视校正、液化笔刷（位移网格持久化）
+- **RAW** — 16-bit 线性解码与 Base Look（Camera Default / Linear Neutral），保留高光宽容度
+
+**人像**
+- **皮肤** — 平滑、均匀肤色（MediaPipe 分割）
+- **面部重塑** — 脸型、眼睛、鼻子、下巴、额头、笑容（MLS 网格）
+- **身体重塑** — 腰部、腿部，可拖拽引导线
+
+**联机暗房**
+- **用户预设** — 保存/应用自定义外观（可携带人像调整），内置 5 组精选预设
+- **LiveTetherPreset** — 新照片自动套用当前预设
+- **跨图复制/粘贴** — 按需选择复制轴（调色 / 皮肤 / 重塑 / 几何 / 液化）
+- **批量导出** — 多选照片进入后台导出队列
+
+**RAW 与导出**
+- **RAW 解码** — LibRaw + lcms2 色彩管理，支持 ARW、CR3、NEF、DNG、RAF 等 20+ 格式
+- **无损导出** — JPEG 直接拷贝；RAW / 编辑图全分辨率流式烘焙（libjpeg-turbo，EXIF 写回）
+- **无云上传** — 所有处理在本地完成
 
 ## 适用场景
 
 - 外出拍摄时即拍即看，不耗相机屏幕电量
 - 现场将 RAW/JPEG 快速导入平板或大屏设备查看
+- 现场快修：套用预设调色、液化与面部/身体重塑后再交付
 - 批量导出照片到本地，无压缩、无云端上传
 
 ## 快速上手
 
 1. 用 USB 线将相机连接到手机/平板
-2. 在相机上选择"PC 连接"或"PTP/MTP"模式
-3. 打开 PhotoSync，点击「连接相机」，照片随即同步到应用，可浏览与导出
+2. 在相机上选择「PC 连接」或「PTP/MTP」模式
+3. 打开 PhotoSync，点击「连接相机」，照片随即同步到应用
+4. 点开照片进入编辑器：调色、曲线、人像、液化，或直接套用预设
+5. 保存后回到相册，可导出到系统相册或继续拍摄
 
 ---
 
@@ -49,10 +77,13 @@ PhotoSync 是一款 Android 相机伴侣应用，专为摄影师和影像爱好�
 | 类别 | 技术 |
 |------|------|
 | 语言 | Kotlin 2.0 / C++ / JNI |
-| UI | XML + ViewBinding |
+| UI | XML + ViewBinding（ViewPager2 / PhotoView / SubsamplingScaleImageView） |
 | 异步 | Coroutines + Flow |
-| 数据库 | Room |
-| 图像处理 | LibRaw 0.21.4 + lcms2 2.18 |
+| 数据库 | Room（v4：照片、编辑记录、预设） |
+| 图像处理 | LibRaw 0.21.4 + lcms2 2.18（独立 `libraw.so`）、libjpeg-turbo 3.2.2 |
+| 人像 | MediaPipe Tasks（Face Landmarker + Image Segmenter） |
+| 渲染 | OpenGL ES 3.0 离屏渲染链（Pass A–D） |
+| 后台任务 | WorkManager（批量导出） |
 | 架构 | MVVM + Clean Architecture |
 | 最低版本 | Android 7.0（API 24） |
 
@@ -64,17 +95,24 @@ Sony (ARW/SR2) · Canon (CR2/CR3) · Nikon (NEF/NRW) · Fujifilm (RAF) · Panaso
 
 ```
 PhotoSync/
-├── app/                    # 主应用模块
+├── app/                    # 主应用模块（相册、PTP 连接、联机暗房）
 │   └── src/main/java/cn/devcxl/photosync/
-│       ├── activity/       # Activity、ViewModel
+│       ├── activity/       # Activity、连接与暗房协调器
 │       ├── adapter/        # RecyclerView / ViewPager 适配器
 │       ├── data/           # Room 数据库、DAO、Entity
-│       ├── ptp/            # USB PTP 协议实现与连接管理
+│       ├── ptp/            # USB PTP 协议、恢复与连接管理
 │       ├── receiver/       # USB 广播接收器
 │       └── utils/          # 工具类
-├── libraw/                 # Native 库模块（LibRaw + lcms2）
+├── editor/                 # 图像编辑器模块（UI、渲染、人像、导出）
+│   └── src/main/java/cn/devcxl/photosync/editor/
+│       ├── domain/         # EditGraph、预设、液化、MLS/身体重塑
+│       ├── render/         # GLES Pass A–D、离屏预览
+│       ├── vision/         # MediaPipe 人像分析
+│       ├── export/         # 全分辨率烘焙
+│       └── ui/             # 编辑器界面与面板
+├── libraw/                 # Native 模块（独立 libraw.so + JNI 桥接）
 │   └── src/main/
-│       ├── cpp/            # JNI 桥接 + CMake 构建
+│       ├── cpp/            # CMake、JNI、third_party 子模块
 │       └── java/           # RawWrapper Kotlin 封装
 └── gradle/
     └── libs.versions.toml  # 依赖版本管理
@@ -90,18 +128,21 @@ git submodule update --init --recursive
 # Debug APK
 ./gradlew assembleDebug
 
-# Release AAB (Google Play)
+# Release AAB（Google Play）
 ./gradlew bundleRelease
 
-# 运行单元测试
-./gradlew testDebugUnitTest
+# 按 ABI 拆分的 Release APK
+./gradlew assembleRelease -PenableAbiSplits
 
-# Lint 检查
-./gradlew lintDebug
+# 运行单元测试并检查 Lint
+./gradlew testDebugUnitTest lintDebug
 ```
 
 生成的 Debug APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。
 Release AAB 位于 `app/build/outputs/bundle/release/app-release.aab`。
+
+> Release 构建需要签名配置（`KEYSTORE_PATH` / `KEYSTORE_PASSWORD` / `KEY_ALIAS` / `KEY_PASSWORD`），
+> CI 从仓库 Secrets 注入；本地可使用 `local.properties` 或环境变量。
 
 ## License
 
