@@ -1,7 +1,7 @@
 package cn.devcxl.photosync.editor.ui.gesture
 
 /**
- * The six fixed category tabs of the editor drawer.
+ * The seven fixed category tabs of the editor drawer.
  */
 enum class EditorGroup {
     PRESET,
@@ -9,7 +9,8 @@ enum class EditorGroup {
     TONE,
     COLOR,
     DETAIL,
-    PORTRAIT
+    PORTRAIT,
+    AI
 }
 
 /**

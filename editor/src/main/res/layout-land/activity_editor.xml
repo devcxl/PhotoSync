@@ -223,6 +223,56 @@
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintTop_toTopOf="parent">
 
+        <!-- Non-blocking async AI inference bar: label, determinate progress and cancel -->
+        <LinearLayout
+            android:id="@+id/aiInferenceBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:visibility="gone"
+            tools:visibility="visible">
+
+            <TextView
+                android:id="@+id/aiInferenceLabel"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:text="@string/editor_ai_inference_running"
+                android:textColor="@color/editor_text_secondary"
+                android:textSize="11sp"
+                tools:text="正在分析人像发丝 (MODNet)…" />
+
+            <ProgressBar
+                android:id="@+id/aiInferenceProgress"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="64dp"
+                android:layout_height="4dp"
+                android:layout_marginStart="8dp"
+                android:layout_marginEnd="8dp"
+                android:max="100"
+                android:progress="0"
+                android:progressBackgroundTint="@color/editor_text_muted"
+                android:progressTint="@color/editor_accent_blue" />
+
+            <TextView
+                android:id="@+id/aiInferenceCancel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_editor_icon_btn"
+                android:clickable="true"
+                android:focusable="true"
+                android:paddingStart="10dp"
+                android:paddingTop="4dp"
+                android:paddingEnd="10dp"
+                android:paddingBottom="4dp"
+                android:text="@string/editor_ai_inference_cancel"
+                android:textColor="@color/editor_text_primary"
+                android:textSize="11sp" />
+        </LinearLayout>
+
         <include android:id="@+id/portraitPreviewStatus" layout="@layout/editor_portrait_preview_status" />
 
         <LinearLayout
@@ -408,7 +458,7 @@
             android:layout_marginTop="14dp"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:weightSum="6">
+            android:weightSum="7">
 
             <TextView
                 android:id="@+id/tabPreset"
@@ -416,9 +466,14 @@
                 android:layout_height="match_parent"
                 android:layout_weight="1"
                 android:gravity="center"
+                android:maxLines="1"
                 android:text="@string/editor_tab_preset"
                 android:textColor="@color/editor_text_muted"
-                android:textSize="11sp" />
+                android:textSize="11sp"
+                app:autoSizeMaxTextSize="11sp"
+                app:autoSizeMinTextSize="7sp"
+                app:autoSizeStepGranularity="0.5sp"
+                app:autoSizeTextType="uniform" />
 
             <TextView
                 android:id="@+id/tabGeometry"
@@ -426,9 +481,14 @@
                 android:layout_height="match_parent"
                 android:layout_weight="1"
                 android:gravity="center"
+                android:maxLines="1"
                 android:text="@string/editor_tab_geometry"
                 android:textColor="@color/editor_text_muted"
-                android:textSize="11sp" />
+                android:textSize="11sp"
+                app:autoSizeMaxTextSize="11sp"
+                app:autoSizeMinTextSize="7sp"
+                app:autoSizeStepGranularity="0.5sp"
+                app:autoSizeTextType="uniform" />
 
             <TextView
                 android:id="@+id/tabTone"
@@ -437,10 +497,15 @@
                 android:layout_weight="1"
                 android:background="@color/editor_surface_elevated"
                 android:gravity="center"
+                android:maxLines="1"
                 android:text="@string/editor_tab_tone"
                 android:textColor="@color/editor_text_primary"
                 android:textSize="11sp"
-                android:textStyle="bold" />
+                android:textStyle="bold"
+                app:autoSizeMaxTextSize="11sp"
+                app:autoSizeMinTextSize="7sp"
+                app:autoSizeStepGranularity="0.5sp"
+                app:autoSizeTextType="uniform" />
 
             <TextView
                 android:id="@+id/tabColor"
@@ -448,9 +513,14 @@
                 android:layout_height="match_parent"
                 android:layout_weight="1"
                 android:gravity="center"
+                android:maxLines="1"
                 android:text="@string/editor_tab_color"
                 android:textColor="@color/editor_text_muted"
-                android:textSize="11sp" />
+                android:textSize="11sp"
+                app:autoSizeMaxTextSize="11sp"
+                app:autoSizeMinTextSize="7sp"
+                app:autoSizeStepGranularity="0.5sp"
+                app:autoSizeTextType="uniform" />
 
             <TextView
                 android:id="@+id/tabDetail"
@@ -458,9 +528,14 @@
                 android:layout_height="match_parent"
                 android:layout_weight="1"
                 android:gravity="center"
+                android:maxLines="1"
                 android:text="@string/editor_tab_detail"
                 android:textColor="@color/editor_text_muted"
-                android:textSize="11sp" />
+                android:textSize="11sp"
+                app:autoSizeMaxTextSize="11sp"
+                app:autoSizeMinTextSize="7sp"
+                app:autoSizeStepGranularity="0.5sp"
+                app:autoSizeTextType="uniform" />
 
             <TextView
                 android:id="@+id/tabPortrait"
@@ -468,9 +543,29 @@
                 android:layout_height="match_parent"
                 android:layout_weight="1"
                 android:gravity="center"
+                android:maxLines="1"
                 android:text="@string/editor_tab_portrait"
                 android:textColor="@color/editor_text_muted"
-                android:textSize="11sp" />
+                android:textSize="11sp"
+                app:autoSizeMaxTextSize="11sp"
+                app:autoSizeMinTextSize="7sp"
+                app:autoSizeStepGranularity="0.5sp"
+                app:autoSizeTextType="uniform" />
+
+            <TextView
+                android:id="@+id/tabAi"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:maxLines="1"
+                android:text="@string/editor_tab_ai"
+                android:textColor="@color/editor_text_muted"
+                android:textSize="11sp"
+                app:autoSizeMaxTextSize="11sp"
+                app:autoSizeMinTextSize="7sp"
+                app:autoSizeStepGranularity="0.5sp"
+                app:autoSizeTextType="uniform" />
         </LinearLayout>
     </LinearLayout>
 

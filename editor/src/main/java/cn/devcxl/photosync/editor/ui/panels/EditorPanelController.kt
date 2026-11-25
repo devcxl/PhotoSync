@@ -23,9 +23,12 @@ import cn.devcxl.photosync.editor.ui.gesture.EditorTool
 import cn.devcxl.photosync.editor.ui.widgets.DialSeekBar
 
 /**
- * Binds the three-tier bottom drawer to the edit graph: six category tabs, the sub-tool chips of the
- * active category, the tier-1 control slot (`DialSeekBar`, color, spatial-detail, effect or liquify
- * panels), the crop aspect chips and the value read-out.
+ * Binds the three-tier bottom drawer to the edit graph: seven category tabs, the sub-tool chips of
+ * the active category, the tier-1 control slot (`DialSeekBar`, color, spatial-detail, effect or
+ * liquify panels), the crop aspect chips and the value read-out.
+ *
+ * The seventh `AI` tab is a shell in this wave: it selects the group and keeps the shared chip
+ * container as the placeholder until the subject, erase and sky tools land in later waves.
  */
 internal class EditorPanelController(
     private val context: Context,
@@ -131,7 +134,8 @@ internal class EditorPanelController(
         EditorGroup.TONE to binding.tabTone,
         EditorGroup.COLOR to binding.tabColor,
         EditorGroup.DETAIL to binding.tabDetail,
-        EditorGroup.PORTRAIT to binding.tabPortrait
+        EditorGroup.PORTRAIT to binding.tabPortrait,
+        EditorGroup.AI to binding.tabAi
     )
     private val chipRow = SubToolChipRow(
         context = context,

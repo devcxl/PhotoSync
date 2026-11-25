@@ -182,3 +182,25 @@ _Avoid_: 液化纹理、位移贴图（指代单项而非合成结果）
 **PortraitModel（人像模型包）**:
 随 APK 内置的 `face_landmarker.task` 与 `selfie_segmenter.tflite`，加上首次进入人像面板时按需下载并经 SHA-256 校验的 `selfie_multiclass_256x256.tflite`。
 _Avoid_: 插件、模型文件（指代整套分发方案时）
+
+### AI 工具
+
+**AiModel（按需 AI 模型）**:
+经多镜像下载器或 SAF 本地导入、按字节数与 SHA-256 校验后落盘于 `<filesDir>/models/` 的端侧推理权重包，绝不随安装包内置，只在用户进入对应工具并触发操作时创建会话。
+_Avoid_: 内置插件、缓存文件、随包模型
+
+**SubjectMask（主体蒙版）**:
+单张照片的主体前景概率图及其关联参数：原背景 / 透明去背 / 纯色换底 / 背景虚化 / 前后景独立调色；端侧 v1 由 MODNet + 分块 GuidedFilter + FMGE 驱动。
+_Avoid_: 人物贴纸、皮肤遮罩（`SkinMask` 专指美肤区域）
+
+**InpaintPatch（消除补丁）**:
+记录于原始图像空间（pre-crop）的有序局部涂抹修复资产：归一化外接框 + 无损局部 RGB 补丁 + 羽化掩码，独立于后续几何与调色，绝不进入 `Preset` 或 `CopyMask`。
+_Avoid_: 破坏性涂改、液化网格
+
+**SkyLayer（换天空层）**:
+天空区域概率图、天空素材引用（程序化基准 / 用户 SAF 导入 / CC0 下载包）以及前景色彩协调与地平线融合参数的组合。
+_Avoid_: 天空滤镜
+
+**CloudEditLayer（云端编辑层）**:
+由 P4 BYOK 云端端点返回的非破坏性像素结果层，挂载于 Post-Pass A / Pre-Pass B 空间并绑定 `geometryDigest`，支持不透明度与局部掩码羽化，绝不进入 `Preset` 或 `CopyMask`。
+_Avoid_: 云端原图、派生副本

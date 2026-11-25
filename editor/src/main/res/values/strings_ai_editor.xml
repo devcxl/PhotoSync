@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- AI editor shell (schema v2 groundwork); kept in its own file to avoid merge churn. -->
+    <string name="editor_tab_ai" translatable="false">AI</string>
+    <string name="editor_ai_inference_running">正在运行端侧 AI 推理…</string>
+    <string name="editor_ai_inference_cancel">取消</string>
+</resources>

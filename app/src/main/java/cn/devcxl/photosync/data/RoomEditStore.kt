@@ -24,7 +24,9 @@ import cn.devcxl.photosync.editor.domain.EditValidator
  *
  * When a saved [EditGraph] is identity (all sliders at neutral defaults), any existing row
  * for that photo is deleted and [onClearPhotoEditCache] is invoked so no identity rows or
- * stale preview files remain.
+ * stale preview files remain. The same delete path invokes [onClearPhotoExternalAssets] so the
+ * content-addressed AI payloads under `filesDir/edits/<photoId>/` are removed with the row; wire it
+ * to `AiAssetStore::deletePhotoAssets` (or an equivalent lambda) at the composition root.
  *
  * The active `LiveTetherPreset` lives in [liveTetherPrefs] rather than a table: it is a single
  * process-wide choice, and reading it must be synchronous because the USB download callback decides
@@ -35,7 +37,8 @@ class RoomEditStore(
     private val userPresetDao: UserPresetDao,
     private val liveTetherPrefs: SharedPreferences,
     private val onClearPhotoEditCache: (Long) -> Unit,
-    private val builtinNameResolver: (String) -> String = { it }
+    private val builtinNameResolver: (String) -> String = { it },
+    private val onClearPhotoExternalAssets: (Long) -> Unit = {}
 ) : EditStore {
 
     private val liveTetherPresetId = MutableStateFlow(readLiveTetherPresetId())
@@ -54,11 +57,14 @@ class RoomEditStore(
             deleteEditForPhoto(photoId)
             return
         }
+        // Migration-on-write: a v1 row loaded into the editor is persisted back as a v2 document
+        // even when the user only touched a v1 axis, so every new row advertises the current schema.
+        val upgraded = sanitized.copy(schema = EditGraph.CURRENT_SCHEMA_VERSION)
         val entity = PhotoEditEntity(
             id = 0L,
             photoId = photoId,
-            schemaVersion = sanitized.schema,
-            graphJson = EditGraphJsonCodec.encode(sanitized),
+            schemaVersion = upgraded.schema,
+            graphJson = EditGraphJsonCodec.encode(upgraded),
             previewCachePath = previewCachePath,
             updatedAt = System.currentTimeMillis()
         )
@@ -68,6 +74,7 @@ class RoomEditStore(
     override suspend fun deleteEditForPhoto(photoId: Long) {
         photoEditDao.deleteByPhotoId(photoId)
         onClearPhotoEditCache(photoId)
+        onClearPhotoExternalAssets(photoId)
     }
 
     override fun observeEditedPhotoMap(): Flow<Map<Long, PhotoEditRecord>> {

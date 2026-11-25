@@ -13,6 +13,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 
@@ -33,6 +34,7 @@ import cn.devcxl.photosync.editor.render.EditorPreviewSession
 import cn.devcxl.photosync.editor.ui.gesture.CanvasTransform
 import cn.devcxl.photosync.editor.ui.gesture.EditorGroup
 import cn.devcxl.photosync.editor.ui.gesture.EditorTool
+import cn.devcxl.photosync.editor.ui.panels.AiInferenceBarController
 import cn.devcxl.photosync.editor.ui.panels.EditorPanelController
 import cn.devcxl.photosync.editor.ui.panels.EditorPreviewGeometry
 
@@ -61,6 +63,7 @@ class EditorActivity : AppCompatActivity(),
     private lateinit var portraitHost: EditorPortraitHost
     private lateinit var renderCoordinator: EditorRenderCoordinator
     private lateinit var gestureHost: EditorGestureHost
+    private lateinit var aiInferenceBar: AiInferenceBarController
     private val renderer = EditorGlRenderer()
     private val undoController = EditorUndoController()
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -74,6 +77,14 @@ class EditorActivity : AppCompatActivity(),
     /** Photos that synced while this activity was in front, shown as `+N 新照片`. */
     private var syncedPhotoCount: Int = 0
 
+    /**
+     * The in-flight end-side AI inference, if any.
+     *
+     * The AI tool waves launch their coroutines here so the inference bar's cancel button can stop
+     * the current run without touching the editor's other jobs.
+     */
+    private var aiInferenceJob: Job? = null
+
     private val settleFullQualityRunnable = Runnable { renderCoordinator.renderCurrentGraph(useProxy = false) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -85,6 +96,7 @@ class EditorActivity : AppCompatActivity(),
         sourcePath = intent.getStringExtra(EXTRA_SOURCE_PATH).orEmpty()
         isRaw = intent.getBooleanExtra(EXTRA_IS_RAW, false)
         initCoordinators()
+        initAiInferenceBar()
         canvas = EditorCanvasBinder(binding, renderer, undoController, liquifySession, this)
         preferLinearSource = canvas.configureSurfaceView()
         canvas.attachOverlays()
@@ -124,6 +136,28 @@ class EditorActivity : AppCompatActivity(),
             meshStore = meshStore,
             previewRenderer = EditorPreviewCacheRenderer { graph, warpField, skinMask ->
                 previewSession.writePreviewCache(graph, warpField, skinMask)
+            }
+        )
+    }
+
+    private fun initAiInferenceBar() {
+        aiInferenceBar = AiInferenceBarController(
+            host = object : AiInferenceBarController.Host {
+                override fun setVisible(visible: Boolean) {
+                    binding.aiInferenceBar.visibility = if (visible) View.VISIBLE else View.GONE
+                }
+
+                override fun setLabel(label: CharSequence) {
+                    binding.aiInferenceLabel.text = label
+                }
+
+                override fun setProgress(percent: Int) {
+                    binding.aiInferenceProgress.progress = percent
+                }
+            },
+            onCancelRequested = {
+                aiInferenceJob?.cancel()
+                aiInferenceJob = null
             }
         )
     }
@@ -222,6 +256,9 @@ class EditorActivity : AppCompatActivity(),
 
     override fun onDestroy() {
         mainHandler.removeCallbacks(settleFullQualityRunnable)
+        aiInferenceBar.dismiss()
+        aiInferenceJob?.cancel()
+        aiInferenceJob = null
         canvas.detachOverlays()
         portraitHost.release()
         // A save may still be resampling the staged source on a worker thread; recycling it here

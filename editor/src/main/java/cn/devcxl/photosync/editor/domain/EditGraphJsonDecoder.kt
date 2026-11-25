@@ -22,7 +22,11 @@ internal object EditGraphJsonDecoder {
             color = decodeColor(root.obj("color")),
             detail = decodeDetail(root.obj("detail")),
             effects = decodeEffects(root.obj("effects")),
-            portrait = decodePortrait(root.obj("portrait"))
+            portrait = decodePortrait(root.obj("portrait")),
+            subject = decodeSubject(root.obj("subject")),
+            inpaint = decodeInpaint(root.list("inpaint")),
+            sky = decodeSky(root.obj("sky")),
+            cloudLayer = decodeCloudLayer(root.obj("cloudLayer"))
         )
         return EditValidator.sanitize(raw)
     }
@@ -217,6 +221,76 @@ internal object EditGraphJsonDecoder {
                 waistY = bd?.get("waistY")?.let { (it as? Number)?.toFloat() },
                 hipY = bd?.get("hipY")?.let { (it as? Number)?.toFloat() }
             )
+        )
+    }
+
+    private fun decodeSubject(m: Map<*, *>?): SubjectOps {
+        if (m == null) return SubjectOps()
+        return SubjectOps(
+            maskRef = m.str("maskRef") ?: "",
+            bgMode = SubjectBackgroundMode.fromWireName(m.str("bgMode")),
+            bgColorArgb = m.int("bgColorArgb", SubjectOps.DEFAULT_BG_COLOR_ARGB),
+            blur = m.int("blur", 0),
+            fgExposure = m.int("fgExposure", 0),
+            fgTemp = m.int("fgTemp", 0),
+            fgSat = m.int("fgSat", 0),
+            bgExposure = m.int("bgExposure", 0),
+            bgTemp = m.int("bgTemp", 0),
+            bgSat = m.int("bgSat", 0)
+        )
+    }
+
+    /**
+     * A patch without a complete normalized bbox is dropped rather than defaulted to the full
+     * frame: applying a local repair at the wrong position is worse than losing a corrupt entry.
+     */
+    private fun decodeInpaint(list: List<*>?): List<InpaintPatchRef> {
+        if (list == null) return emptyList()
+        return list.mapNotNull { item ->
+            val m = item as? Map<*, *> ?: return@mapNotNull null
+            val patchPath = m.str("patchRelPath") ?: return@mapNotNull null
+            val maskPath = m.str("maskRelPath") ?: return@mapNotNull null
+            val bbox = m.list("bbox") ?: return@mapNotNull null
+            if (bbox.size != 4) return@mapNotNull null
+            InpaintPatchRef(
+                bbox = InpaintBBox(
+                    left = bbox.floatAt(0, 0.0f),
+                    top = bbox.floatAt(1, 0.0f),
+                    right = bbox.floatAt(2, 1.0f),
+                    bottom = bbox.floatAt(3, 1.0f)
+                ),
+                patchRelPath = patchPath,
+                maskRelPath = maskPath,
+                sha256 = m.str("sha256") ?: ""
+            )
+        }
+    }
+
+    private fun decodeSky(m: Map<*, *>?): SkyOps {
+        if (m == null) return SkyOps()
+        return SkyOps(
+            maskRef = m.str("maskRef") ?: "",
+            assetType = SkyAssetType.fromWireName(m.str("assetType")),
+            assetIdOrRelPath = m.str("assetIdOrRelPath") ?: "",
+            assetSha256 = m.str("assetSha256") ?: "",
+            relight = m.int("relight", 0),
+            horizonOffset = m.float("horizonOffset", 0.0f),
+            horizonFeather = m.int("horizonFeather", 0),
+            edgeShift = m.int("edgeShift", 0)
+        )
+    }
+
+    private fun decodeCloudLayer(m: Map<*, *>?): CloudEditLayerRef? {
+        if (m == null) return null
+        val imagePath = m.str("imageRelPath") ?: return null
+        return CloudEditLayerRef(
+            imageRelPath = imagePath,
+            maskRelPath = m.str("maskRelPath"),
+            sha256 = m.str("sha256") ?: "",
+            opacity = m.int("opacity", 100),
+            featherPx = m.float("featherPx", 0.0f),
+            geometryDigest = m.str("geometryDigest") ?: "",
+            providerTag = m.str("providerTag") ?: ""
         )
     }
 

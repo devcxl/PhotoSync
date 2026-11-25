@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="editor_ai_inference_running">Running on-device AI inference…</string>
+    <string name="editor_ai_inference_cancel">Cancel</string>
+</resources>

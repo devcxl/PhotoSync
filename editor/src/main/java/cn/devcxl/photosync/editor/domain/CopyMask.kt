@@ -7,6 +7,12 @@ package cn.devcxl.photosync.editor.domain
  * portrait skin) and exclude everything that describes *this* frame's composition: crop, straighten,
  * perspective, rotate/flip, liquify strokes and the face/body MLS warps. Pasting a graded look onto a
  * burst therefore never moves the next frame's crop.
+ *
+ * The pixel-level AI layers are **never** copy axes: `inpaint` and `cloudLayer` stay with the frame
+ * they were generated for, even when every copy checkbox is enabled, because a repaired region or a
+ * cloud result cannot be re-projected onto another photo's geometry. `subject` and `sky` are local
+ * mask parameters as well; this mask therefore leaves the target's AI groups untouched rather than
+ * carrying the source's.
  */
 data class CopyMask(
     val includeBaseLook: Boolean = true,
@@ -113,12 +119,14 @@ object PresetGraphMerger {
     fun extractPreset(graph: EditGraph): EditGraph = PRESET_MASK.extract(graph)
 
     /**
-     * Returns [target] with every axis — grade, portrait and frame geometry — back at its neutral
-     * default, i.e. the state a freshly imported photo starts in.
+     * Returns [target] with every axis — grade, portrait, frame geometry and the AI groups — back at
+     * its neutral default, i.e. the state a freshly imported photo starts in.
      *
      * The liquify grid is referenced from `geometry` but lives outside the graph, so the editor must
      * additionally clear its [LiquifySession] mesh when it applies this reset; the history
-     * coordinator records both halves as one undoable step.
+     * coordinator records both halves as one undoable step. The external AI payloads referenced by
+     * `subject`, `inpaint` and `cloudLayer` become unreferenced and are reclaimed by the offline
+     * [AiAssetStore] collector.
      */
     fun resetToOriginal(target: EditGraph): EditGraph = EditValidator.sanitize(
         target.copy(
@@ -128,7 +136,11 @@ object PresetGraphMerger {
             color = ColorOps(),
             detail = DetailOps(),
             effects = EffectsOps(),
-            portrait = PortraitOps()
+            portrait = PortraitOps(),
+            subject = SubjectOps(),
+            inpaint = emptyList(),
+            sky = SkyOps(),
+            cloudLayer = null
         )
     )
 
