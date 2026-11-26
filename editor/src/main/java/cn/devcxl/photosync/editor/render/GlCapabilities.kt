@@ -118,6 +118,18 @@ internal class GlCapabilities {
         get() = minimalFallbackStage != null
 
     /**
+     * True when this context may run Pass D.
+     *
+     * Pass D is the only stage that carries the AI composites (subject cut-out, background bokeh
+     * mix, sky replacement) together with the 3D LUT, grain and vignette. The Tier 3 fallback
+     * therefore drops all of them at once and keeps the basic geometry + tone pipeline, which is
+     * the documented degradation row of the AI matrix: a missing shader must never leave a
+     * half-composited frame on screen.
+     */
+    val allowsPassDEffects: Boolean
+        get() = !isMinimalFallback
+
+    /**
      * Re-probes the driver and logs the selected tier.
      *
      * Must run on the GL thread right after the EGL context is created and before any program is

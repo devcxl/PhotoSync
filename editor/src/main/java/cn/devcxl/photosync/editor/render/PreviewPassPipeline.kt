@@ -213,7 +213,7 @@ internal class PreviewPassPipeline {
             return
         }
         val frame = renderGeometryPass(request, source)
-        if (capabilities.isMinimalFallback) {
+        if (!capabilities.allowsPassDEffects) {
             lastPassCDrawCalls = 0
             drawPassB(request, frame)
             return
