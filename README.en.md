@@ -20,12 +20,12 @@
 
 ---
 
-PhotoSync is an Android camera companion app for photographers and imaging enthusiasts. Connect your camera directly over USB PTP — no Wi-Fi, no desktop software — to auto-transfer on capture, browse and preview, **grade and retouch on location**, and export or delete RAW/JPEG photos on your phone or tablet.
+PhotoSync is an Android camera companion app for photographers and imaging enthusiasts. Connect your camera over a single USB cable to auto-transfer on capture, browse and preview, **grade and retouch on location**, and export or delete RAW/JPEG photos on your phone or tablet.
 
 ## Features
 
 **Tethering and gallery**
-- **USB PTP direct connection** — plug in the cable and tap connect, no network required
+- **USB PTP direct connection** — attach the camera with a single USB cable and tap connect
 - **Auto-transfer on capture** — photos arrive as you shoot, ready to review
 - **Smooth browsing** — thumbnail-first loading, tiled JPEG rendering, pinch zoom and pan
 - **Remembers your place** — reopening the app returns to the last photo you viewed
