@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 
 import timber.log.Timber
 
+import cn.devcxl.photosync.editor.cloud.CloudGeometryDigest
 import cn.devcxl.photosync.editor.domain.ColorGradingParams
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.GeometryMath
@@ -118,12 +119,14 @@ internal class OffscreenPreviewChain(
         val fullTexture = uploader.upload(source, fullFrame = true) ?: return null
         var proxyTexture = 0
         try {
+            val cloud = loadCloudLayer(graph, request, outWidth, outHeight)
             val staged = passes.stageGraph(
                 warpField = request.warpField,
                 skinMask = skinMask,
                 curve = graph.color.curve,
                 lut = request.lut,
-                subject = request.subject
+                subject = request.subject,
+                cloud = cloud
             )
             if (!staged || !checkpoint(guard)) return null
 
@@ -219,6 +222,35 @@ internal class OffscreenPreviewChain(
 
     /** Releases every GL object of this render. Must run with the context still current. */
     override fun close() = passes.close()
+
+    /**
+     * Decodes and digest-verifies the graph's Post-Pass A cloud layer at the output frame size.
+     *
+     * Returns `null` — the frame is then published without the layer — when the graph has no layer,
+     * the asset store was not supplied, or the digest no longer matches the current framing. The
+     * preview therefore never pastes a layer generated for another crop.
+     */
+    private fun loadCloudLayer(
+        graph: EditGraph,
+        request: OffscreenPreviewRequest,
+        width: Int,
+        height: Int
+    ): CloudLayerPixels? {
+        val layer = graph.cloudLayer ?: return null
+        val assets = request.cloudAssets ?: return null
+        if (!CloudGeometryDigest.matches(layer, graph.geometry)) {
+            Timber.w("Offscreen preview skips the cloud layer: geometry digest mismatch")
+            return null
+        }
+        val blender = CloudLayerBlender(assets)
+        return when (val loaded = blender.prepare(layer, graph.geometry, width, height)) {
+            is CloudLayerLoad.Ready -> loaded.pixels
+            is CloudLayerLoad.NotApplied -> {
+                Timber.w("Offscreen preview skips the cloud layer: %s", loaded.status)
+                null
+            }
+        }
+    }
 
     private fun checkpoint(guard: PreviewRenderGuard): Boolean {
         if (guard.isStillValid()) return true

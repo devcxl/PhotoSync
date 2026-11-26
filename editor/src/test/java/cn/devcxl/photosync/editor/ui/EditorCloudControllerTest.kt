@@ -41,6 +41,7 @@ import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.EditParameterKey
 import cn.devcxl.photosync.editor.domain.EditorUndoController
 import cn.devcxl.photosync.editor.domain.GeometryOps
+import cn.devcxl.photosync.editor.ui.widgets.CloudPanelListener
 import cn.devcxl.photosync.editor.ui.widgets.CloudPanelState
 import cn.devcxl.photosync.editor.vision.SubjectMask
 
@@ -90,7 +91,7 @@ class EditorCloudControllerTest {
 
         controller.refresh()
 
-        assertFalse(panel.visible)
+        assertFalse(panel.cloudPanelVisible)
         assertNull(panel.state)
     }
 
@@ -100,7 +101,7 @@ class EditorCloudControllerTest {
 
         controller.refresh()
 
-        assertTrue(panel.visible)
+        assertTrue(panel.cloudPanelVisible)
         assertEquals(CloudEditMode.WHOLE_IMAGE, panel.state?.mode)
         assertFalse(panel.state!!.hasLayer)
     }
@@ -188,17 +189,33 @@ class EditorCloudControllerTest {
     }
 
     @Test
+    fun shouldVetoTheGeometryChange_whenTheCloudDigestNoLongerMatches() {
+        val oldGeometry = GeometryOps()
+        val newGeometry = GeometryOps(crop = CropRect(0.1f, 0.1f, 0.9f, 0.9f))
+        undoController.resetTo(EditGraph(cloudLayer = layer(oldGeometry)))
+        val controller = installedController()
+
+        val applied = undoController.onParameterDrag(
+            undoController.currentGraph.copy(geometry = newGeometry),
+            EditParameterKey.GEOMETRY_CROP
+        )
+
+        assertEquals(oldGeometry, applied.geometry)
+        assertEquals(1, host.conflictCallbacks.size)
+        assertNotNull("The layer must survive until the user decides", undoController.currentGraph.cloudLayer)
+        assertTrue(controller.isEnabled())
+    }
+
+    @Test
     fun shouldRemoveTheLayerAndApplyGeometry_whenTheConflictIsConfirmed() {
         val oldGeometry = GeometryOps()
         val newGeometry = GeometryOps(crop = CropRect(0.1f, 0.1f, 0.9f, 0.9f))
         undoController.resetTo(EditGraph(cloudLayer = layer(oldGeometry)))
-        val controller = controller()
-
-        val applied = controller.requestGeometryChange(newGeometry, EditParameterKey.GEOMETRY_CROP)
-
-        assertFalse(applied)
-        assertEquals(1, host.conflictCallbacks.size)
-        assertNotNull("The layer must survive until the user decides", undoController.currentGraph.cloudLayer)
+        installedController()
+        undoController.onParameterDrag(
+            undoController.currentGraph.copy(geometry = newGeometry),
+            EditParameterKey.GEOMETRY_CROP
+        )
 
         host.conflictCallbacks.single().invoke()
 
@@ -215,15 +232,24 @@ class EditorCloudControllerTest {
         val newGeometry = GeometryOps(crop = CropRect(0.1f, 0.1f, 0.9f, 0.9f))
         val layer = layer(oldGeometry)
         undoController.resetTo(EditGraph(cloudLayer = layer))
-        val controller = controller()
+        installedController()
+        undoController.onParameterDrag(
+            undoController.currentGraph.copy(geometry = newGeometry),
+            EditParameterKey.GEOMETRY_CROP
+        )
 
-        val applied = controller.requestGeometryChange(newGeometry, EditParameterKey.GEOMETRY_CROP)
+        host.conflictCancels.single().invoke()
 
-        assertFalse(applied)
         assertEquals(oldGeometry, undoController.currentGraph.geometry)
         assertEquals(layer, undoController.currentGraph.cloudLayer)
         assertEquals(0, undoController.undoDepth)
         assertTrue(host.committedGraphs.isEmpty())
+        // A later attempt must be able to open the sheet again.
+        undoController.onParameterDrag(
+            undoController.currentGraph.copy(geometry = newGeometry),
+            EditParameterKey.GEOMETRY_CROP
+        )
+        assertEquals(2, host.conflictCallbacks.size)
     }
 
     @Test
@@ -231,14 +257,27 @@ class EditorCloudControllerTest {
         val newGeometry = GeometryOps(rotate90 = 1)
         val layer = layer(newGeometry)
         undoController.resetTo(EditGraph(geometry = GeometryOps(), cloudLayer = layer))
+        installedController()
+
+        val applied = undoController.onParameterDrag(
+            undoController.currentGraph.copy(geometry = newGeometry),
+            EditParameterKey.GEOMETRY_ROTATE_FLIP
+        )
+
+        assertEquals(newGeometry, applied.geometry)
+        assertTrue(host.conflictCallbacks.isEmpty())
+        assertEquals(layer, undoController.currentGraph.cloudLayer)
+    }
+
+    @Test
+    fun shouldHideTheChipAndPanel_whenTheP4SwitchIsOff() {
+        source.enabled = false
         val controller = controller()
 
-        val applied = controller.requestGeometryChange(newGeometry, EditParameterKey.GEOMETRY_ROTATE_FLIP)
+        controller.refresh()
 
-        assertTrue(applied)
-        assertTrue(host.conflictCallbacks.isEmpty())
-        assertEquals(newGeometry, undoController.currentGraph.geometry)
-        assertEquals(layer, undoController.currentGraph.cloudLayer)
+        assertFalse(panel.cloudPanelVisible)
+        assertEquals(false, controller.isEnabled())
     }
 
     @Test
@@ -276,6 +315,12 @@ class EditorCloudControllerTest {
         assertEquals(0, undoController.undoDepth)
     }
 
+    private fun installedController(): EditorCloudController {
+        val controller = controller()
+        controller.installGeometryGuard(undoController)
+        return controller
+    }
+
     private fun controller(): EditorCloudController = EditorCloudController(
         scope = scope,
         host = host,
@@ -283,7 +328,8 @@ class EditorCloudControllerTest {
         undoController = undoController,
         providers = source,
         executor = executor,
-        consent = consent
+        consent = consent,
+        frameDispatcher = Dispatchers.Unconfined
     )
 
     private fun layer(geometry: GeometryOps): CloudEditLayerRef = CloudEditLayerRef(
@@ -305,19 +351,21 @@ class EditorCloudControllerTest {
     )
 
     private class FakePanel : CloudPanelPort {
-        var visible: Boolean = false
+        var cloudPanelVisible: Boolean = false
             private set
 
         var state: CloudPanelState? = null
             private set
 
         override fun setCloudPanelVisible(visible: Boolean) {
-            this.visible = visible
+            this.cloudPanelVisible = visible
         }
 
         override fun renderCloudPanel(state: CloudPanelState) {
             this.state = state
         }
+
+        override fun bindListener(listener: CloudPanelListener) = Unit
     }
 
     private class FakeHost : EditorCloudHost {
@@ -328,6 +376,7 @@ class EditorCloudControllerTest {
         val toasts = mutableListOf<Int>()
         val consentCallbacks = mutableListOf<() -> Unit>()
         val conflictCallbacks = mutableListOf<() -> Unit>()
+        val conflictCancels = mutableListOf<() -> Unit>()
         val committedGraphs = mutableListOf<EditGraph>()
 
         var previewLayer: CloudEditLayerRef? = null
@@ -360,8 +409,9 @@ class EditorCloudControllerTest {
             consentCallbacks += onAccepted
         }
 
-        override fun showGeometryConflictDialog(onRemoveLayer: () -> Unit) {
+        override fun showGeometryConflictDialog(onRemoveLayer: () -> Unit, onCancel: () -> Unit) {
             conflictCallbacks += onRemoveLayer
+            conflictCancels += onCancel
         }
 
         override fun onGraphCommitted(graph: EditGraph) {

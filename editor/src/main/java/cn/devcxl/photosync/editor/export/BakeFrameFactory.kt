@@ -1,5 +1,6 @@
 package cn.devcxl.photosync.editor.export
 
+import cn.devcxl.photosync.editor.cloud.CloudGeometryDigest
 import cn.devcxl.photosync.editor.domain.ColorGradingParams
 import cn.devcxl.photosync.editor.domain.ColumnBandTiling
 import cn.devcxl.photosync.editor.domain.EditGraph
@@ -56,8 +57,22 @@ internal object BakeFrameFactory {
             cropHeight = outputHeight,
             fullResolutionShortEdge = minOf(source.width, source.height),
             maxWarpDisplacementUv = maxWarpDisplacementUv,
-            subjectOps = graph.subject
+            subjectOps = graph.subject,
+            cloudLayerOpacity = cloudLayerOpacity(graph)
         )
+    }
+
+    /**
+     * Effective opacity of the graph's cloud layer, or `0` when it must not be sampled.
+     *
+     * The digest check is what keeps a layer generated for one crop from being pasted onto a
+     * different framing; a mismatch silently degrades to "no cloud layer" instead of blending
+     * misaligned pixels.
+     */
+    fun cloudLayerOpacity(graph: EditGraph): Float {
+        val layer = graph.cloudLayer ?: return 0.0f
+        if (!CloudGeometryDigest.matches(layer, graph.geometry)) return 0.0f
+        return layer.opacity.coerceIn(0, 100) / PERCENT_MAX
     }
 
     /** Inverse homography used for both Pass A and the Tier 2 slice bounds. */
@@ -66,4 +81,6 @@ internal object BakeFrameFactory {
             graph.geometry,
             source.width.toFloat() / source.height.toFloat()
         )
+
+    private const val PERCENT_MAX = 100.0f
 }

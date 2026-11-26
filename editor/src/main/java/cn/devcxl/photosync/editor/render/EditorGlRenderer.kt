@@ -6,6 +6,7 @@ import javax.microedition.khronos.opengles.GL10
 import android.opengl.GLES20
 import android.opengl.GLSurfaceView
 
+import cn.devcxl.photosync.editor.cloud.CloudGeometryDigest
 import cn.devcxl.photosync.editor.domain.ColorGradingParams
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.GeometryMath
@@ -129,7 +130,9 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
                 subjectWeightTextureId = pipeline.subjectWeightTextureId,
                 subjectWarpTextureId = pipeline.warpTextureId,
                 subjectWarpScale = pipeline.warpDecodeScale,
-                subjectWarpOffset = pipeline.warpDecodeOffset
+                subjectWarpOffset = pipeline.warpDecodeOffset,
+                cloudLayerTextureId = pipeline.cloudLayerTextureId,
+                cloudMaskTextureId = pipeline.cloudMaskTextureId
             )
         )
         lastPassCDrawCalls = pipeline.lastPassCDrawCalls
@@ -194,6 +197,17 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
         prepassRevision++
     }
 
+    /**
+     * Stages the decoded Post-Pass A cloud layer, or `null` to unbind it.
+     *
+     * The caller decodes and digest-verifies the layer off the GL thread
+     * ([CloudLayerBlender.prepare]); this only hands the pixels to the GL upload.
+     */
+    fun setCloudLayer(pixels: CloudLayerPixels?) {
+        pipeline.stageCloudLayer(pixels)
+        prepassRevision++
+    }
+
     private fun publishWarpLocked() {
         val composed = PortraitWarpComposer.compose(portraitFaceWarp, portraitBodyWarp, liquifyMesh)
         frameState = frameState.copy(warpActive = pipeline.stageWarpField(composed))
@@ -245,7 +259,8 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
                     ?: (SubjectOps.DEFAULT_BG_COLOR_ARGB and RGB_MASK),
                 subjectUvMatrix = if (geometryActive) inverseMatrix else RenderFrameState.IDENTITY_MATRIX,
                 subjectWarpActive = pipeline.isSubjectCompositeAvailable && warpActive,
-                subjectOps = graph.subject
+                subjectOps = graph.subject,
+                cloudLayerOpacity = cloudLayerOpacity(graph)
             )
             isPassCActive = !useFastProxy && !spatialParams.isZeroDrawCallShortCircuit
             val prepassSig = prepassSignature(graph, warpActive, portraitFaceWarp, portraitBodyWarp)
@@ -274,8 +289,20 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
         return hash
     }
 
-    private fun applySourceMetadata(source: EditorSource?) {
-        if (source == null) return
+    /**
+     * Effective opacity of the Post-Pass A cloud layer for [graph].
+     *
+     * Returns `0` whenever the layer may not be sampled: no layer, a `geometryDigest` that no longer
+     * matches the current framing (the user changed crop/rotate/perspective/liquify), or a fully
+     * transparent slider. A zero value closes the shader branch and the texture is never sampled.
+     */
+    private fun cloudLayerOpacity(graph: EditGraph): Float {
+        val layer = graph.cloudLayer ?: return 0.0f
+        if (!CloudGeometryDigest.matches(layer, graph.geometry)) return 0.0f
+        return layer.opacity.coerceIn(0, 100) / 100.0f
+    }
+
+    private fun applySourceMetadata(source: EditorSource?) {        if (source == null) return
         imageWidth = source.width.coerceAtLeast(1)
         imageHeight = source.height.coerceAtLeast(1)
         linearInput = source.isLinear

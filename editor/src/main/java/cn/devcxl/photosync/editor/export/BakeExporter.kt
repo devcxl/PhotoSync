@@ -16,8 +16,10 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 
+import cn.devcxl.photosync.editor.cloud.CloudGeometryDigest
 import cn.devcxl.photosync.editor.contract.GallerySink
 import cn.devcxl.photosync.editor.domain.ActivePhotoEditRegistry
+import cn.devcxl.photosync.editor.domain.AiAssetStore
 import cn.devcxl.photosync.editor.domain.ColumnBandTiling
 import cn.devcxl.photosync.editor.domain.DeviceGlBudget
 import cn.devcxl.photosync.editor.domain.EditGraph
@@ -30,6 +32,8 @@ import cn.devcxl.photosync.editor.domain.SourceResidencyPlan
 import cn.devcxl.photosync.editor.domain.SourceResidencyPlanner
 import cn.devcxl.photosync.editor.domain.WarpDisplacementField
 import cn.devcxl.photosync.editor.lut.CubeLutStore
+import cn.devcxl.photosync.editor.render.CloudLayerBlender
+import cn.devcxl.photosync.editor.render.CloudLayerLoad
 import cn.devcxl.photosync.editor.render.InpaintOverlay
 import cn.devcxl.photosync.editor.render.SubjectCompositeLoader
 import cn.devcxl.photosync.editor.render.SubjectRenderContract
@@ -169,6 +173,7 @@ class BakeExporter(
                 graphCurve = graph.color.curve,
                 lut = loadLut(graph)
             )
+            stageCloudLayer(chain, graph, outSize)
             val maxWarpUv = maxAbsWarpUv(portrait.warpField)
             val frame = BakeFrameFactory.create(graph, source, outSize.first, outSize.second, maxWarpUv)
             val subject = resolveSubject(request, graph, portrait.warpField, source)
@@ -299,9 +304,48 @@ class BakeExporter(
         return LiquifyMeshStore(filesDir).read(reference)
     }
 
+    /**
+     * Decodes, digest-verifies and stages the Post-Pass A cloud layer for the whole bake.
+     *
+     * A layer that no longer matches the current framing, or whose asset fails its SHA-256 check,
+     * is skipped instead of failing the export: the bake then equals what the preview shows, which
+     * also refuses to blend a mismatched layer.
+     *
+     * The texture is capped at [CLOUD_TEXTURE_MAX_EDGE] px: a 50MP frame-sized RGBA texture would
+     * cost 200MB of GL memory for pixels a cloud endpoint never returns at that resolution. The
+     * band UV mapping is normalized, so the GL bilinear filter upscales without a seam.
+     */
+    private fun stageCloudLayer(chain: BakePassChain, graph: EditGraph, outSize: Pair<Int, Int>) {
+        val layer = graph.cloudLayer ?: return
+        if (!CloudGeometryDigest.matches(layer, graph.geometry)) {
+            Timber.w("Bake skips the cloud layer: its geometry digest does not match the graph")
+            return
+        }
+        val (width, height) = cloudTextureSize(outSize.first, outSize.second)
+        val blender = CloudLayerBlender(AiAssetStore(filesDir))
+        when (val loaded = blender.prepare(layer, graph.geometry, width, height)) {
+            is CloudLayerLoad.Ready -> chain.setCloudLayer(loaded.pixels)
+            is CloudLayerLoad.NotApplied ->
+                Timber.w("Bake skips the cloud layer: %s", loaded.status)
+        }
+    }
+
+    private fun cloudTextureSize(outWidth: Int, outHeight: Int): Pair<Int, Int> {
+        val longEdge = maxOf(outWidth, outHeight)
+        if (longEdge <= CLOUD_TEXTURE_MAX_EDGE) return outWidth to outHeight
+        val scale = CLOUD_TEXTURE_MAX_EDGE.toFloat() / longEdge
+        return (outWidth * scale).toInt().coerceAtLeast(1) to
+            (outHeight * scale).toInt().coerceAtLeast(1)
+    }
+
     private fun loadLut(graph: EditGraph): Lut3dSamples? {
         val reference = graph.color.lut ?: return null
         return CubeLutStore(filesDir).loadSamples(reference.id).getOrNull()
+    }
+
+    private companion object {
+        /** Long edge of the cloud texture a bake samples; 2048 matches the BYOK upload budget. */
+        const val CLOUD_TEXTURE_MAX_EDGE = 2048
     }
 
     private fun totalRamBytes(): Long {

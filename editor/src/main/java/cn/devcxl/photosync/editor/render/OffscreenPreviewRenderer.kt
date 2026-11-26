@@ -13,6 +13,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 import timber.log.Timber
 
+import cn.devcxl.photosync.editor.domain.AiAssetStore
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.Lut3dSamples
 import cn.devcxl.photosync.editor.domain.WarpDisplacementField
@@ -44,7 +45,9 @@ internal data class OffscreenPreviewRequest(
     /** Source-space subject composite of `graph.subject`; `null` when no mask effect is active. */
     val subject: SubjectComposite? = null,
     /** Repair patches of `graph.inpaint`; blended before the source is uploaded. */
-    val inpaint: InpaintOverlay? = null
+    val inpaint: InpaintOverlay? = null,
+    /** Asset store the Post-Pass A cloud layer is read from; `null` disables the cloud stage. */
+    val cloudAssets: AiAssetStore? = null
 )
 
 /**

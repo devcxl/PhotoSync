@@ -64,6 +64,9 @@ internal class EditorPanelController(
 
         /** The user picked a solid subject background colour. */
         fun onSubjectColorRequested(argb: Int)
+
+        /** True when the P4 cloud switch is on, so the AI group may offer the cloud sub-tool. */
+        fun isCloudToolAvailable(): Boolean
     }
 
     var currentGroup: EditorGroup = EditorGroup.TONE
@@ -163,6 +166,7 @@ internal class EditorPanelController(
         }
     )
     private var dialTool: EditorTool? = null
+    private var cloudPanelVisible = false
 
     init {
         tabViews.forEach { (group, view) -> view.setOnClickListener { selectGroup(group) } }
@@ -174,6 +178,8 @@ internal class EditorPanelController(
         portraitPanels.showFor(null)
         subjectPanels.setVisible(false)
         binding.inpaintPanelView.visibility = View.GONE
+        cloudPanelVisible = false
+        applyCloudPanelVisibility()
         presetPanels.setVisible(false)
         aspectRow.setVisible(false)
     }
@@ -195,13 +201,14 @@ internal class EditorPanelController(
         refreshHeaderReadout(graph)
         aspectRow.setVisible(currentTool == EditorTool.CROP)
         aspectRow.refresh(lockedAspect, host.previewAspect())
+        applyCloudPanelVisibility()
     }
 
     /** Selects a category tab and, when it has tools, its first sub-tool. */
     fun selectGroup(group: EditorGroup) {
         currentGroup = group
         tabViews.forEach { (candidate, view) -> bindTab(view, candidate == group) }
-        val tools = EditorToolCatalog.toolsFor(group)
+        val tools = availableTools(group)
         if (tools.isEmpty()) {
             enterUnavailableGroup(group)
             return
@@ -240,6 +247,52 @@ internal class EditorPanelController(
         refresh()
     }
 
+    /**
+     * Returns the sub-tools of [group] the host may currently offer.
+     *
+     * The cloud chip is filtered out while the P4 switch is off, so a disabled cloud feature never
+     * leaks into the AI group's chip row.
+     */
+    private fun availableTools(group: EditorGroup): List<EditorToolSpec> =
+        EditorToolCatalog.toolsFor(group).filter { spec ->
+            spec.tool != EditorTool.AI_CLOUD || host.isCloudToolAvailable()
+        }
+
+    /**
+     * Shows or hides the tier-1 cloud panel.
+     *
+     * Called by [cn.devcxl.photosync.editor.ui.EditorCloudController] on every refresh, where `false`
+     * means the P4 switch is off; the panel only becomes visible when the cloud tool is also the
+     * active sub-tool.
+     */
+    fun setCloudPanelVisible(visible: Boolean) {
+        cloudPanelVisible = visible
+        applyCloudPanelVisibility()
+    }
+
+    /**
+     * Re-reads the P4 switch, for example after the user returns from the settings screen.
+     *
+     * When cloud was switched off while its tool was active, the AI group falls back to the first
+     * tool the host still offers so the drawer never shows an empty chip row.
+     */
+    fun refreshCloudAvailability() {
+        if (currentTool == EditorTool.AI_CLOUD && !host.isCloudToolAvailable()) {
+            selectGroup(EditorGroup.AI)
+        } else if (currentGroup == EditorGroup.AI) {
+            chipRow.build(availableTools(EditorGroup.AI))
+        }
+        cloudPanelVisible = currentTool == EditorTool.AI_CLOUD && host.isCloudToolAvailable()
+        refresh()
+    }
+
+    private fun applyCloudPanelVisibility() {
+        val visible = cloudPanelVisible &&
+            currentTool == EditorTool.AI_CLOUD &&
+            host.isCloudToolAvailable()
+        binding.cloudPanelView.visibility = if (visible) View.VISIBLE else View.GONE
+    }
+
     private fun handleSubPanelEdited(graph: EditGraph, key: EditParameterKey) {
         refreshHeaderReadout(graph)
         host.onGraphEdited(graph, key)
@@ -268,6 +321,8 @@ internal class EditorPanelController(
         portraitPanels.showFor(null)
         subjectPanels.setVisible(false)
         binding.inpaintPanelView.visibility = View.GONE
+        cloudPanelVisible = false
+        applyCloudPanelVisibility()
         presetPanels.setVisible(false)
         rotateFlipPanel.setVisible(false)
         aspectRow.setVisible(false)
@@ -312,6 +367,8 @@ internal class EditorPanelController(
     }
 
     private fun configureTierOneControl(spec: EditorToolSpec) {
+        cloudPanelVisible = spec.controlStyle == EditorControlStyle.CLOUD
+        applyCloudPanelVisibility()
         liquifyPanel.setVisible(spec.controlStyle == EditorControlStyle.LIQUIFY)
         colorPanels.showFor(spec.controlStyle)
         detailPanels.showFor(spec.controlStyle)

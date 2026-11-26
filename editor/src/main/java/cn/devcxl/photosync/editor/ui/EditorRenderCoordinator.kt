@@ -2,6 +2,7 @@ package cn.devcxl.photosync.editor.ui
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -39,6 +40,9 @@ internal class EditorRenderCoordinator(
     private val overlaySyncProvider: () -> EditorOverlaySync
 ) {
 
+    private var stagedCloudKey: String? = null
+    private var cloudJob: Job? = null
+
     /** Renders the current graph, optionally at the 1024px proxy resolution. */
     fun renderCurrentGraph(useProxy: Boolean) {
         val graph = undoController.currentGraph
@@ -46,6 +50,7 @@ internal class EditorRenderCoordinator(
         portraitHost.syncWarps(graph)
         val preview = EditorPreviewGeometry.previewGraph(graph, panel.currentTool)
         val lutWarm = previewSession.applyGraph(preview, useProxy = useProxy)
+        syncCloudLayer(graph)
         overlaySyncProvider().sync(graph)
         panel.refresh()
         updateBaseLookPill(graph.baseLook)
@@ -58,6 +63,21 @@ internal class EditorRenderCoordinator(
         renderCurrentGraph(useProxy = false)
         updateBaseLookPill(graph.baseLook)
         updateHistoryButtons()
+    }
+
+    /**
+     * Renders a graph that is **not** in the undo history, e.g. a live cloud opacity preview.
+     *
+     * The editor stays on [EditorUndoController.currentGraph]; only the canvas uniforms and the
+     * staged cloud texture follow the transient graph, so dragging the slider never creates an undo
+     * step.
+     */
+    fun renderTransientGraph(graph: EditGraph) {
+        val panel = panelProvider()
+        val preview = EditorPreviewGeometry.previewGraph(graph, panel.currentTool)
+        previewSession.applyGraph(preview, useProxy = false)
+        syncCloudLayer(graph)
+        binding.glSurfaceView.requestRender()
     }
 
     /** Mirrors a pinch/pan gesture into the renderer and every overlay. */
@@ -82,6 +102,30 @@ internal class EditorRenderCoordinator(
     /** Refreshes the undo / redo buttons. */
     fun updateHistoryButtons() {
         topBar.updateHistoryButtons()
+    }
+
+    /**
+     * Stages the Post-Pass A cloud layer for the canvas, decoding only when its pixels changed.
+     *
+     * The key deliberately excludes `opacity`: dragging the opacity slider rewrites the graph on
+     * every step, and the shader reads the opacity from the frame state, so re-decoding the PNG (and
+     * re-uploading the texture) per step would be pure jank.
+     */
+    private fun syncCloudLayer(graph: EditGraph) {
+        val layer = graph.cloudLayer
+        val key = layer?.let { "${it.imageRelPath}|${it.sha256}|${it.maskRelPath}|${it.geometryDigest}" }
+        if (key == stagedCloudKey) return
+        stagedCloudKey = key
+        cloudJob?.cancel()
+        if (layer == null) {
+            previewSession.applyCloudLayer(null)
+            return
+        }
+        cloudJob = scope.launch {
+            val pixels = withContext(Dispatchers.IO) { previewSession.decodeCloudLayer(graph) }
+            previewSession.applyCloudLayer(pixels)
+            binding.glSurfaceView.requestRender()
+        }
     }
 
     /**

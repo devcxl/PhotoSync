@@ -2,10 +2,16 @@ package cn.devcxl.photosync.editor.render
 
 import java.io.File
 
+import android.graphics.Bitmap
+
 import timber.log.Timber
 
+import kotlin.math.roundToInt
+
 import cn.devcxl.photosync.editor.contract.EditorCachePaths
+import cn.devcxl.photosync.editor.domain.AiAssetStore
 import cn.devcxl.photosync.editor.domain.EditGraph
+import cn.devcxl.photosync.editor.domain.GeometryMath
 import cn.devcxl.photosync.editor.domain.InpaintPatchRef
 import cn.devcxl.photosync.editor.domain.LiquifyMesh
 import cn.devcxl.photosync.editor.domain.WarpDisplacementField
@@ -142,6 +148,34 @@ internal class EditorPreviewSession(
         renderer.setSubjectComposite(composite)
     }
 
+    /** Stages the decoded Post-Pass A cloud layer for the next canvas frame, or unbinds it. */
+    fun applyCloudLayer(pixels: CloudLayerPixels?) {
+        renderer.setCloudLayer(pixels)
+    }
+
+    /**
+     * Decodes the Post-Pass A cloud layer of [graph] at a canvas-sized resolution.
+     *
+     * Blocking: call from an IO dispatcher. The returned pixels are frame-aspect aligned, and any
+     * digest mismatch or failed asset check degrades to `null` so the canvas never blends a layer
+     * that belongs to another framing.
+     */
+    fun decodeCloudLayer(graph: EditGraph): CloudLayerPixels? {
+        if (graph.cloudLayer == null) return null
+        val current = source ?: return null
+        val sourceAspect = current.width.toFloat() / current.height.toFloat()
+        val aspect = GeometryMath.outputAspect(graph.geometry, sourceAspect)
+            .takeIf { it.isFinite() && it > 0.0f } ?: 1.0f
+        val (width, height) = if (aspect >= 1.0f) {
+            CLOUD_PREVIEW_MAX_EDGE_PX to
+                (CLOUD_PREVIEW_MAX_EDGE_PX / aspect).roundToInt().coerceAtLeast(1)
+        } else {
+            (CLOUD_PREVIEW_MAX_EDGE_PX * aspect).roundToInt().coerceAtLeast(1) to
+                CLOUD_PREVIEW_MAX_EDGE_PX
+        }
+        return CloudPreviewBlend.prepare(AiAssetStore(filesDir), graph, width, height)
+    }
+
     /**
      * Loads the mask referenced by [graph] and builds its composite. Blocking: call from an IO
      * dispatcher before requesting the next frame.
@@ -201,7 +235,8 @@ internal class EditorPreviewSession(
                 lut = lut,
                 outDir = File(cacheDir, EditorCachePaths.photoEditDirName(photoId)),
                 subject = subject,
-                inpaint = inpaint
+                inpaint = inpaint,
+                cloudAssets = AiAssetStore(filesDir)
             )
         )
         if (accelerated != null) return accelerated.absolutePath
@@ -215,7 +250,8 @@ internal class EditorPreviewSession(
                 lut = lut,
                 skinMask = skinMask,
                 subject = subject,
-                inpaint = inpaint
+                inpaint = inpaint,
+                cloudAssets = AiAssetStore(filesDir)
             )
             is EditorSource.BitmapSource -> PreviewCacheWriter.writePreviewCache(
                 source = current.full,
@@ -226,9 +262,21 @@ internal class EditorPreviewSession(
                 lut = lut,
                 skinMask = skinMask,
                 subject = subject,
-                inpaint = inpaint
+                inpaint = inpaint,
+                cloudAssets = AiAssetStore(filesDir)
             )
         }
+    }
+
+    /**
+     * Renders the clean Post-Pass A / Pre-Pass B frame a cloud request uploads.
+     *
+     * Blocking: call from an IO dispatcher. [source] is already the current pixels (the untouched
+     * decode or its inpaint-composed copy), so no overlay is composed a second time.
+     */
+    fun renderPostPassABitmap(graph: EditGraph, warpField: WarpDisplacementField?): Bitmap? {
+        val current = source ?: return null
+        return PostPassAFrameRenderer.render(current, graph, warpField, inpaint = null)
     }
 
     private fun restoreOriginalSource(original: EditorSource) {
@@ -256,5 +304,10 @@ internal class EditorPreviewSession(
     private fun loadLutFor(graph: EditGraph): Lut3dSamples? {
         val reference = graph.color.lut ?: return null
         return lutStore.loadSamples(reference.id).getOrNull()
+    }
+
+    private companion object {
+        /** Long edge of the canvas cloud texture; any resolution samples correctly in Pass B. */
+        const val CLOUD_PREVIEW_MAX_EDGE_PX = 2048
     }
 }

@@ -6,6 +6,7 @@ import timber.log.Timber
 import cn.devcxl.photosync.editor.domain.BaseLook
 import cn.devcxl.photosync.editor.domain.ColorGradingParams
 import cn.devcxl.photosync.editor.domain.SubjectOps
+import cn.devcxl.photosync.editor.domain.TileUvTransform
 import cn.devcxl.photosync.editor.domain.ToneShaderParams
 
 /**
@@ -41,7 +42,15 @@ internal data class ExposureDrawParams(
     /** `uWarpTex` to mirror the Pass A liquify/portrait displacement, or `0`. */
     val subjectWarpTextureId: Int = 0,
     val subjectWarpScale: Float = 1.0f,
-    val subjectWarpOffset: Float = 0.0f
+    val subjectWarpOffset: Float = 0.0f,
+    /** Post-Pass A cloud layer texture, or `0` when no layer may be sampled. */
+    val cloudLayerTextureId: Int = 0,
+    /** Optional cloud coverage texture; `0` means the layer covers the whole frame. */
+    val cloudMaskTextureId: Int = 0,
+    /** Effective cloud opacity in `0..1`; `0` keeps the shader branch closed. */
+    val cloudOpacity: Float = 0.0f,
+    /** Full-frame UV transform for [cloudLayerTextureId]; identity outside a bake band. */
+    val cloudUvTransform: TileUvTransform = TileUvTransform.IDENTITY
 ) {
 
     companion object {
@@ -106,6 +115,13 @@ internal class ExposureGlProgram {
     private var uSubjectWarpOffsetLoc: Int = -1
     private var uSubjectFgGradeLoc: Int = -1
     private var uSubjectBgGradeLoc: Int = -1
+    private var uCloudLayerLoc: Int = -1
+    private var uCloudMaskLoc: Int = -1
+    private var uCloudActiveLoc: Int = -1
+    private var uCloudHasMaskLoc: Int = -1
+    private var uCloudOpacityLoc: Int = -1
+    private var uCloudUvScaleLoc: Int = -1
+    private var uCloudUvOffsetLoc: Int = -1
 
     private val quad = QuadMesh()
 
@@ -181,6 +197,7 @@ internal class ExposureGlProgram {
         applyToneUniforms(params)
         applyColorUniforms(params)
         applySubjectUniforms(params)
+        applyCloudUniforms(params)
 
         val orientation = if (params.flipVerticalForScreen) {
             QuadOrientation.SCREEN
@@ -248,6 +265,45 @@ internal class ExposureGlProgram {
         uSubjectWarpOffsetLoc = GLES20.glGetUniformLocation(programId, "uSubjectWarpOffset")
         uSubjectFgGradeLoc = GLES20.glGetUniformLocation(programId, "uSubjectFgGrade")
         uSubjectBgGradeLoc = GLES20.glGetUniformLocation(programId, "uSubjectBgGrade")
+        uCloudLayerLoc = GLES20.glGetUniformLocation(programId, "uCloudLayerTex")
+        uCloudMaskLoc = GLES20.glGetUniformLocation(programId, "uCloudMaskTex")
+        uCloudActiveLoc = GLES20.glGetUniformLocation(programId, "uCloudActive")
+        uCloudHasMaskLoc = GLES20.glGetUniformLocation(programId, "uCloudHasMask")
+        uCloudOpacityLoc = GLES20.glGetUniformLocation(programId, "uCloudOpacity")
+        uCloudUvScaleLoc = GLES20.glGetUniformLocation(programId, "uCloudUvScale")
+        uCloudUvOffsetLoc = GLES20.glGetUniformLocation(programId, "uCloudUvOffset")
+    }
+
+    /**
+     * Binds the Post-Pass A cloud layer, or closes the shader branch completely.
+     *
+     * The branch stays closed when the layer is empty, fully transparent, or the user is comparing
+     * against the camera original — Before/After must always show the untouched frame.
+     */
+    private fun applyCloudUniforms(params: ExposureDrawParams) {
+        val active = params.cloudLayerTextureId != 0 &&
+            params.cloudOpacity > 0.0f &&
+            !params.compareOriginal
+        GLES20.glUniform1i(uCloudActiveLoc, if (active) 1 else 0)
+        GLES20.glUniform1f(uCloudOpacityLoc, params.cloudOpacity.coerceIn(0.0f, 1.0f))
+        GLES20.glUniform2f(uCloudUvScaleLoc, params.cloudUvTransform.scaleX, params.cloudUvTransform.scaleY)
+        GLES20.glUniform2f(
+            uCloudUvOffsetLoc,
+            params.cloudUvTransform.offsetX,
+            params.cloudUvTransform.offsetY
+        )
+        val hasMask = active && params.cloudMaskTextureId != 0
+        GLES20.glUniform1i(uCloudHasMaskLoc, if (hasMask) 1 else 0)
+        if (!active) return
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE4)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, params.cloudLayerTextureId)
+        GLES20.glUniform1i(uCloudLayerLoc, CLOUD_LAYER_UNIT)
+        if (hasMask) {
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE5)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, params.cloudMaskTextureId)
+            GLES20.glUniform1i(uCloudMaskLoc, CLOUD_MASK_UNIT)
+        }
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
     }
 
     private fun applySubjectUniforms(params: ExposureDrawParams) {
@@ -342,5 +398,13 @@ internal class ExposureGlProgram {
         GLES20.glUniform2f(uSplitHiAbLoc, color.splitHiA, color.splitHiB)
         GLES20.glUniform2f(uSplitShAbLoc, color.splitShA, color.splitShB)
         GLES20.glUniform1f(uSplitBalanceLoc, color.splitBalance)
+    }
+
+    private companion object {
+        /** Texture unit of the cloud layer image; 0-3 are used by source, curve and subject. */
+        const val CLOUD_LAYER_UNIT = 4
+
+        /** Texture unit of the optional cloud coverage mask. */
+        const val CLOUD_MASK_UNIT = 5
     }
 }

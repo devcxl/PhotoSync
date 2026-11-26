@@ -28,6 +28,8 @@ internal object LinearRawPreviewRenderer {
      *   background, matching the Pass D shader order exactly.
      * @param subjectWeight Optional frame-aligned subject alpha that drives the Pass B
      *   foreground/background grade and the terminal Pass C bokeh.
+     * @param cloud Optional Post-Pass A cloud layer in scene-linear encoding; it is fused between
+     *   `BaseLook` and Pass B, so every later stage grades it together with the camera frame.
      */
     fun renderArgb(
         source: LinearRawBuffer,
@@ -37,7 +39,8 @@ internal object LinearRawPreviewRenderer {
         skinMask: FloatArray? = null,
         beforeEffects: ((pixels: IntArray, width: Int, height: Int) -> Unit)? = null,
         afterEffects: ((pixels: IntArray, width: Int, height: Int) -> Unit)? = null,
-        subjectWeight: FloatArray? = null
+        subjectWeight: FloatArray? = null,
+        cloud: LinearCloudLayer? = null
     ): IntArray {
         val toneParams = ToneShaderParams.from(graph)
         val colorParams = ColorGradingParams.from(graph)
@@ -52,17 +55,18 @@ internal object LinearRawPreviewRenderer {
         val subject = graph.subject.takeIf {
             it.hasGradingAdjustments() && subjectWeight != null
         }
+        val frameCloud = cloud?.takeIf { it.width == width && it.height == height }
         if (colorParams.defringe > 0.0f) {
             renderWithDefringe(
                 source, gain, graph.baseLook, lookLut,
                 toneParams, colorParams, curveLut, width, height, argb, PassBColorMath.Scratch(),
-                subject, subjectWeight
+                subject, subjectWeight, frameCloud
             )
         } else {
             renderStraight(
                 source, gain, graph.baseLook, lookLut,
                 toneParams, colorParams, curveLut, pixelCount, argb, PassBColorMath.Scratch(),
-                subject, subjectWeight
+                subject, subjectWeight, frameCloud
             )
         }
         val detailed = PreviewDetailPass.apply(
@@ -92,7 +96,8 @@ internal object LinearRawPreviewRenderer {
         argb: IntArray,
         scratch: PassBColorMath.Scratch,
         subject: SubjectOps?,
-        subjectWeight: FloatArray?
+        subjectWeight: FloatArray?,
+        cloud: LinearCloudLayer?
     ) {
         val sample = FloatArray(CHANNELS)
         val display = FloatArray(CHANNELS_RGB)
@@ -100,6 +105,7 @@ internal object LinearRawPreviewRenderer {
         for (index in 0 until pixelCount) {
             source.readPixel(index, sample)
             computeBaseLookLinear(sample, gain, baseLook, lookLut, linear, display)
+            cloud?.blendInto(index, linear)
             val weight = subjectWeight?.getOrNull(index) ?: 0.0f
             if (toneParams.isIdentity && colorParams.isIdentity && subject == null) {
                 argb[index] = packLinearAsSrgb(linear)
@@ -136,7 +142,8 @@ internal object LinearRawPreviewRenderer {
         argb: IntArray,
         scratch: PassBColorMath.Scratch,
         subject: SubjectOps?,
-        subjectWeight: FloatArray?
+        subjectWeight: FloatArray?,
+        cloud: LinearCloudLayer?
     ): IntArray {
         val pixelCount = width * height
         // Cache base-looked linear RGB once so defringe never decodes the LinearRawBuffer twice.
@@ -163,6 +170,7 @@ internal object LinearRawPreviewRenderer {
             linear[0] = cachedLinear[base]
             linear[1] = cachedLinear[base + 1]
             linear[2] = cachedLinear[base + 2]
+            cloud?.blendInto(i, linear)
             val grad = Srgb8Packer.neighborGradient(lumaMap, width, height, i)
             val weight = subjectWeight?.getOrNull(i) ?: 0.0f
             PassBColorMath.apply(

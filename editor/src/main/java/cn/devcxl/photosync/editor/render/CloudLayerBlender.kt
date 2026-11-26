@@ -8,7 +8,9 @@ import timber.log.Timber
 import cn.devcxl.photosync.editor.cloud.CloudGeometryDigest
 import cn.devcxl.photosync.editor.domain.AiAssetStore
 import cn.devcxl.photosync.editor.domain.CloudEditLayerRef
+import cn.devcxl.photosync.editor.domain.ExposureShaderMath
 import cn.devcxl.photosync.editor.domain.GeometryOps
+import cn.devcxl.photosync.editor.domain.LinearCloudLayer
 
 /** Why a [CloudEditLayerRef] was or was not blended into a frame. */
 enum class CloudBlendStatus {
@@ -63,7 +65,38 @@ class CloudLayerPixels(
     val argb: IntArray,
     val coverage: FloatArray?,
     val opacity: Float
-)
+) {
+
+    /**
+     * Converts these display-referred pixels into the scene-linear layer the 16-bit path grades.
+     *
+     * The PNG is sRGB, so every channel is decoded with the same transfer function the GL Pass B
+     * applies to a linear input; blending encoded values into a linear frame would darken the layer.
+     */
+    fun toLinear(): LinearCloudLayer {
+        val count = width * height
+        val rgb = FloatArray(count * LINEAR_CHANNELS)
+        for (index in 0 until count) {
+            val source = argb[index]
+            val target = index * LINEAR_CHANNELS
+            rgb[target] = ExposureShaderMath.decodeSrgb(Color.red(source) / RGB_MAX)
+            rgb[target + 1] = ExposureShaderMath.decodeSrgb(Color.green(source) / RGB_MAX)
+            rgb[target + 2] = ExposureShaderMath.decodeSrgb(Color.blue(source) / RGB_MAX)
+        }
+        return LinearCloudLayer(
+            width = width,
+            height = height,
+            linearRgb = rgb,
+            coverage = coverage,
+            opacity = opacity
+        )
+    }
+
+    private companion object {
+        const val LINEAR_CHANNELS = 3
+        const val RGB_MAX = 255.0f
+    }
+}
 
 /** Outcome of [CloudLayerBlender.prepare]. */
 sealed interface CloudLayerLoad {
@@ -218,6 +251,42 @@ class CloudLayerBlender(private val assetStore: AiAssetStore) {
         }
     }
 
+    /**
+     * Converts prepared [pixels] into the scene-linear layer the CPU Pass B consumes.
+     *
+     * The PNG is display-referred sRGB, so every channel is decoded with the same transfer function
+     * the GL Pass B uses for a linear input; blending the encoded values directly into a linear frame
+     * would darken the layer by roughly two stops.
+     */
+    fun toLinear(pixels: CloudLayerPixels): LinearCloudLayer = pixels.toLinear()
+
+    /**
+     * Merges already prepared [pixels] into a packed `ARGB_8888` buffer in place.
+     *
+     * Use this overload when the caller decoded the layer once for several consumers; [blendArgb]
+     * decodes and verifies the layer itself.
+     */
+    fun blendPrepared(
+        target: IntArray,
+        width: Int,
+        height: Int,
+        pixels: CloudLayerPixels
+    ): CloudBlendResult {
+        require(width > 0 && height > 0) { "Frame dimensions must be positive" }
+        require(target.size == width * height) { "Frame buffer does not match its size" }
+        require(pixels.width == width && pixels.height == height) {
+            "Prepared layer does not match the frame"
+        }
+        var blended = 0L
+        for (index in target.indices) {
+            val factor = coverageAt(pixels, index)
+            if (factor <= 0.0f) continue
+            target[index] = blendPixel(target[index], pixels.argb[index], factor)
+            blended++
+        }
+        return CloudBlendResult(CloudBlendStatus.APPLIED, blended)
+    }
+
     private fun readCoverage(layer: CloudEditLayerRef, width: Int, height: Int): FloatArray? {
         val path = layer.maskRelPath ?: return null
         val digest = digestFromPath(path) ?: return null
@@ -303,6 +372,7 @@ class CloudLayerBlender(private val assetStore: AiAssetStore) {
 
     private companion object {
         const val RGBA_CHANNELS = 4
+        const val LINEAR_CHANNELS = 3
         const val BYTE_MAX = 255.0f
         const val BYTE_MAX_INT = 255
         const val PERCENT_MAX = 100.0f

@@ -44,6 +44,7 @@ internal class PreviewPassPipeline {
     private val skinMaskTexture = SkinMaskTexture()
     private val subjectTexture = SubjectMaskTexture()
     private val subjectWeightTexture = SubjectWeightTexture()
+    private val cloudTextures = CloudLayerTextures()
     private val curveLutTexture = CurveLutTexture()
     private var geometryFallbackLogged = false
 
@@ -73,6 +74,7 @@ internal class PreviewPassPipeline {
         skinMaskTexture.invalidate()
         subjectTexture.invalidate()
         subjectWeightTexture.invalidate()
+        cloudTextures.invalidate()
         curveLutTexture.invalidate()
         textures.invalidateContext()
         compareTextures.invalidateContext()
@@ -120,6 +122,17 @@ internal class PreviewPassPipeline {
     val subjectWeightTextureId: Int
         get() = subjectWeightTexture.textureId
 
+    /** Stages the Post-Pass A cloud layer pixels, or `null` to unbind the layer. */
+    fun stageCloudLayer(pixels: CloudLayerPixels?) = cloudTextures.stage(pixels)
+
+    /** Uploaded cloud layer texture, or `0` when no layer may be sampled. */
+    val cloudLayerTextureId: Int
+        get() = if (cloudTextures.isActive) cloudTextures.imageTextureId else 0
+
+    /** Uploaded cloud coverage texture, or `0` for a whole-frame layer. */
+    val cloudMaskTextureId: Int
+        get() = if (cloudTextures.isActive) cloudTextures.maskTextureId else 0
+
     /** Uploaded `uWarpTex`, or `0` when the composed warp is neutral. */
     val warpTextureId: Int
         get() = if (warpTexture.isWarpActive) warpTexture.textureId else 0
@@ -164,6 +177,7 @@ internal class PreviewPassPipeline {
         skinMaskTexture.uploadIfNeeded()
         subjectTexture.uploadIfNeeded()
         subjectWeightTexture.uploadIfNeeded()
+        cloudTextures.uploadIfNeeded()
         curveLutTexture.uploadIfNeeded(preferEs3)
         effectsStage.uploadPending(preferEs3)
         return warpFailed

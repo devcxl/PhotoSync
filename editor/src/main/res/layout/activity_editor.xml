@@ -343,6 +343,13 @@
             android:layout_marginTop="6dp"
             android:visibility="gone" />
 
+        <cn.devcxl.photosync.editor.ui.widgets.CloudPanelView
+            android:id="@+id/cloudPanelView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:visibility="gone" />
+
         <include
             android:id="@+id/rotateFlipPanel"
             layout="@layout/editor_rotate_flip_panel" />

@@ -15,6 +15,7 @@ import kotlinx.coroutines.withContext
 import timber.log.Timber
 
 import cn.devcxl.photosync.editor.contract.EditorCachePaths
+import cn.devcxl.photosync.editor.domain.AiAssetStore
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.LiquifyMesh
 import cn.devcxl.photosync.editor.domain.LiquifyMeshStore
@@ -381,7 +382,8 @@ object BackgroundPreviewRenderer {
             lut = loadLut(filesDir, graph),
             outDir = outDir,
             subject = subject,
-            inpaint = inpaint
+            inpaint = inpaint,
+            cloudAssets = AiAssetStore(filesDir)
         )
     }
 
@@ -400,7 +402,8 @@ object BackgroundPreviewRenderer {
                 lut = request.lut,
                 skinMask = request.skinMask,
                 subject = request.subject,
-                inpaint = request.inpaint
+                inpaint = request.inpaint,
+                cloudAssets = request.cloudAssets
             )
             is EditorSource.BitmapSource -> PreviewCacheWriter.writeBitmapPreviewTo(
                 source = source.full,
@@ -410,7 +413,8 @@ object BackgroundPreviewRenderer {
                 lut = request.lut,
                 skinMask = request.skinMask,
                 subject = request.subject,
-                inpaint = request.inpaint
+                inpaint = request.inpaint,
+                cloudAssets = request.cloudAssets
             )
         }
         written?.let(::File)

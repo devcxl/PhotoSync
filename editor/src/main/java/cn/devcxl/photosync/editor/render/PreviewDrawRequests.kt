@@ -142,7 +142,10 @@ internal object PreviewDrawRequests {
             subjectUvMatrix = state.subjectUvMatrix,
             subjectWarpTextureId = if (state.subjectWarpActive) request.subjectWarpTextureId else 0,
             subjectWarpScale = request.subjectWarpScale,
-            subjectWarpOffset = request.subjectWarpOffset
+            subjectWarpOffset = request.subjectWarpOffset,
+            cloudLayerTextureId = request.cloudLayerTextureId,
+            cloudMaskTextureId = request.cloudMaskTextureId,
+            cloudOpacity = state.cloudLayerOpacity
         )
     }
 }

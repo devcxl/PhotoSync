@@ -1,9 +1,12 @@
 package cn.devcxl.photosync.editor.ui
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 
 import cn.devcxl.photosync.editor.R
@@ -24,10 +27,8 @@ import cn.devcxl.photosync.editor.cloud.CloudProviderSource
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.EditParameterKey
 import cn.devcxl.photosync.editor.domain.EditorUndoController
-import cn.devcxl.photosync.editor.domain.GeometryOps
 import cn.devcxl.photosync.editor.ui.widgets.CloudPanelListener
 import cn.devcxl.photosync.editor.ui.widgets.CloudPanelState
-import cn.devcxl.photosync.editor.ui.widgets.CloudPanelView
 
 /**
  * Owns the `AI -> 云端` workflow from the panel tap to the committed `EditGraph`.
@@ -53,22 +54,35 @@ internal class EditorCloudController(
     private val undoController: EditorUndoController,
     private val providers: CloudProviderSource,
     private val executor: CloudEditExecutor,
-    private val consent: CloudConsentStore
+    private val consent: CloudConsentStore,
+    /** Dispatcher that renders the Post-Pass A upload frame; overridable in unit tests. */
+    private val frameDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) : CloudPanelListener {
 
     init {
-        // The real tier-1 panel doubles as the port; wiring the listener here keeps integration to
-        // one constructor call while a fake port stays unaffected.
-        (panel as? CloudPanelView)?.listener = this
+        panel.bindListener(this)
     }
 
     private var mode = CloudEditMode.WHOLE_IMAGE
     private var prompt = ""
     private var job: Job? = null
+    private val geometryGuard = CloudGeometryGuard(
+        undoController = undoController,
+        host = { host },
+        commit = ::commit
+    )
 
-    /** Repaints visibility and state; call after the editor loaded or the cloud switch changed. */
-    fun refresh() {
-        if (!providers.isCloudEnabled()) {
+    /** Installs the non-destructive Pass A geometry guard on [controller]. */
+    fun installGeometryGuard(controller: EditorUndoController) = geometryGuard.install(controller)
+
+    /**
+     * Repaints visibility and state; call after the editor loaded or the cloud switch changed.
+     *
+     * @param enabled Known switch value, so a caller that already read the persisted flag off the
+     *   main thread does not read it again here.
+     */
+    fun refresh(enabled: Boolean = providers.isCloudEnabled()) {
+        if (!enabled) {
             cancel()
             panel.setCloudPanelVisible(false)
             return
@@ -76,6 +90,9 @@ internal class EditorCloudController(
         panel.setCloudPanelVisible(true)
         panel.renderCloudPanel(currentState())
     }
+
+    /** True when the P4 switch is on, so the drawer may offer the cloud sub-tool. */
+    fun isEnabled(): Boolean = providers.isCloudEnabled()
 
     /** Cancels a running generation; a committed layer is never touched. */
     fun cancel() {
@@ -142,40 +159,22 @@ internal class EditorCloudController(
         host.showToast(R.string.editor_cloud_layer_removed)
     }
 
-    /**
-     * Applies a Pass A geometry change, guarded by the cloud layer digest.
-     *
-     * @return True when the change was committed immediately. False means the conflict sheet is
-     *   showing and the caller must not apply the geometry itself.
-     */
-    fun requestGeometryChange(newGeometry: GeometryOps, parameterKey: EditParameterKey): Boolean {
-        val graph = undoController.currentGraph
-        val layer = graph.cloudLayer
-        if (layer == null || CloudGeometryDigest.matches(layer, newGeometry)) {
-            commit(graph.copy(geometry = newGeometry), parameterKey)
-            return true
-        }
-        host.showGeometryConflictDialog {
-            val current = undoController.currentGraph
-            if (current.cloudLayer != null) {
-                commit(
-                    current.copy(geometry = newGeometry, cloudLayer = null),
-                    parameterKey
-                )
-                host.showToast(R.string.editor_cloud_geometry_removed)
-            }
-        }
-        return false
-    }
-
     private fun startGeneration() {
-        val command = buildCommand() ?: return
         job?.cancel()
         job = scope.launch {
             host.showProgress(R.string.editor_cloud_progress_preparing, 0)
+            // The Post-Pass A frame is decoded and rasterized here, off the UI thread; building the
+            // command must never block the drawer.
+            val command = withContext(frameDispatcher) { buildCommand() }
+            if (command == null) {
+                host.hideProgress()
+                return@launch
+            }
             val outcome = try {
                 executor.execute(command) { stage ->
-                    scope.launch { host.updateProgress(labelFor(stage), percentFor(stage)) }
+                    // A provider may report from its own worker thread; the launch keeps the update
+                    // on the main thread and cancels it together with this job.
+                    launch(Dispatchers.Main) { host.updateProgress(labelFor(stage), percentFor(stage)) }
                 }
             } catch (cancel: CancellationException) {
                 throw cancel

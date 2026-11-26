@@ -69,6 +69,9 @@ internal enum class EditorControlStyle {
     /** Inpainting brush panel: paint/erase mode, brush size, clear and confirm. */
     INPAINT,
 
+    /** P4 BYOK cloud panel: request shape, prompt, generate and layer opacity. */
+    CLOUD,
+
     /** Preset library panel: save the current look, apply a preset, clear preset axes. */
     PRESET
 }
@@ -107,7 +110,7 @@ internal data class EditorToolSpec(
  * Registry of the tools delivered so far: geometry (including liquify), tone, white balance,
  * display color, the Pass C spatial-detail group, the Pass D effect panels (3D LUT, film grain,
  * post-crop vignette), lens dispersion / defringe, the Portrait group (skin, face and body) and the
- * AI group (subject cut-out and smart erase).
+ * AI group (subject cut-out, smart erase and the opt-in BYOK cloud layer).
  */
 internal object EditorToolCatalog {
 
@@ -122,7 +125,8 @@ internal object EditorToolCatalog {
                 EditorToneDetailSpecs.detailSpecs() +
                 EditorPortraitSpecs.portraitSpecs() +
                 AiSubjectSpecs.subjectSpecs() +
-                AiEraseSpecs.eraseSpecs()
+                AiEraseSpecs.eraseSpecs() +
+                AiCloudSpecs.cloudSpecs()
             )
             .associateBy { it.tool }
 

@@ -9,6 +9,7 @@ import android.widget.Toast
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import timber.log.Timber
 
 import cn.devcxl.photosync.editor.R
 import cn.devcxl.photosync.editor.contract.EditorHostRegistry
@@ -16,6 +17,7 @@ import cn.devcxl.photosync.editor.domain.AiAssetStore
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.EditParameterKey
 import cn.devcxl.photosync.editor.domain.EditorUndoController
+import cn.devcxl.photosync.editor.domain.PresetSubjectGate
 import cn.devcxl.photosync.editor.domain.SubjectBackgroundMode
 import cn.devcxl.photosync.editor.domain.SubjectOps
 import cn.devcxl.photosync.editor.render.EditorPreviewSession
@@ -25,6 +27,7 @@ import cn.devcxl.photosync.editor.ui.panels.AiInferenceBarController
 import cn.devcxl.photosync.editor.vision.DeviceMemoryTier
 import cn.devcxl.photosync.editor.vision.ModnetSubjectSegmenter
 import cn.devcxl.photosync.editor.vision.OrtSessionManager
+import cn.devcxl.photosync.editor.vision.SubjectMask
 
 /**
  * Owns the `AI -> 主体` workflow from the panel tap to the committed `EditGraph`.
@@ -148,6 +151,40 @@ internal class EditorSubjectController(
             applyExistingMask(graph, SubjectBackgroundMode.SOLID, argb)
         } else {
             generateMask(graph, SubjectBackgroundMode.SOLID, argb)
+        }
+    }
+
+    /** The refined subject mask currently staged, or `null` when no subject effect is loaded. */
+    fun currentMask(): SubjectMask? = composites.currentMask()
+
+    /**
+     * Computes this photo's own `SubjectMask` after a preset carried subject parameters.
+     *
+     * Presets copy `SubjectOps` values but never the source photo's mask, so applying one on a photo
+     * without a mask must run the standard-tier segmentation once. It is deliberately silent: a
+     * missing model file or a low-RAM device skips the inference (the preset still applies its
+     * ordinary grading) instead of interrupting the user with a download sheet.
+     */
+    fun ensureMaskForPreset() {
+        val graph = undoController.currentGraph
+        if (!PresetSubjectGate.needsMask(graph)) return
+        if (job?.isActive == true || awaitingMask) return
+        if (DeviceMemoryTier.detect(context) != DeviceMemoryTier.STANDARD) {
+            Timber.i("Subject preset mask skipped: the device is in the low-memory tier")
+            return
+        }
+        if (!installer.isInstalled()) {
+            Timber.i("Subject preset mask skipped: the MODNet model is not installed")
+            return
+        }
+        awaitingMask = true
+        launchWork {
+            generateWithModel(
+                installer.modelFile(),
+                undoController.currentGraph,
+                graph.subject.bgMode,
+                graph.subject.bgColorArgb
+            )
         }
     }
 

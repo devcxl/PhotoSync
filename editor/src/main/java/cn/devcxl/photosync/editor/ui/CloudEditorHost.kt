@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 
 import cn.devcxl.photosync.editor.domain.CloudEditLayerRef
 import cn.devcxl.photosync.editor.domain.EditGraph
+import cn.devcxl.photosync.editor.ui.widgets.CloudPanelListener
 import cn.devcxl.photosync.editor.ui.widgets.CloudPanelState
 import cn.devcxl.photosync.editor.vision.SubjectMask
 
@@ -41,8 +42,13 @@ internal interface EditorCloudHost {
     /** Shows the one-time disclosure and continues only after acceptance. */
     fun showConsentDialog(onAccepted: () -> Unit)
 
-    /** Shows the geometry conflict sheet; the callback means "remove the layer". */
-    fun showGeometryConflictDialog(onRemoveLayer: () -> Unit)
+    /**
+     * Shows the geometry conflict sheet.
+     *
+     * @param onRemoveLayer The user accepted dropping the layer to keep the new framing.
+     * @param onCancel The user kept the layer; the geometry change must be abandoned.
+     */
+    fun showGeometryConflictDialog(onRemoveLayer: () -> Unit, onCancel: () -> Unit = {})
 
     /** The graph changed and preview/cache/bake consumers must refresh. */
     fun onGraphCommitted(graph: EditGraph)
@@ -59,4 +65,7 @@ internal interface CloudPanelPort {
 
     /** Repaints the panel from [state]. */
     fun renderCloudPanel(state: CloudPanelState)
+
+    /** Routes the panel's user intents to [listener]. */
+    fun bindListener(listener: CloudPanelListener)
 }

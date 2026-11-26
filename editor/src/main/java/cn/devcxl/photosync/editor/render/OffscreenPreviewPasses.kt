@@ -1,8 +1,5 @@
 package cn.devcxl.photosync.editor.render
 
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-
 import android.opengl.GLES20
 
 import timber.log.Timber
@@ -15,22 +12,10 @@ import cn.devcxl.photosync.editor.domain.PassDEffectsMath
 import cn.devcxl.photosync.editor.domain.PassDEffectsParams
 import cn.devcxl.photosync.editor.domain.SpatialDetailParams
 import cn.devcxl.photosync.editor.domain.SpatialDetailPlanner
-import cn.devcxl.photosync.editor.domain.SubjectBokehMath
 import cn.devcxl.photosync.editor.domain.TileUvTransform
 import cn.devcxl.photosync.editor.domain.ToneShaderParams
 import cn.devcxl.photosync.editor.domain.WarpDisplacementField
 import cn.devcxl.photosync.editor.lut.Lut3dTexture
-
-/**
- * Logs why the offscreen preview must not publish and returns `false` for expression use.
- *
- * Every caller answers a `null` write with the CPU renderer, so a reason string is the whole
- * contract between the GPU stages and their orchestrator.
- */
-internal fun previewUnavailable(reason: String): Boolean {
-    Timber.w("Offscreen preview: %s; using the CPU renderer", reason)
-    return false
-}
 
 /**
  * GL execution of the four physical preview passes for one offscreen render.
@@ -65,6 +50,7 @@ internal class OffscreenPreviewPasses : AutoCloseable {
     private val skinMaskTexture = SkinMaskTexture()
     private val subjectTexture = SubjectMaskTexture()
     private val subjectWeightTexture = SubjectWeightTexture()
+    private val cloudTextures = CloudLayerTextures()
     private val curveLutTexture = CurveLutTexture()
     private val lutTexture = Lut3dTexture()
     private val prepassAnalyzer = PrepassAnalyzer(capabilities)
@@ -73,9 +59,10 @@ internal class OffscreenPreviewPasses : AutoCloseable {
     private val passBTarget = OffscreenColorTarget(capabilities)
     private val outputTarget = OffscreenColorTarget(capabilities)
 
-    private var readbackBuffer: ByteBuffer? = null
+    private val readback = OffscreenFrameReadback()
     private var prepassTextureId: Int = 0
     private var atmosphericLight: FloatArray = DEFAULT_ATMOSPHERIC_LIGHT
+    private var cloudOpacity: Float = 0.0f
 
     /** `GL_MAX_TEXTURE_SIZE` of the context, from [init]. */
     var maxTextureSize: Int = 0
@@ -132,7 +119,8 @@ internal class OffscreenPreviewPasses : AutoCloseable {
         skinMask: FloatArray?,
         curve: CurveOps,
         lut: Lut3dSamples?,
-        subject: SubjectComposite? = null
+        subject: SubjectComposite? = null,
+        cloud: CloudLayerPixels? = null
     ): Boolean {
         warpTexture.stage(warpField)
         val warpUploadFailed = warpTexture.uploadIfNeeded()
@@ -156,6 +144,16 @@ internal class OffscreenPreviewPasses : AutoCloseable {
         if (subject != null && !subjectWeightTexture.isActive) {
             return previewUnavailable("the subject weight could not be uploaded")
         }
+
+        cloudTextures.stage(cloud)
+        cloudTextures.uploadIfNeeded()
+        if (cloud != null && !cloudTextures.isActive) {
+            // The layer is optional: skip it instead of refusing the whole frame.
+            Timber.w("Offscreen preview: the cloud layer could not be uploaded; skipping it")
+            cloudTextures.clear()
+            cloudTextures.uploadIfNeeded()
+        }
+        cloudOpacity = if (cloudTextures.isActive) cloud?.opacity ?: 0.0f else 0.0f
 
         curveLutTexture.stage(curve)
         curveLutTexture.uploadIfNeeded(preferEs3 = true)
@@ -369,21 +367,7 @@ internal class OffscreenPreviewPasses : AutoCloseable {
      *
      * @return The pixels, or `null` when the driver reports an error.
      */
-    fun readFrame(width: Int, height: Int): IntArray? {
-        val requiredBytes = width * height * BYTES_PER_RGBA8_PIXEL
-        val buffer = readbackBuffer?.takeIf { it.capacity() >= requiredBytes }
-            ?: ByteBuffer.allocateDirect(requiredBytes)
-                .order(ByteOrder.nativeOrder())
-                .also { readbackBuffer = it }
-        buffer.rewind()
-        outputTarget.bind()
-        GLES20.glPixelStorei(GLES20.GL_PACK_ALIGNMENT, 1)
-        GLES20.glReadPixels(0, 0, width, height, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, buffer)
-        GLES20.glPixelStorei(GLES20.GL_PACK_ALIGNMENT, DEFAULT_PACK_ALIGNMENT)
-        outputTarget.unbind()
-        if (!clearOfGlErrors("Pass D read-back")) return null
-        return OffscreenPreviewFrames.toArgb(buffer, width, height)
-    }
+    fun readFrame(width: Int, height: Int): IntArray? = readback.read(outputTarget, width, height)
 
     /** Releases every GL object of this render. Must run with the context still current. */
     override fun close() {
@@ -395,14 +379,15 @@ internal class OffscreenPreviewPasses : AutoCloseable {
         skinMaskTexture.release()
         subjectTexture.release()
         subjectWeightTexture.release()
+        cloudTextures.release()
         curveLutTexture.release()
         lutTexture.release()
         prepassAnalyzer.release()
         geometryTarget.release()
         passBTarget.release()
         outputTarget.release()
+        readback.release()
         capabilities.reset()
-        readbackBuffer = null
     }
 
     private fun drawPassBInto(
@@ -447,7 +432,10 @@ internal class OffscreenPreviewPasses : AutoCloseable {
                 subjectUvMatrix = subjectUvMatrix,
                 subjectWarpTextureId = if (warpTexture.isWarpActive) warpTexture.textureId else 0,
                 subjectWarpScale = warpTexture.decodeScale,
-                subjectWarpOffset = warpTexture.decodeOffset
+                subjectWarpOffset = warpTexture.decodeOffset,
+                cloudLayerTextureId = if (cloudTextures.isActive) cloudTextures.imageTextureId else 0,
+                cloudMaskTextureId = if (cloudTextures.isActive) cloudTextures.maskTextureId else 0,
+                cloudOpacity = cloudOpacity
             )
         )
         target.unbind()
@@ -459,23 +447,16 @@ internal class OffscreenPreviewPasses : AutoCloseable {
         width: Int,
         height: Int,
         subjectUvMatrix: FloatArray
-    ): SubjectBokehDrawParams? {
-        if (!graph.subject.hasBackgroundBlur() || !subjectWeightTexture.isActive) return null
-        val radius = SubjectBokehMath.radiusPixels(
-            blur = graph.subject.blur,
-            shortEdge = minOf(width, height)
-        )
-        if (radius <= 0) return null
-        return SubjectBokehDrawParams(
-            maskTextureId = subjectWeightTexture.textureId,
-            radiusPx = radius.toFloat(),
-            localSpace = false,
-            uvMatrix = subjectUvMatrix,
-            warpTextureId = if (warpTexture.isWarpActive) warpTexture.textureId else 0,
-            warpScale = warpTexture.decodeScale,
-            warpOffset = warpTexture.decodeOffset
-        )
-    }
+    ): SubjectBokehDrawParams? = SubjectBokehPlanner.params(
+        blur = graph.subject.blur,
+        shortEdge = minOf(width, height),
+        maskTextureId = if (subjectWeightTexture.isActive) subjectWeightTexture.textureId else 0,
+        localSpace = false,
+        uvMatrix = subjectUvMatrix,
+        warpTextureId = if (warpTexture.isWarpActive) warpTexture.textureId else 0,
+        warpScale = warpTexture.decodeScale,
+        warpOffset = warpTexture.decodeOffset
+    )
 
     /**
      * Drains every pending GL error.
@@ -492,24 +473,11 @@ internal class OffscreenPreviewPasses : AutoCloseable {
     private fun warpRequested(field: WarpDisplacementField?): Boolean =
         field != null && !field.isZero()
 
-    /** Returns true when the GL error queue is clean, logging the first error otherwise. */
-    private fun clearOfGlErrors(stage: String): Boolean {
-        val error = GLES20.glGetError()
-        if (error == GLES20.GL_NO_ERROR) return true
-        if (error == GL_CONTEXT_LOST_ERROR) {
-            return previewUnavailable("the GL context was lost during $stage")
-        }
-        return previewUnavailable("GL error 0x%x after %s".format(error, stage))
-    }
+    private fun clearOfGlErrors(stage: String): Boolean = GlErrorGuard.clear(stage)
 
     private companion object {
         /** A single-use chain analyses exactly one graph revision. */
         const val PREPASS_REVISION = 1
-        const val BYTES_PER_RGBA8_PIXEL = 4
-        const val DEFAULT_PACK_ALIGNMENT = 4
-
-        /** `GL_CONTEXT_LOST`; `GLES20` does not expose it and the value is context-loss specific. */
-        const val GL_CONTEXT_LOST_ERROR = 0x0505
 
         val IDENTITY_MATRIX = floatArrayOf(
             1.0f, 0.0f, 0.0f,

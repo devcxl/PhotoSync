@@ -198,7 +198,9 @@ class EditorActivity : AppCompatActivity(),
                 renderCoordinator.updateHistoryButtons()
             },
             onRepaintRequested = { binding.glSurfaceView.requestRender() },
-            launchImport = modelImport::launch
+            launchImport = modelImport::launch,
+            panelProvider = { panel },
+            onPreviewGraph = renderCoordinator::renderTransientGraph
         )
         EditorSyncPhotoPill(
             binding = binding,
@@ -225,6 +227,9 @@ class EditorActivity : AppCompatActivity(),
     override fun onResume() {
         super.onResume()
         binding.glSurfaceView.onResume()
+        // The P4 switch may have changed on the settings screen; re-read it so the cloud chip and
+        // the cloud panel follow immediately.
+        aiTools.refreshCloudAvailability()
     }
 
     override fun onPause() {
@@ -269,6 +274,7 @@ class EditorActivity : AppCompatActivity(),
         mainHandler.removeCallbacks(settleFullQualityRunnable)
         renderCoordinator.renderCurrentGraph(useProxy = false)
         renderCoordinator.updateHistoryButtons()
+        if (parameterKey == EditParameterKey.PRESET) aiTools.ensureSubjectMaskForPreset(graph)
     }
 
     override fun onResetAllRequested(): Boolean = historyCoordinator.requestResetAll()
@@ -295,6 +301,8 @@ class EditorActivity : AppCompatActivity(),
         aiTools.requestSubjectMode(mode)
 
     override fun onSubjectColorRequested(argb: Int) = aiTools.requestSubjectColor(argb)
+
+    override fun isCloudToolAvailable(): Boolean = aiTools.isCloudEnabled()
     override fun onPreviewDragStarted() = gestureHost.onDragStarted()
     override fun onPreviewDragFinished() = gestureHost.onDragFinished()
     override fun onLiquifyMeshChanged() = gestureHost.onLiquifyMeshChanged()

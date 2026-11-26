@@ -105,6 +105,10 @@ internal class CloudPanelView @JvmOverloads constructor(
         visibility = if (visible) View.VISIBLE else View.GONE
     }
 
+    override fun bindListener(listener: CloudPanelListener) {
+        this.listener = listener
+    }
+
     override fun renderCloudPanel(state: CloudPanelState) {
         binding = true
         modeChips.forEach { (mode, chip) ->

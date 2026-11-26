@@ -6,21 +6,16 @@ import java.nio.ByteOrder
 import android.opengl.GLES20
 import timber.log.Timber
 
-import cn.devcxl.photosync.editor.domain.BaseLook
-import cn.devcxl.photosync.editor.domain.ColorGradingParams
-import cn.devcxl.photosync.editor.domain.ColumnBand
 import cn.devcxl.photosync.editor.domain.CurveOps
 import cn.devcxl.photosync.editor.domain.Lut3dSamples
 import cn.devcxl.photosync.editor.domain.PassDEffectsMath
 import cn.devcxl.photosync.editor.domain.PassDEffectsParams
-import cn.devcxl.photosync.editor.domain.SourceSliceRect
-import cn.devcxl.photosync.editor.domain.SpatialDetailParams
 import cn.devcxl.photosync.editor.domain.SpatialDetailPlanner
-import cn.devcxl.photosync.editor.domain.SubjectBokehMath
 import cn.devcxl.photosync.editor.domain.SubjectOps
-import cn.devcxl.photosync.editor.domain.ToneShaderParams
 import cn.devcxl.photosync.editor.domain.WarpDisplacementField
 import cn.devcxl.photosync.editor.lut.Lut3dTexture
+import cn.devcxl.photosync.editor.render.CloudLayerPixels
+import cn.devcxl.photosync.editor.render.CloudLayerTextures
 import cn.devcxl.photosync.editor.render.CurveLutTexture
 import cn.devcxl.photosync.editor.render.EffectsDrawParams
 import cn.devcxl.photosync.editor.render.EffectsOutputGlProgram
@@ -33,34 +28,12 @@ import cn.devcxl.photosync.editor.render.OffscreenColorTarget
 import cn.devcxl.photosync.editor.render.SkinMaskTexture
 import cn.devcxl.photosync.editor.render.SpatialDetailGlChain
 import cn.devcxl.photosync.editor.render.SubjectBokehDrawParams
+import cn.devcxl.photosync.editor.render.SubjectBokehPlanner
 import cn.devcxl.photosync.editor.render.SubjectDrawParams
 import cn.devcxl.photosync.editor.render.SubjectMaskTexture
 import cn.devcxl.photosync.editor.render.SubjectRenderPlan
 import cn.devcxl.photosync.editor.render.SubjectWeightTexture
 import cn.devcxl.photosync.editor.render.WarpTexture
-
-/** Every graph-derived uniform one bake band needs, plus the band geometry and source binding. */
-internal data class BakeFrame(
-    val sourceTextureId: Int,
-    val srcSliceRect: SourceSliceRect,
-    val band: ColumnBand,
-    val srcAspect: Float,
-    val isLinear: Boolean,
-    val autoBrightGain: Float,
-    val columnMajorInverseMatrix: FloatArray,
-    val baseLook: BaseLook,
-    val toneParams: ToneShaderParams,
-    val colorParams: ColorGradingParams,
-    val spatialParams: SpatialDetailParams,
-    val effectsParams: PassDEffectsParams,
-    val caRedK: Float,
-    val caBlueK: Float,
-    val cropWidth: Int,
-    val cropHeight: Int,
-    val fullResolutionShortEdge: Int,
-    val maxWarpDisplacementUv: Float = 0.0f,
-    val subjectOps: SubjectOps = SubjectOps()
-)
 
 /**
  * Runs the physical `Pass A -> Pass B -> Pass C -> Pass D` chain for one bake band.
@@ -87,6 +60,7 @@ internal class BakePassChain {
     private val skinMaskTexture = SkinMaskTexture()
     private val subjectTexture = SubjectMaskTexture()
     private val subjectWeightTexture = SubjectWeightTexture()
+    private val cloudTextures = CloudLayerTextures()
     private val curveLutTexture = CurveLutTexture()
     private val lutTexture = Lut3dTexture()
 
@@ -125,6 +99,8 @@ internal class BakePassChain {
         subjectTexture.uploadIfNeeded()
         subjectWeightTexture.stage(null, 0, 0)
         subjectWeightTexture.uploadIfNeeded()
+        cloudTextures.stage(null)
+        cloudTextures.uploadIfNeeded()
         isReady = passA && passC && passD && copy
         return isReady
     }
@@ -150,6 +126,24 @@ internal class BakePassChain {
     fun setPrepass(textureId: Int, light: FloatArray) {
         prepassTextureId = textureId
         atmosphericLight = light
+    }
+
+    /**
+     * Stages and uploads the Post-Pass A cloud layer, or unbinds it with `null`.
+     *
+     * The pixels are frame-sized (`outWidth x outHeight`), so every column band samples the same
+     * full-frame texture through its own `tileUv` transform and the seams stay continuous.
+     *
+     * @return True when the requested layer is bound; false means the bake continues without it.
+     */
+    fun setCloudLayer(pixels: CloudLayerPixels?): Boolean {
+        cloudTextures.stage(pixels)
+        cloudTextures.uploadIfNeeded()
+        if (pixels != null && !cloudTextures.isActive) {
+            Timber.w("The cloud layer could not be uploaded; baking without it")
+            return false
+        }
+        return true
     }
 
     /**
@@ -246,6 +240,7 @@ internal class BakePassChain {
         skinMaskTexture.release()
         subjectTexture.release()
         subjectWeightTexture.release()
+        cloudTextures.release()
         curveLutTexture.release()
         lutTexture.release()
         geometryTarget.release()
@@ -387,7 +382,7 @@ internal class BakePassChain {
             skinMaskTextureId = if (skinMaskTexture.isActive) skinMaskTexture.textureId else 0,
             atmosphericLight = atmosphericLight,
             guideTransform = frame.band.tileUv,
-            subjectBokeh = bokehParams(frame, width, height)
+            subjectBokeh = bokehParams(frame)
         )
     }
 
@@ -411,22 +406,15 @@ internal class BakePassChain {
         subjectWeightTexture.uploadIfNeeded()
     }
 
-    private fun bokehParams(frame: BakeFrame, width: Int, height: Int): SubjectBokehDrawParams? {
-        if (!frame.subjectOps.hasBackgroundBlur() || !subjectWeightTexture.isActive) return null
-        val maxRadius = if (frame.band.halo > 0) frame.band.halo - 2 else Int.MAX_VALUE
-        val radius = SubjectBokehMath.radiusPixels(
+    private fun bokehParams(frame: BakeFrame): SubjectBokehDrawParams? =
+        SubjectBokehPlanner.params(
             blur = frame.subjectOps.blur,
             shortEdge = minOf(frame.cropWidth, frame.cropHeight),
-            maxRadiusPx = maxRadius
-        )
-        if (radius <= 0) return null
-        return SubjectBokehDrawParams(
-            maskTextureId = subjectWeightTexture.textureId,
-            radiusPx = radius.toFloat(),
+            maskTextureId = if (subjectWeightTexture.isActive) subjectWeightTexture.textureId else 0,
             localSpace = true,
-            uvMatrix = IDENTITY_MATRIX
+            uvMatrix = IDENTITY_MATRIX,
+            maxRadiusPx = if (frame.band.halo > 0) frame.band.halo - 2 else Int.MAX_VALUE
         )
-    }
 
     private fun passBParams(
         frame: BakeFrame,
@@ -456,7 +444,13 @@ internal class BakePassChain {
         ditherAmp = ditherAmp,
         subject = subject,
         subjectWeightTextureId = subjectWeightTextureId,
-        subjectLocalSpace = subjectLocalSpace
+        subjectLocalSpace = subjectLocalSpace,
+        cloudLayerTextureId = if (cloudTextures.isActive) cloudTextures.imageTextureId else 0,
+        cloudMaskTextureId = if (cloudTextures.isActive) cloudTextures.maskTextureId else 0,
+        cloudOpacity = frame.cloudLayerOpacity,
+        // The cloud texture is frame-sized while Pass B here draws one band: map the band-local
+        // fragment UV back onto the post-crop frame so adjacent bands agree to the pixel.
+        cloudUvTransform = frame.band.tileUv
     )
 
     private companion object {

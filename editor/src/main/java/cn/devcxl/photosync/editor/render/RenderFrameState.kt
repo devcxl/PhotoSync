@@ -29,7 +29,12 @@ internal data class RenderFrameState(
     val subjectColorRgb: Int = 0xFFFFFF,
     val subjectUvMatrix: FloatArray = IDENTITY_MATRIX,
     val subjectWarpActive: Boolean = false,
-    val subjectOps: SubjectOps = SubjectOps()
+    val subjectOps: SubjectOps = SubjectOps(),
+    /**
+     * Effective cloud layer opacity in `0..1`, or `0` when the graph has no layer, the layer is
+     * fully transparent, or its `geometryDigest` no longer matches the current Pass A framing.
+     */
+    val cloudLayerOpacity: Float = 0.0f
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -50,7 +55,8 @@ internal data class RenderFrameState(
             subjectColorRgb == other.subjectColorRgb &&
             subjectUvMatrix.contentEquals(other.subjectUvMatrix) &&
             subjectWarpActive == other.subjectWarpActive &&
-            subjectOps == other.subjectOps
+            subjectOps == other.subjectOps &&
+            cloudLayerOpacity == other.cloudLayerOpacity
     }
 
     override fun hashCode(): Int {
@@ -71,6 +77,7 @@ internal data class RenderFrameState(
         result = 31 * result + subjectUvMatrix.contentHashCode()
         result = 31 * result + subjectWarpActive.hashCode()
         result = 31 * result + subjectOps.hashCode()
+        result = 31 * result + cloudLayerOpacity.hashCode()
         return result
     }
 
@@ -116,5 +123,9 @@ internal data class PreviewFrameRequest(
     /** `uWarpTex` name and decode constants used to align the source-space subject alpha. */
     val subjectWarpTextureId: Int = 0,
     val subjectWarpScale: Float = 1.0f,
-    val subjectWarpOffset: Float = 0.0f
+    val subjectWarpOffset: Float = 0.0f,
+    /** Uploaded Post-Pass A cloud layer image, or `0` when no layer may be sampled. */
+    val cloudLayerTextureId: Int = 0,
+    /** Uploaded cloud coverage mask, or `0` for a whole-frame layer. */
+    val cloudMaskTextureId: Int = 0
 )

@@ -6,11 +6,13 @@ import kotlin.math.roundToInt
 import android.graphics.Bitmap
 
 import cn.devcxl.photosync.editor.contract.EditorCachePaths
+import cn.devcxl.photosync.editor.domain.AiAssetStore
 import cn.devcxl.photosync.editor.domain.ColorGradingParams
 import cn.devcxl.photosync.editor.domain.CurveLutBuilder
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.ExposureShaderMath
 import cn.devcxl.photosync.editor.domain.GeometryMath
+import cn.devcxl.photosync.editor.domain.LinearCloudLayer
 import cn.devcxl.photosync.editor.domain.LinearRawPreviewRenderer
 import cn.devcxl.photosync.editor.domain.SkinMaskMath
 import cn.devcxl.photosync.editor.domain.WarpDisplacementField
@@ -56,9 +58,11 @@ internal object PreviewCacheWriter {
         lut: Lut3dSamples? = null,
         skinMask: FloatArray? = null,
         subject: SubjectComposite? = null,
-        inpaint: InpaintOverlay? = null
+        inpaint: InpaintOverlay? = null,
+        cloudAssets: AiAssetStore? = null
     ): String? {
-        val rendered = renderBitmapFrame(source, graph, warpField, lut, skinMask, subject, inpaint)
+        val rendered =
+            renderBitmapFrame(source, graph, warpField, lut, skinMask, subject, inpaint, cloudAssets)
             ?: return null
         return compressAndWrite(rendered, cacheDir, photoId)
     }
@@ -73,9 +77,11 @@ internal object PreviewCacheWriter {
         lut: Lut3dSamples? = null,
         skinMask: FloatArray? = null,
         subject: SubjectComposite? = null,
-        inpaint: InpaintOverlay? = null
+        inpaint: InpaintOverlay? = null,
+        cloudAssets: AiAssetStore? = null
     ): String? {
-        val rendered = renderLinearFrame(source, graph, warpField, lut, skinMask, subject, inpaint)
+        val rendered =
+            renderLinearFrame(source, graph, warpField, lut, skinMask, subject, inpaint, cloudAssets)
             ?: return null
         return compressAndWrite(rendered, cacheDir, photoId)
     }
@@ -94,9 +100,11 @@ internal object PreviewCacheWriter {
         lut: Lut3dSamples? = null,
         skinMask: FloatArray? = null,
         subject: SubjectComposite? = null,
-        inpaint: InpaintOverlay? = null
+        inpaint: InpaintOverlay? = null,
+        cloudAssets: AiAssetStore? = null
     ): String? {
-        val rendered = renderBitmapFrame(source, graph, warpField, lut, skinMask, subject, inpaint)
+        val rendered =
+            renderBitmapFrame(source, graph, warpField, lut, skinMask, subject, inpaint, cloudAssets)
             ?: return null
         return compressAndWriteTo(rendered, outDir)
     }
@@ -110,9 +118,11 @@ internal object PreviewCacheWriter {
         lut: Lut3dSamples? = null,
         skinMask: FloatArray? = null,
         subject: SubjectComposite? = null,
-        inpaint: InpaintOverlay? = null
+        inpaint: InpaintOverlay? = null,
+        cloudAssets: AiAssetStore? = null
     ): String? {
-        val rendered = renderLinearFrame(source, graph, warpField, lut, skinMask, subject, inpaint)
+        val rendered =
+            renderLinearFrame(source, graph, warpField, lut, skinMask, subject, inpaint, cloudAssets)
             ?: return null
         return compressAndWriteTo(rendered, outDir)
     }
@@ -124,12 +134,13 @@ internal object PreviewCacheWriter {
         lut: Lut3dSamples?,
         skinMask: FloatArray?,
         subject: SubjectComposite?,
-        inpaint: InpaintOverlay?
+        inpaint: InpaintOverlay?,
+        cloudAssets: AiAssetStore?
     ): Bitmap? {
         // A composed half-float copy is JVM-owned, so dropping the reference after this frame is the
         // whole cleanup; the caller's buffer is never mutated.
         val frame = inpaint?.applyToLinearCopy(source) ?: source
-        return renderLinearFrameSource(frame, graph, warpField, lut, skinMask, subject)
+        return renderLinearFrameSource(frame, graph, warpField, lut, skinMask, subject, cloudAssets)
     }
 
     private fun renderLinearFrameSource(
@@ -138,8 +149,10 @@ internal object PreviewCacheWriter {
         warpField: WarpDisplacementField?,
         lut: Lut3dSamples?,
         skinMask: FloatArray?,
-        subject: SubjectComposite?
-    ): Bitmap? {        val sourceAspect = source.width.toFloat() / source.height.toFloat()
+        subject: SubjectComposite?,
+        cloudAssets: AiAssetStore?
+    ): Bitmap? {
+        val sourceAspect = source.width.toFloat() / source.height.toFloat()
         val outputAspect = GeometryMath.outputAspect(graph.geometry, sourceAspect)
         val (outW, outH) = previewSize(outputAspect)
         val geometryActive = graph.requiresPassAGeometry(hasWarp = warpField?.isZero() == false)
@@ -180,7 +193,14 @@ internal object PreviewCacheWriter {
                 }
             },
             afterEffects = checkerboardEffects(graph, subject),
-            subjectWeight = resolveSubjectWeight(subject, graph, linearFrame.width, linearFrame.height, warpField)
+            subjectWeight = resolveSubjectWeight(
+                subject,
+                graph,
+                linearFrame.width,
+                linearFrame.height,
+                warpField
+            ),
+            cloud = cloudPreviewLayer(cloudAssets, graph, linearFrame.width, linearFrame.height)
         )
         return Bitmap.createBitmap(
             pixels,
@@ -197,12 +217,13 @@ internal object PreviewCacheWriter {
         lut: Lut3dSamples?,
         skinMask: FloatArray?,
         subject: SubjectComposite?,
-        inpaint: InpaintOverlay?
+        inpaint: InpaintOverlay?,
+        cloudAssets: AiAssetStore?
     ): Bitmap? {
         val composed = inpaint?.applyToBitmapCopy(source)
         val frame = composed ?: source
         return try {
-            renderBitmapFrameSource(frame, graph, warpField, lut, skinMask, subject)
+            renderBitmapFrameSource(frame, graph, warpField, lut, skinMask, subject, cloudAssets)
         } finally {
             // The composed copy is private to this frame; the caller keeps its immutable source.
             if (composed != null) composed.recycle()
@@ -215,7 +236,8 @@ internal object PreviewCacheWriter {
         warpField: WarpDisplacementField?,
         lut: Lut3dSamples?,
         skinMask: FloatArray?,
-        subject: SubjectComposite?
+        subject: SubjectComposite?,
+        cloudAssets: AiAssetStore?
     ): Bitmap {
         val sourceAspect = source.width.toFloat() / source.height.toFloat()
         val outputAspect = GeometryMath.outputAspect(graph.geometry, sourceAspect)
@@ -231,6 +253,9 @@ internal object PreviewCacheWriter {
             caBlueK = GeometryMath.lateralCaKFromSlider(ca.blueYellow),
             warpField = warpField
         )
+        // The cloud layer is mounted right here: Pass A resampled the frame and Pass B/C/D have not
+        // run yet, which is the same seam the GL Pass B shader blends at.
+        CloudPreviewBlend.blendIntoArgb(cloudAssets, graph, pixels, width, height)
         val graded = gradeDisplayPixels(
             pixels = pixels,
             width = width,
@@ -404,11 +429,20 @@ internal object PreviewCacheWriter {
         }
     }
 
+    private fun cloudPreviewLayer(
+        assets: AiAssetStore?,
+        graph: EditGraph,
+        width: Int,
+        height: Int
+    ): LinearCloudLayer? {
+        if (graph.cloudLayer == null || assets == null) return null
+        return CloudPreviewBlend.prepareLinear(assets, graph, width, height)
+    }
+
     /**
      * Builds the frame-aligned subject alpha when the graph needs it, or `null` for the neutral
      * zero-cost path.
-     */
-    private fun resolveSubjectWeight(
+     */    private fun resolveSubjectWeight(
         subject: SubjectComposite?,
         graph: EditGraph,
         width: Int,
@@ -425,7 +459,8 @@ internal object PreviewCacheWriter {
         return SubjectWeightPlane.compute(subject, width, height, matrix, warpField)
     }
 
-    private fun previewSize(outputAspect: Float): Pair<Int, Int> {        val aspect = outputAspect.takeIf { it.isFinite() && it > 0.0f } ?: 1.0f
+    private fun previewSize(outputAspect: Float): Pair<Int, Int> {
+        val aspect = outputAspect.takeIf { it.isFinite() && it > 0.0f } ?: 1.0f
         return if (aspect >= 1.0f) {
             PREVIEW_MAX_EDGE_PX to (PREVIEW_MAX_EDGE_PX / aspect).roundToInt().coerceAtLeast(1)
         } else {

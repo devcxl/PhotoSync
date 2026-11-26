@@ -16,6 +16,7 @@ import cn.devcxl.photosync.editor.render.EditorSource
 import cn.devcxl.photosync.editor.render.SubjectComposite
 import cn.devcxl.photosync.editor.render.SubjectCompositeLoader
 import cn.devcxl.photosync.editor.vision.SubjectImage
+import cn.devcxl.photosync.editor.vision.SubjectMask
 
 /**
  * Loads and caches the source-space [SubjectComposite] for one editor session.
@@ -66,6 +67,17 @@ internal class SubjectCompositeRefresher(
     fun store(subject: SubjectOps, composite: SubjectComposite) {
         cachedMaskRef = subject.maskRef
         cachedComposite = composite
+    }
+
+    /**
+     * The refined subject alpha currently staged for the canvas, or `null` when none is loaded.
+     *
+     * The cloud background-replacement mode consumes this mask directly; the copy keeps callers from
+     * mutating the cached buffer.
+     */
+    fun currentMask(): SubjectMask? {
+        val composite = cachedComposite ?: return null
+        return SubjectMask(composite.width, composite.height, composite.alpha.copyOf())
     }
 
     /**

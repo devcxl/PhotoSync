@@ -164,8 +164,20 @@ internal object ExposureShaderSources {
         }
     """.trimIndent()
 
+    /** Post-Pass A cloud layer inputs; every value stays neutral when no layer is active. */
+    private val CLOUD_UNIFORMS = """
+        uniform sampler2D uCloudLayerTex;
+        uniform sampler2D uCloudMaskTex;
+        uniform int uCloudActive;
+        uniform int uCloudHasMask;
+        uniform float uCloudOpacity;
+        uniform vec2 uCloudUvScale;
+        uniform vec2 uCloudUvOffset;
+    """.trimIndent()
+
     private val COMMON_UNIFORMS = """
         uniform sampler2D uTex0;
+        $CLOUD_UNIFORMS
         uniform int uCompareOriginal;
         uniform int uIsLinearInput;
         uniform int uBaseLook;
@@ -195,6 +207,34 @@ internal object ExposureShaderSources {
         }
     """.trimIndent()
 
+    /**
+     * Post-Pass A / Pre-Pass B cloud layer fusion.
+     *
+     * The layer is sampled in the frame grid of the texture Pass B reads: the full post-crop frame
+     * for the preview canvas, and `uCloudUvScale/Offset`-mapped band UV inside a bake band. The
+     * blend runs before `BaseLook`, white balance, tone and display colour, so a cloud result is
+     * graded by exactly the same local pipeline as the camera pixels around it.
+     *
+     * A layer PNG is display-referred sRGB; a linear Pass A target therefore decodes it first, which
+     * keeps the blend in the same encoding the rest of the shader works in.
+     */
+    private val CLOUD_GLSL = """
+        vec3 blendCloudLayer(vec3 base) {
+            if (uCloudActive == 0) {
+                return base;
+            }
+            vec2 uv = vTexCoord * uCloudUvScale + uCloudUvOffset;
+            vec4 cloud = sampleTex2D(uCloudLayerTex, uv);
+            float coverage = uCloudOpacity;
+            if (uCloudHasMask == 1) {
+                coverage *= sampleTex2D(uCloudMaskTex, uv).r;
+            }
+            coverage *= cloud.a;
+            vec3 cloudRgb = (uIsLinearInput == 1) ? decodeSrgb(cloud.rgb) : cloud.rgb;
+            return mix(base, cloudRgb, clamp(coverage, 0.0, 1.0));
+        }
+    """.trimIndent()
+
     val FRAGMENT_SHADER_ES3 = """
         #version 300 es
         precision highp float;
@@ -216,6 +256,7 @@ internal object ExposureShaderSources {
 
         $DITHER_GLSL
         $SRGB_GLSL
+        $CLOUD_GLSL
         $CAMERA_DEFAULT_GLSL
         $TONE_GLSL
         ${ColorShaderGlsl.FUNCTIONS}
@@ -223,6 +264,9 @@ internal object ExposureShaderSources {
 
         void main() {
             vec4 src = texture(uTex0, vTexCoord);
+            if (uCompareOriginal == 0) {
+                src.rgb = blendCloudLayer(src.rgb);
+            }
             vec3 linear = (uIsLinearInput == 1)
                 ? applyBaseLook(max(src.rgb, vec3(0.0)) * uAutoBrightGain)
                 : decodeSrgb(src.rgb);
@@ -265,6 +309,7 @@ internal object ExposureShaderSources {
 
         $DITHER_GLSL
         $SRGB_GLSL
+        $CLOUD_GLSL
         $CAMERA_DEFAULT_GLSL
         $TONE_GLSL
         ${ColorShaderGlsl.FUNCTIONS}
@@ -272,6 +317,9 @@ internal object ExposureShaderSources {
 
         void main() {
             vec4 src = texture2D(uTex0, vTexCoord);
+            if (uCompareOriginal == 0) {
+                src.rgb = blendCloudLayer(src.rgb);
+            }
             vec3 linear = (uIsLinearInput == 1)
                 ? applyBaseLook(max(src.rgb, vec3(0.0)) * uAutoBrightGain)
                 : decodeSrgb(src.rgb);
