@@ -55,7 +55,8 @@ internal object BakeFrameFactory {
             cropWidth = outputWidth,
             cropHeight = outputHeight,
             fullResolutionShortEdge = minOf(source.width, source.height),
-            maxWarpDisplacementUv = maxWarpDisplacementUv
+            maxWarpDisplacementUv = maxWarpDisplacementUv,
+            subjectOps = graph.subject
         )
     }
 

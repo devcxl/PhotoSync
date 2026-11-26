@@ -10,9 +10,12 @@ package cn.devcxl.photosync.editor.domain
  *
  * The pixel-level AI layers are **never** copy axes: `inpaint` and `cloudLayer` stay with the frame
  * they were generated for, even when every copy checkbox is enabled, because a repaired region or a
- * cloud result cannot be re-projected onto another photo's geometry. `subject` and `sky` are local
- * mask parameters as well; this mask therefore leaves the target's AI groups untouched rather than
- * carrying the source's.
+ * cloud result cannot be re-projected onto another photo's geometry.
+ *
+ * `subject` is different: its *parameters* (background mode, blur and the foreground/background
+ * relative grade) are a reusable look, so [includeAiSubject] carries them. The source's `maskRef`
+ * is **never** copied: the refined mask belongs to the source frame's pixels, and the target must
+ * either keep its own mask or recompute one from its own image. `sky` stays a frame-local group.
  */
 data class CopyMask(
     val includeBaseLook: Boolean = true,
@@ -23,7 +26,8 @@ data class CopyMask(
     val includePortraitSkin: Boolean = true,
     val includeGeometryCropRotate: Boolean = false,
     val includeLiquify: Boolean = false,
-    val includePortraitReshapeBody: Boolean = false
+    val includePortraitReshapeBody: Boolean = false,
+    val includeAiSubject: Boolean = true
 ) {
 
     /**
@@ -40,7 +44,8 @@ data class CopyMask(
             color = pick(includeColor, source.color, target.color),
             detail = pick(includeDetail, source.detail, target.detail),
             effects = pick(includeEffects, source.effects, target.effects),
-            portrait = mergePortrait(source.portrait, target.portrait)
+            portrait = mergePortrait(source.portrait, target.portrait),
+            subject = mergeSubject(source.subject, target.subject)
         )
         return EditValidator.sanitize(merged)
     }
@@ -63,6 +68,20 @@ data class CopyMask(
         body = pick(includePortraitReshapeBody, source.body, target.body)
     )
 
+    /**
+     * Copies only the reusable [SubjectOps] parameters.
+     *
+     * The target's `maskRef` is preserved verbatim — never the source's — because a refined mask
+     * describes the source frame's pixels. A target without a mask falls back to recomputing one
+     * from its own image when the preset is applied (editor restore, quick strip or tethered sync).
+     */
+    private fun mergeSubject(source: SubjectOps, target: SubjectOps): SubjectOps =
+        if (!includeAiSubject) {
+            target
+        } else {
+            source.copy(maskRef = target.maskRef)
+        }
+
     /** Explicit `if` instead of `takeIf` so the generic type stays inferred without boxing. */
     private fun <T> pick(enabled: Boolean, fromSource: T, fromTarget: T): T =
         if (enabled) fromSource else fromTarget
@@ -70,7 +89,7 @@ data class CopyMask(
     companion object {
 
         /** Number of independently selectable axes in the copy checklist. */
-        const val AXIS_COUNT = 9
+        const val AXIS_COUNT = 10
 
         /**
          * Maps the `AXIS_COUNT` copy-checklist checkboxes onto a mask.
@@ -87,7 +106,8 @@ data class CopyMask(
             includePortraitSkin = checked.getOrElse(5) { true },
             includeGeometryCropRotate = checked.getOrElse(6) { false },
             includeLiquify = checked.getOrElse(7) { false },
-            includePortraitReshapeBody = checked.getOrElse(8) { false }
+            includePortraitReshapeBody = checked.getOrElse(8) { false },
+            includeAiSubject = checked.getOrElse(9) { true }
         )
     }
 }
@@ -157,7 +177,8 @@ object PresetGraphMerger {
             graph.color.isIdentity() &&
             graph.detail.isIdentity() &&
             graph.effects.isIdentity() &&
-            graph.portrait.isIdentity()
+            graph.portrait.isIdentity() &&
+            graph.subject.isIdentity()
 
     /**
      * Returns the id of the first entry in [candidates] whose carried axes match [graph], or `null`

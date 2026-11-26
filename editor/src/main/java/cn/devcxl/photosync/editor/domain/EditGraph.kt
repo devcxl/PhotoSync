@@ -343,6 +343,25 @@ data class SubjectOps(
             bgTemp == 0 &&
             bgSat == 0
 
+    /** True when the foreground/background relative exposure, temperature or saturation is set. */
+    fun hasGradingAdjustments(): Boolean =
+        fgExposure != 0 ||
+            fgTemp != 0 ||
+            fgSat != 0 ||
+            bgExposure != 0 ||
+            bgTemp != 0 ||
+            bgSat != 0
+
+    /** True when the simulated background bokeh is requested. */
+    fun hasBackgroundBlur(): Boolean = blur > 0
+
+    /**
+     * True when any effect needs the refined subject alpha, i.e. the composite must be loaded even
+     * with an `ORIGINAL` background.
+     */
+    fun requiresMaskProcessing(): Boolean =
+        bgMode != SubjectBackgroundMode.ORIGINAL || hasBackgroundBlur() || hasGradingAdjustments()
+
     companion object {
         /** Opaque white, the default solid background of [SubjectBackgroundMode.SOLID]. */
         const val DEFAULT_BG_COLOR_ARGB: Int = 0xFFFFFFFF.toInt()

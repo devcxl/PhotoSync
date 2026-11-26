@@ -15,6 +15,7 @@ import cn.devcxl.photosync.editor.domain.PassDEffectsMath
 import cn.devcxl.photosync.editor.domain.PassDEffectsParams
 import cn.devcxl.photosync.editor.domain.SpatialDetailParams
 import cn.devcxl.photosync.editor.domain.SpatialDetailPlanner
+import cn.devcxl.photosync.editor.domain.SubjectBokehMath
 import cn.devcxl.photosync.editor.domain.TileUvTransform
 import cn.devcxl.photosync.editor.domain.ToneShaderParams
 import cn.devcxl.photosync.editor.domain.WarpDisplacementField
@@ -63,6 +64,7 @@ internal class OffscreenPreviewPasses : AutoCloseable {
     private val warpTexture = WarpTexture()
     private val skinMaskTexture = SkinMaskTexture()
     private val subjectTexture = SubjectMaskTexture()
+    private val subjectWeightTexture = SubjectWeightTexture()
     private val curveLutTexture = CurveLutTexture()
     private val lutTexture = Lut3dTexture()
     private val prepassAnalyzer = PrepassAnalyzer(capabilities)
@@ -149,6 +151,11 @@ internal class OffscreenPreviewPasses : AutoCloseable {
         if (subject != null && !subjectTexture.isActive) {
             return previewUnavailable("the subject composite could not be uploaded")
         }
+        subjectWeightTexture.stage(subject)
+        subjectWeightTexture.uploadIfNeeded()
+        if (subject != null && !subjectWeightTexture.isActive) {
+            return previewUnavailable("the subject weight could not be uploaded")
+        }
 
         curveLutTexture.stage(curve)
         curveLutTexture.uploadIfNeeded(preferEs3 = true)
@@ -231,10 +238,13 @@ internal class OffscreenPreviewPasses : AutoCloseable {
         autoBrightGain: Float,
         graph: EditGraph,
         toneParams: ToneShaderParams,
-        colorParams: ColorGradingParams
+        colorParams: ColorGradingParams,
+        subjectUvMatrix: FloatArray = IDENTITY_MATRIX
     ): Boolean {
         passBTarget.ensureSize(width, height, allowHalfFloat = true, exactSize = true)
-        return drawPassBInto(passBTarget, linearSource, autoBrightGain, graph, toneParams, colorParams)
+        return drawPassBInto(
+            passBTarget, width, height, linearSource, autoBrightGain, graph, toneParams, colorParams, subjectUvMatrix
+        )
     }
 
     /** Grades into the Pre-pass target, which must keep the format [PrepassAnalyzer] allocated. */
@@ -244,8 +254,12 @@ internal class OffscreenPreviewPasses : AutoCloseable {
         autoBrightGain: Float,
         graph: EditGraph,
         toneParams: ToneShaderParams,
-        colorParams: ColorGradingParams
-    ): Boolean = drawPassBInto(target, linearSource, autoBrightGain, graph, toneParams, colorParams)
+        colorParams: ColorGradingParams,
+        subjectUvMatrix: FloatArray = IDENTITY_MATRIX
+    ): Boolean = drawPassBInto(
+        target, target.width, target.height, linearSource, autoBrightGain, graph, toneParams, colorParams,
+        subjectUvMatrix
+    )
 
     /**
      * Runs the planned Pass C sub-passes on [passBTextureId].
@@ -257,12 +271,15 @@ internal class OffscreenPreviewPasses : AutoCloseable {
         width: Int,
         height: Int,
         spatialParams: SpatialDetailParams,
-        fullResolutionShortEdge: Int
+        fullResolutionShortEdge: Int,
+        graph: EditGraph,
+        subjectUvMatrix: FloatArray = IDENTITY_MATRIX
     ): Int? {
         val plan = SpatialDetailPlanner.plan(
             params = spatialParams,
             prepassAvailable = prepassTextureId != 0,
-            skinMaskAvailable = skinMaskTexture.isActive
+            skinMaskAvailable = skinMaskTexture.isActive,
+            subjectMaskAvailable = subjectWeightTexture.isActive
         )
         if (plan.stages.isEmpty()) return 0
         val output = spatialChain.run(
@@ -275,7 +292,8 @@ internal class OffscreenPreviewPasses : AutoCloseable {
             prepassTextureId = prepassTextureId,
             skinMaskTextureId = if (skinMaskTexture.isActive) skinMaskTexture.textureId else 0,
             atmosphericLight = atmosphericLight,
-            guideTransform = TileUvTransform.IDENTITY
+            guideTransform = TileUvTransform.IDENTITY,
+            subjectBokeh = subjectBokehParams(graph, width, height, subjectUvMatrix)
         )
         // The chain returns its input when nothing ran and an *intermediate* texture when a later
         // ping-pong target failed, so comparing against the input is not enough. Counting the draws
@@ -376,6 +394,7 @@ internal class OffscreenPreviewPasses : AutoCloseable {
         warpTexture.release()
         skinMaskTexture.release()
         subjectTexture.release()
+        subjectWeightTexture.release()
         curveLutTexture.release()
         lutTexture.release()
         prepassAnalyzer.release()
@@ -388,11 +407,14 @@ internal class OffscreenPreviewPasses : AutoCloseable {
 
     private fun drawPassBInto(
         target: OffscreenColorTarget,
+        width: Int,
+        height: Int,
         linearSource: Boolean,
         autoBrightGain: Float,
         graph: EditGraph,
         toneParams: ToneShaderParams,
-        colorParams: ColorGradingParams
+        colorParams: ColorGradingParams,
+        subjectUvMatrix: FloatArray
     ): Boolean {
         if (!target.isReady) return previewUnavailable("the Pass B target is incomplete")
         target.bind()
@@ -414,11 +436,45 @@ internal class OffscreenPreviewPasses : AutoCloseable {
                 texelWidth = target.width,
                 texelHeight = target.height,
                 ditherAmp = if (target.isHalfFloatTarget) 0.0f else PassDEffectsMath.DITHER_AMPLITUDE,
-                flipVerticalForScreen = false
+                flipVerticalForScreen = false,
+                subject = graph.subject,
+                subjectWeightTextureId = if (subjectWeightTexture.isActive) {
+                    subjectWeightTexture.textureId
+                } else {
+                    0
+                },
+                subjectLocalSpace = false,
+                subjectUvMatrix = subjectUvMatrix,
+                subjectWarpTextureId = if (warpTexture.isWarpActive) warpTexture.textureId else 0,
+                subjectWarpScale = warpTexture.decodeScale,
+                subjectWarpOffset = warpTexture.decodeOffset
             )
         )
         target.unbind()
         return clearOfGlErrors("Pass B")
+    }
+
+    private fun subjectBokehParams(
+        graph: EditGraph,
+        width: Int,
+        height: Int,
+        subjectUvMatrix: FloatArray
+    ): SubjectBokehDrawParams? {
+        if (!graph.subject.hasBackgroundBlur() || !subjectWeightTexture.isActive) return null
+        val radius = SubjectBokehMath.radiusPixels(
+            blur = graph.subject.blur,
+            shortEdge = minOf(width, height)
+        )
+        if (radius <= 0) return null
+        return SubjectBokehDrawParams(
+            maskTextureId = subjectWeightTexture.textureId,
+            radiusPx = radius.toFloat(),
+            localSpace = false,
+            uvMatrix = subjectUvMatrix,
+            warpTextureId = if (warpTexture.isWarpActive) warpTexture.textureId else 0,
+            warpScale = warpTexture.decodeScale,
+            warpOffset = warpTexture.decodeOffset
+        )
     }
 
     /**

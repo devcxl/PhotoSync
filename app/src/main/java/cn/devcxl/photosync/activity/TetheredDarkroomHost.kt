@@ -15,12 +15,17 @@ import timber.log.Timber
 import cn.devcxl.photosync.R
 import cn.devcxl.photosync.adapter.PhotoPagerAdapter
 import cn.devcxl.photosync.data.PhotoDao
+import cn.devcxl.photosync.data.entity.PhotoEntity
 import cn.devcxl.photosync.editor.contract.EditStore
 import cn.devcxl.photosync.editor.contract.EditorHostRegistry
 import cn.devcxl.photosync.editor.contract.PhotoEditRecord
+import cn.devcxl.photosync.editor.domain.AiAssetKind
+import cn.devcxl.photosync.editor.domain.AiAssetStore
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.EditGraphJsonCodec
+import cn.devcxl.photosync.editor.domain.SubjectOps
 import cn.devcxl.photosync.editor.render.BackgroundPreviewRenderer
+import cn.devcxl.photosync.editor.render.TetheredSubjectPresetPreparer
 import cn.devcxl.photosync.utils.ExtensionUtils
 
 /**
@@ -36,7 +41,8 @@ internal class TetheredDarkroomHost(
     private val currentIndex: () -> Int,
     private val editedMap: () -> Map<Long, PhotoEditRecord>,
     private val onGraphPersisted: (Long) -> Unit,
-    private val onFeedback: (String) -> Unit
+    private val onFeedback: (String) -> Unit,
+    private val subjectPresetPreparer: TetheredSubjectPresetPreparer? = null
 ) {
 
     private val store: EditStore?
@@ -129,7 +135,10 @@ internal class TetheredDarkroomHost(
         graph: EditGraph
     ): Boolean = try {
         val entity = withContext(Dispatchers.IO) { dao.getById(photoId) } ?: return false
-        val previewPath = if (graph.isIdentity()) {
+        val effectiveGraph = withContext(Dispatchers.IO) {
+            ensureSubjectMask(photoId, entity, graph)
+        }
+        val previewPath = if (effectiveGraph.isIdentity()) {
             null
         } else {
             val isRaw = ExtensionUtils.isRawExtension(ExtensionUtils.fileExtension(entity.path))
@@ -140,11 +149,11 @@ internal class TetheredDarkroomHost(
                 photoId = photoId,
                 sourcePath = entity.path,
                 isRaw = isRaw,
-                graph = graph
+                graph = effectiveGraph
             ) ?: return false
         }
         withContext(Dispatchers.IO) {
-            currentStore.saveEditForPhoto(photoId, graph, previewCachePath = previewPath)
+            currentStore.saveEditForPhoto(photoId, effectiveGraph, previewCachePath = previewPath)
         }
         true
     } catch (cancelled: CancellationException) {
@@ -156,6 +165,51 @@ internal class TetheredDarkroomHost(
         Timber.e(error, "Database failure persisting gallery edit for photoId=%d", photoId)
         false
     }
+
+    /**
+     * Ensures the target photo has its own subject mask before a preset that carries `SubjectOps`
+     * is rendered and saved.
+     *
+     * A mask already referenced by the graph is kept. Otherwise the preparer runs MODNet once; when
+     * the device is `<= 4 GiB`, the model is missing or inference fails, the graph silently degrades
+     * to the traditional grade. The prepared payload is persisted under the same `photoId` the edit
+     * row will use, so the stored `maskRef` is valid immediately.
+     */
+    private suspend fun ensureSubjectMask(
+        photoId: Long,
+        entity: PhotoEntity,
+        graph: EditGraph
+    ): EditGraph {
+        if (!graph.subject.requiresMaskProcessing()) return graph
+        if (graph.subject.maskRef.isNotBlank()) return graph
+        val preparer = subjectPresetPreparer
+        if (preparer == null) {
+            Timber.i("No subject preparer; the gallery preset applies the traditional grade")
+            return degradeSubject(graph)
+        }
+        val isRaw = ExtensionUtils.isRawExtension(ExtensionUtils.fileExtension(entity.path))
+        val preparation = try {
+            preparer.prepare(entity.path, isRaw, graph)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: RuntimeException) {
+            Timber.w(error, "Subject preparation threw; applying the traditional grade")
+            null
+        }
+        if (preparation == null) {
+            Timber.i("Gallery preset subject effect degraded to the traditional grade")
+            return degradeSubject(graph)
+        }
+        val reference = AiAssetStore(context.filesDir)
+            .write(photoId, AiAssetKind.SUBJECT_MASK, preparation.payload)
+        if (reference == null) {
+            Timber.w("Gallery preset subject mask could not be stored; applying the traditional grade")
+            return degradeSubject(graph)
+        }
+        return graph.copy(subject = graph.subject.copy(maskRef = reference.relativePath))
+    }
+
+    private fun degradeSubject(graph: EditGraph): EditGraph = graph.copy(subject = SubjectOps())
 
     private fun graphOf(photoId: Long): EditGraph? {
         val json = editedMap()[photoId]?.graphJson ?: return null

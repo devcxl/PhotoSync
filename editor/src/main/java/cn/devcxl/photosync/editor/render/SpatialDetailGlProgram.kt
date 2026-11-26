@@ -5,6 +5,34 @@ import android.opengl.GLES20
 import cn.devcxl.photosync.editor.domain.SpatialDetailStage
 
 /**
+ * Subject-mask inputs of the terminal Pass C bokeh stage.
+ *
+ * @property maskTextureId Refined subject alpha: source-space for the canvas, band-local for a bake.
+ * @property radiusPx Blur radius in pixels of the target currently bound.
+ * @property localSpace True when [maskTextureId] already uses the draw's coordinate grid.
+ * @property uvMatrix Output-UV to pre-crop-UV matrix for a source-space alpha.
+ * @property warpTextureId `uWarpTex` sampled to mirror the Pass A displacement.
+ */
+internal data class SubjectBokehDrawParams(
+    val maskTextureId: Int,
+    val radiusPx: Float,
+    val localSpace: Boolean,
+    val uvMatrix: FloatArray,
+    val warpTextureId: Int = 0,
+    val warpScale: Float = 1.0f,
+    val warpOffset: Float = 0.0f
+) {
+
+    companion object {
+        val IDENTITY_MATRIX = floatArrayOf(
+            1.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f,
+            0.0f, 0.0f, 1.0f
+        )
+    }
+}
+
+/**
  * Uniform bundle of one Pass C sub-pass draw.
  */
 internal data class SpatialDetailDrawParams(
@@ -12,6 +40,7 @@ internal data class SpatialDetailDrawParams(
     val inputTextureId: Int,
     val prepassTextureId: Int = 0,
     val skinMaskTextureId: Int = 0,
+    val subjectBokeh: SubjectBokehDrawParams? = null,
     val dehazeStrength: Float = 0.0f,
     val atmosphericLight: FloatArray = floatArrayOf(1.0f, 1.0f, 1.0f),
     val clarity: Float = 0.0f,
@@ -60,6 +89,15 @@ internal class SpatialDetailGlProgram {
     private var uSkinParamsLoc: Int = -1
     private var uSkinBlurScaleLoc: Int = -1
     private var uDitherAmpLoc: Int = -1
+    private var uSubjectMaskLoc: Int = -1
+    private var uHasSubjectMaskLoc: Int = -1
+    private var uSubjectLocalLoc: Int = -1
+    private var uSubjectUvMatrixLoc: Int = -1
+    private var uSubjectWarpLoc: Int = -1
+    private var uHasSubjectWarpLoc: Int = -1
+    private var uSubjectWarpScaleLoc: Int = -1
+    private var uSubjectWarpOffsetLoc: Int = -1
+    private var uSubjectBlurRadiusLoc: Int = -1
 
     private val quad = QuadMesh()
 
@@ -122,6 +160,7 @@ internal class SpatialDetailGlProgram {
         GLES20.glUniform3f(uSkinParamsLoc, params.skinSmooth, params.skinTexture, params.skinEvenTone)
         GLES20.glUniform1f(uSkinBlurScaleLoc, params.skinBlurScale)
         GLES20.glUniform1f(uDitherAmpLoc, params.ditherAmp)
+        applySubjectUniforms(params)
         quad.draw(aPositionLoc, aTexCoordLoc, QuadOrientation.OFFSCREEN)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
     }
@@ -160,6 +199,35 @@ internal class SpatialDetailGlProgram {
         uSkinParamsLoc = GLES20.glGetUniformLocation(programId, "uSkinParams")
         uSkinBlurScaleLoc = GLES20.glGetUniformLocation(programId, "uSkinBlurScale")
         uDitherAmpLoc = GLES20.glGetUniformLocation(programId, "uDitherAmp")
+        uSubjectMaskLoc = GLES20.glGetUniformLocation(programId, "uSubjectMaskTex")
+        uHasSubjectMaskLoc = GLES20.glGetUniformLocation(programId, "uHasSubjectMask")
+        uSubjectLocalLoc = GLES20.glGetUniformLocation(programId, "uSubjectLocal")
+        uSubjectUvMatrixLoc = GLES20.glGetUniformLocation(programId, "uSubjectUvMatrix")
+        uSubjectWarpLoc = GLES20.glGetUniformLocation(programId, "uSubjectWarpTex")
+        uHasSubjectWarpLoc = GLES20.glGetUniformLocation(programId, "uHasSubjectWarpTex")
+        uSubjectWarpScaleLoc = GLES20.glGetUniformLocation(programId, "uSubjectWarpScale")
+        uSubjectWarpOffsetLoc = GLES20.glGetUniformLocation(programId, "uSubjectWarpOffset")
+        uSubjectBlurRadiusLoc = GLES20.glGetUniformLocation(programId, "uSubjectBokehRadius")
+    }
+
+    private fun applySubjectUniforms(params: SpatialDetailDrawParams) {
+        val bokeh = params.subjectBokeh
+        val active = bokeh != null && bokeh.maskTextureId != 0 && bokeh.radiusPx > 0.0f
+        GLES20.glUniform1i(uHasSubjectMaskLoc, if (active) 1 else 0)
+        GLES20.glUniform1f(uSubjectBlurRadiusLoc, bokeh?.radiusPx ?: 0.0f)
+        if (!active || bokeh == null) return
+        GLES20.glUniform1i(uSubjectLocalLoc, if (bokeh.localSpace) 1 else 0)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE3)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, bokeh.maskTextureId)
+        GLES20.glUniform1i(uSubjectMaskLoc, 3)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE4)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, bokeh.warpTextureId)
+        GLES20.glUniform1i(uSubjectWarpLoc, 4)
+        GLES20.glUniform1i(uHasSubjectWarpLoc, if (bokeh.warpTextureId != 0) 1 else 0)
+        GLES20.glUniformMatrix3fv(uSubjectUvMatrixLoc, 1, false, bokeh.uvMatrix, 0)
+        GLES20.glUniform2f(uSubjectWarpScaleLoc, bokeh.warpScale, bokeh.warpScale)
+        GLES20.glUniform2f(uSubjectWarpOffsetLoc, bokeh.warpOffset, bokeh.warpOffset)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
     }
 
     private companion object {

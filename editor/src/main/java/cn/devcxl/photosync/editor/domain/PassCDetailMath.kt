@@ -68,6 +68,7 @@ object PassCDetailMath {
      *   the analysis the stage would have to guess which pixels are skin.
      * @param resolutionScale Working-to-full resolution ratio, used to keep the sharpening radius
      *   physically identical between the 1024px proxy, the preview cache and a full-resolution bake.
+     * @param subjectWeight Optional frame-aligned subject alpha; enables the terminal bokeh stage.
      */
     fun apply(
         srgb: FloatArray,
@@ -76,7 +77,8 @@ object PassCDetailMath {
         params: SpatialDetailParams,
         analysis: PrepassMath.Analysis? = null,
         skinMask: FloatArray? = null,
-        resolutionScale: Float = 1.0f
+        resolutionScale: Float = 1.0f,
+        subjectWeight: FloatArray? = null
     ) {
         require(srgb.size == width * height * CHANNELS) {
             "An RGB buffer needs ${width * height * CHANNELS} samples, got ${srgb.size}"
@@ -99,6 +101,13 @@ object PassCDetailMath {
         if (params.hasClarityTexture) applyClarityTexture(srgb, width, height, params, analysis)
         if (params.hasSharpen) {
             SharpenMath.apply(srgb, width, height, params, skinMask, resolutionScale)
+        }
+        if (params.hasSubjectBokeh && subjectWeight != null) {
+            val radius = SubjectBokehMath.radiusPixels(
+                blurFraction = params.subjectBlur,
+                shortEdge = minOf(width, height)
+            )
+            SubjectBokehMath.apply(srgb, width, height, subjectWeight, radius)
         }
     }
 

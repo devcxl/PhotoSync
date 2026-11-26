@@ -57,7 +57,7 @@ internal class LabeledDialRow private constructor(
     }
 
     companion object {
-        private const val LABEL_WIDTH_DP = 40.0f
+        private const val LABEL_WIDTH_DP = 52.0f
         private const val VALUE_WIDTH_DP = 40.0f
         private const val DIAL_HEIGHT_DP = 36.0f
         private const val ROW_TOP_MARGIN_DP = 2.0f

@@ -183,6 +183,7 @@ internal object ExposureShaderSources {
         uniform float uBlacks;
         uniform float uDitherAmp;
         ${ColorShaderGlsl.UNIFORMS}
+        ${ColorShaderGlsl.SUBJECT_UNIFORMS}
     """.trimIndent()
 
     /** `1/255` triangular output dither shared by both GLSL dialects. */
@@ -209,18 +210,29 @@ internal object ExposureShaderSources {
             return texture(s, uv);
         }
 
+        vec4 sampleSubjectTex(sampler2D s, vec2 uv) {
+            return texture(s, uv);
+        }
+
         $DITHER_GLSL
         $SRGB_GLSL
         $CAMERA_DEFAULT_GLSL
         $TONE_GLSL
         ${ColorShaderGlsl.FUNCTIONS}
+        ${ColorShaderGlsl.SUBJECT_RELIGHT_FUNCTIONS}
 
         void main() {
             vec4 src = texture(uTex0, vTexCoord);
             vec3 linear = (uIsLinearInput == 1)
                 ? applyBaseLook(max(src.rgb, vec3(0.0)) * uAutoBrightGain)
                 : decodeSrgb(src.rgb);
-            if (uCompareOriginal == 1 || (uToneActive == 0 && uPassB2Active == 0)) {
+            if (uCompareOriginal == 1) {
+                vec3 passthrough = encodeSrgb(linear) + vec3(triDither(gl_FragCoord.xy));
+                fragColor = vec4(clamp(passthrough, 0.0, 1.0), src.a);
+                return;
+            }
+            linear = applySubjectRelight(linear);
+            if (uToneActive == 0 && uPassB2Active == 0) {
                 vec3 passthrough = encodeSrgb(linear) + vec3(triDither(gl_FragCoord.xy));
                 fragColor = vec4(clamp(passthrough, 0.0, 1.0), src.a);
                 return;
@@ -247,18 +259,29 @@ internal object ExposureShaderSources {
             return texture2D(s, uv);
         }
 
+        vec4 sampleSubjectTex(sampler2D s, vec2 uv) {
+            return texture2D(s, uv);
+        }
+
         $DITHER_GLSL
         $SRGB_GLSL
         $CAMERA_DEFAULT_GLSL
         $TONE_GLSL
         ${ColorShaderGlsl.FUNCTIONS}
+        ${ColorShaderGlsl.SUBJECT_RELIGHT_FUNCTIONS}
 
         void main() {
             vec4 src = texture2D(uTex0, vTexCoord);
             vec3 linear = (uIsLinearInput == 1)
                 ? applyBaseLook(max(src.rgb, vec3(0.0)) * uAutoBrightGain)
                 : decodeSrgb(src.rgb);
-            if (uCompareOriginal == 1 || (uToneActive == 0 && uPassB2Active == 0)) {
+            if (uCompareOriginal == 1) {
+                vec3 passthrough = encodeSrgb(linear) + vec3(triDither(gl_FragCoord.xy));
+                gl_FragColor = vec4(clamp(passthrough, 0.0, 1.0), src.a);
+                return;
+            }
+            linear = applySubjectRelight(linear);
+            if (uToneActive == 0 && uPassB2Active == 0) {
                 vec3 passthrough = encodeSrgb(linear) + vec3(triDither(gl_FragCoord.xy));
                 gl_FragColor = vec4(clamp(passthrough, 0.0, 1.0), src.a);
                 return;

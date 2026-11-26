@@ -11,6 +11,9 @@ import cn.devcxl.photosync.data.entity.PhotoEntity
 import cn.devcxl.photosync.editor.contract.EditStore
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.EditGraphJsonCodec
+import cn.devcxl.photosync.editor.domain.SubjectOps
+import cn.devcxl.photosync.editor.vision.SubjectMask
+import cn.devcxl.photosync.editor.render.TetheredSubjectPresetPreparer
 
 /**
  * Atomically commits a freshly synced photo together with its `LiveTetherPreset` edit row.
@@ -28,6 +31,25 @@ interface TetheredPhotoCommitter {
      * @return The new photo id, or a non-positive value when the row already existed.
      */
     suspend fun commit(photo: PhotoEntity, stagedPreview: File?, graphJson: String?): Long
+
+    /**
+     * Same transaction as [commit], plus a subject-mask payload that only gets its final
+     * `edits/<photoId>/` path once Room has assigned the id.
+     *
+     * The implementation must move the mask into the content-addressed store, rewrite
+     * `subject.maskRef` in [graphJson] and insert that rewritten row in the same transaction. A
+     * failed mask write degrades to the traditional grade (the `subject` group is cleared) instead
+     * of dropping the photo.
+     *
+     * The default delegates to [commit], which is the correct behaviour for hosts without AI assets
+     * (and for JVM test fakes that only record the graph).
+     */
+    suspend fun commitWithSubject(
+        photo: PhotoEntity,
+        stagedPreview: File?,
+        graphJson: String?,
+        subjectMaskPayload: ByteArray?
+    ): Long = commit(photo, stagedPreview, graphJson)
 }
 
 /**
@@ -53,16 +75,21 @@ sealed interface TetheredIngestResult {
  * Order matters and is the whole point of this class:
  * 1. Read the active preset id (synchronous, `SharedPreferences`-backed).
  * 2. Decode its graph; a missing or identity preset means "plain import".
- * 3. Render the preview JPEG into an isolated per-ingest staging directory *before* the row exists.
- * 4. Commit the row and the edit together in one transaction (dropping the edit row too if staging
- *    failed, so a half-bound `PhotoEditEntity` without preview is never written).
- * 5. Clean up the staging directory and announce the photo id.
+ * 3. When the preset carries a non-identity `SubjectOps`, optionally run the on-device MODNet
+ *    preparation once. A low-memory device or a missing model degrades silently to the traditional
+ *    grade — the USB queue never blocks and never drops the photo.
+ * 4. Render the preview JPEG into an isolated per-ingest staging directory *before* the row exists.
+ * 5. Commit the row, the edit and the staged subject mask together in one transaction.
+ * 6. Clean up the staging directory and announce the photo id.
  */
 class TetheredPhotoIngestor(
     private val editStore: EditStore,
     private val committer: TetheredPhotoCommitter,
     private val stagingDir: File,
     private val renderPreview: suspend (sourcePath: String, isRaw: Boolean, graph: EditGraph, outDir: File) -> File?,
+    private val renderPreviewWithSubject:
+        (suspend (String, Boolean, EditGraph, SubjectMask, File) -> File?)? = null,
+    private val subjectPreparer: TetheredSubjectPresetPreparer? = null,
     private val onIngested: (TetheredIngestResult) -> Unit = {}
 ) {
 
@@ -83,26 +110,26 @@ class TetheredPhotoIngestor(
     ): TetheredIngestResult {
         if (!isRaw && !isJpeg) return TetheredIngestResult.Ignored
         val preset = resolveActivePreset()
+        val prepared = preparePreset(file, isRaw, preset)
         val jobDir = File(stagingDir, "$STAGING_DIR_NAME/${UUID.randomUUID()}")
         return try {
-            val staged = stagePreview(file, isRaw, preset, jobDir)
-            val effectiveGraphJson = if (staged != null) preset?.graphJson else null
+            val staged = stagePreview(file, isRaw, prepared, jobDir)
             val photo = PhotoEntity(
                 path = file.absolutePath,
                 name = file.name,
                 uriString = null,
                 objectHandle = objectHandle
             )
-            val photoId = commitSafely(photo, staged, effectiveGraphJson)
+            val photoId = commitSafely(photo, staged)
             if (photoId == null) {
-                staged?.delete()
+                staged?.preview?.delete()
                 return TetheredIngestResult.Ignored
             }
             if (photoId <= 0L) {
-                staged?.delete()
+                staged?.preview?.delete()
                 TetheredIngestResult.Duplicate
             } else {
-                val hasEdit = effectiveGraphJson != null
+                val hasEdit = staged?.graphJson != null
                 val result = TetheredIngestResult.Ingested(
                     photoId = photoId,
                     presetId = if (hasEdit) preset?.presetId else null,
@@ -116,12 +143,13 @@ class TetheredPhotoIngestor(
         }
     }
 
-    private suspend fun commitSafely(
-        photo: PhotoEntity,
-        staged: File?,
-        graphJson: String?
-    ): Long? = try {
-        committer.commit(photo, staged, graphJson)
+    private suspend fun commitSafely(photo: PhotoEntity, staged: StagedPreview?): Long? = try {
+        val payload = staged?.subjectMaskPayload
+        if (payload != null) {
+            committer.commitWithSubject(photo, staged?.preview, staged?.graphJson, payload)
+        } else {
+            committer.commit(photo, staged?.preview, staged?.graphJson)
+        }
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (io: IOException) {
@@ -133,6 +161,21 @@ class TetheredPhotoIngestor(
     }
 
     private data class ActivePreset(val presetId: String, val graphJson: String)
+
+    /** The preset graph plus the optional staged subject mask of the new photo. */
+    private data class PreparedPreset(
+        val graphJson: String,
+        val fallbackGraphJson: String,
+        val subjectMask: SubjectMask?,
+        val subjectMaskPayload: ByteArray?
+    )
+
+    /** What one staging step produced; all three must describe the same graph. */
+    private data class StagedPreview(
+        val preview: File?,
+        val graphJson: String?,
+        val subjectMaskPayload: ByteArray?
+    )
 
     private suspend fun resolveActivePreset(): ActivePreset? {
         val presetId = editStore.getLiveTetherPresetId()?.takeIf { it.isNotBlank() } ?: return null
@@ -155,32 +198,95 @@ class TetheredPhotoIngestor(
         return ActivePreset(presetId = presetId, graphJson = EditGraphJsonCodec.encode(graph))
     }
 
+    /**
+     * Resolves the graph to render and, when possible, the new photo's own subject mask.
+     *
+     * A preparation failure is not an ingest failure: the graph loses its `subject` group and the
+     * traditional grade still applies. That keeps the USB pipeline non-blocking on `<= 4 GiB`
+     * devices and when MODNet is not downloaded.
+     */
+    private suspend fun preparePreset(
+        file: File,
+        isRaw: Boolean,
+        preset: ActivePreset?
+    ): PreparedPreset? {
+        if (preset == null) return null
+        val decoded = EditGraphJsonCodec.decode(preset.graphJson) ?: return null
+        // A preset must never hand its own mask to the new photo, even if a stale row still
+        // references one: the mask describes the source frame's pixels.
+        val graph = decoded.copy(subject = decoded.subject.copy(maskRef = ""))
+        val degraded = degradeSubject(graph)
+        if (!graph.subject.requiresMaskProcessing()) {
+            val cleanJson = EditGraphJsonCodec.encode(graph)
+            return PreparedPreset(cleanJson, cleanJson, null, null)
+        }
+        val preparation = try {
+            subjectPreparer?.prepare(file.absolutePath, isRaw, graph)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: RuntimeException) {
+            Timber.w(error, "Subject preset preparation threw; applying the traditional grade")
+            null
+        }
+        if (preparation == null) {
+            Timber.i("LiveTetherPreset subject effect degraded to the traditional grade")
+            val degradedJson = EditGraphJsonCodec.encode(degraded)
+            return PreparedPreset(degradedJson, degradedJson, null, null)
+        }
+        return PreparedPreset(
+            graphJson = EditGraphJsonCodec.encode(graph),
+            fallbackGraphJson = EditGraphJsonCodec.encode(degraded),
+            subjectMask = preparation.mask,
+            subjectMaskPayload = preparation.payload
+        )
+    }
+
     private suspend fun stagePreview(
         file: File,
         isRaw: Boolean,
-        preset: ActivePreset?,
+        prepared: PreparedPreset?,
         outDir: File
-    ): File? {
-        val graph = preset?.graphJson?.let { EditGraphJsonCodec.decode(it) } ?: return null
-        val staged = try {
-            renderPreview(file.absolutePath, isRaw, graph, outDir)
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (io: IOException) {
-            Timber.e(io, "LiveTetherPreset preview render failed; importing ungraded")
-            null
-        } catch (oom: OutOfMemoryError) {
-            Timber.e(oom, "LiveTetherPreset preview render ran out of memory; importing ungraded")
-            null
-        } catch (error: RuntimeException) {
-            Timber.e(error, "LiveTetherPreset preview render threw; importing ungraded")
-            null
+    ): StagedPreview? {
+        if (prepared == null) return null
+        val graph = EditGraphJsonCodec.decode(prepared.graphJson) ?: return null
+        val subjectRenderer = renderPreviewWithSubject
+        if (prepared.subjectMask != null && subjectRenderer != null) {
+            val staged = renderSafely {
+                subjectRenderer(file.absolutePath, isRaw, graph, prepared.subjectMask, outDir)
+            }
+            if (staged != null) {
+                return StagedPreview(staged, prepared.graphJson, prepared.subjectMaskPayload)
+            }
+            Timber.w("The subject preview failed; retrying with the traditional grade")
         }
-        if (staged == null) {
+        val fallbackGraph = EditGraphJsonCodec.decode(prepared.fallbackGraphJson) ?: return null
+        val fallback = renderSafely {
+            renderPreview(file.absolutePath, isRaw, fallbackGraph, outDir)
+        }
+        if (fallback == null) {
             Timber.w("LiveTetherPreset preview could not be staged; importing ungraded")
+            return null
         }
-        return staged?.takeIf { it.isFile }
+        return StagedPreview(fallback, prepared.fallbackGraphJson, null)
     }
+
+    private suspend fun renderSafely(render: suspend () -> File?): File? = try {
+        render()?.takeIf { it.isFile }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (io: IOException) {
+        Timber.e(io, "LiveTetherPreset preview render failed")
+        null
+    } catch (oom: OutOfMemoryError) {
+        Timber.e(oom, "LiveTetherPreset preview render ran out of memory")
+        null
+    } catch (error: RuntimeException) {
+        Timber.e(error, "LiveTetherPreset preview render threw")
+        null
+    }
+
+    /** Clears the subject group while keeping every traditional grade axis. */
+    private fun degradeSubject(graph: EditGraph): EditGraph = graph.copy(subject = SubjectOps())
 
     companion object {
         /** Sub-directory of the app cache used while a preset preview has no photo id yet. */

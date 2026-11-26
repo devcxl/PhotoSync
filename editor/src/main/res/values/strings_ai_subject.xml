@@ -7,7 +7,14 @@
     <string name="editor_subject_mode_original">原背景</string>
     <string name="editor_subject_mode_transparent">透明去背</string>
     <string name="editor_subject_mode_solid">纯色换底</string>
-    <string name="editor_subject_wave3_hint">背景虚化与前后景独立调色将在后续版本开放</string>
+    <string name="editor_subject_blur">背景虚化</string>
+    <string name="editor_subject_fg_exposure">前景曝光</string>
+    <string name="editor_subject_fg_temp">前景色温</string>
+    <string name="editor_subject_fg_sat">前景饱和</string>
+    <string name="editor_subject_bg_exposure">背景曝光</string>
+    <string name="editor_subject_bg_temp">背景色温</string>
+    <string name="editor_subject_bg_sat">背景饱和</string>
+    <string name="editor_subject_wave3_hint">拖动滑杆会按需生成主体蒙版；跨图复制只搬参数，不搬蒙版文件</string>
     <string name="editor_subject_swatch_description">换底色 %1$s</string>
     <string name="editor_subject_inference_label">正在生成主体蒙版（MODNet）…</string>
     <string name="editor_subject_refine_label">正在精修发丝与去色溢…</string>

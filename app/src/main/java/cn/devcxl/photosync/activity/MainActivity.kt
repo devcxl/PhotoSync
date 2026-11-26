@@ -212,7 +212,8 @@ class MainActivity : AppCompatActivity() {
             editedMap = { editedPhotoMap },
             decodeOriginal = ::decodeOriginalPreview,
             onEditPersisted = ::onEditPersisted,
-            onFeedback = { message -> showInlineFeedback(message) }
+            onFeedback = { message -> showInlineFeedback(message) },
+            subjectPresetPreparer = (application as? App)?.tetheredSubjectPreparer
         ).also { it.bind() }
         darkroom.observeTransferState()
     }

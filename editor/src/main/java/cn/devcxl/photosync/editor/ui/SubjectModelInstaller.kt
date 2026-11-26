@@ -47,13 +47,17 @@ internal class SubjectModelInstaller(
         job = null
     }
 
+    /** True when a download, import or its hand-over is still running. */
+    fun isBusy(): Boolean = job?.isActive == true
+
     /** Shows the shared download/SAF-import sheet. */
-    fun showPrompt(onDownload: () -> Unit) {
+    fun showPrompt(onDownload: () -> Unit, onDismiss: () -> Unit = {}) {
         AiModelPromptDialog.show(
             context = context,
             spec = spec,
             onDownload = onDownload,
-            onImport = onImportRequested
+            onImport = onImportRequested,
+            onDismiss = onDismiss
         )
     }
 

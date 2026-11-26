@@ -94,12 +94,20 @@ internal class EditorSubjectController(
     private var pendingMode: SubjectBackgroundMode? = null
     private var pendingColor: Int = SubjectOps.DEFAULT_BG_COLOR_ARGB
 
+    /** Dial values waiting for the first mask inference, applied once the mask is committed. */
+    private var pendingGrading: SubjectOps? = null
+
+    /** True while a mask prompt/download/inference is already covering the pending dial values. */
+    private var awaitingMask = false
+
     /** Stops the in-flight download/inference; the graph is left as it was. */
     fun cancel() {
         job?.cancel()
         job = null
         installer.cancel()
         pendingMode = null
+        pendingGrading = null
+        awaitingMask = false
         if (inferenceBar.isVisible) inferenceBar.dismiss()
     }
 
@@ -117,10 +125,16 @@ internal class EditorSubjectController(
      */
     fun requestMode(mode: SubjectBackgroundMode) {
         val graph = undoController.currentGraph
+        val updated = graph.copy(subject = graph.subject.copy(bgMode = mode))
         when {
-            mode == SubjectBackgroundMode.ORIGINAL -> {
+            mode == SubjectBackgroundMode.ORIGINAL && !updated.subject.requiresMaskProcessing() -> {
                 previewSession.applySubjectComposite(null)
-                commit(graph.copy(subject = graph.subject.copy(bgMode = mode)), null)
+                commit(updated, null)
+            }
+            mode == SubjectBackgroundMode.ORIGINAL -> {
+                // Blur or a foreground/background grade still needs the mask; keep the staged
+                // composite and only change the background mode.
+                commitDiscrete(updated)
             }
             graph.subject.maskRef.isNotBlank() -> applyExistingMask(graph, mode)
             else -> generateMask(graph, mode, graph.subject.bgColorArgb)
@@ -138,18 +152,88 @@ internal class EditorSubjectController(
     }
 
     /**
+     * Handles one dial value of [subject] (blur or a foreground/background offset).
+     *
+     * A mask-less photo first runs the shared MODNet inference and applies the pending values when
+     * it commits; an existing mask is an immediate, coalesced graph write. This is the "first
+     * adjustment triggers inference" contract of the panel.
+     */
+    fun requestAdjustment(subject: SubjectOps) {
+        val graph = undoController.currentGraph
+        val target = applyGrading(target = graph.subject, grading = subject)
+        pendingGrading = target
+        if (graph.subject.maskRef.isNotBlank()) {
+            if (awaitingMask) return
+            launchWork {
+                val current = undoController.currentGraph
+                val composite = composites.load(current)
+                if (composite == null) {
+                    if (!installer.isInstalled()) {
+                        awaitingMask = true
+                        installer.showPrompt(
+                            onDownload = {
+                                downloadModel(current, current.subject.bgMode, current.subject.bgColorArgb)
+                            },
+                            onDismiss = {
+                                if (!installer.isInstalled() && !installer.isBusy()) {
+                                    awaitingMask = false
+                                }
+                            }
+                        )
+                    } else {
+                        awaitingMask = true
+                        generateWithModel(
+                            installer.modelFile(),
+                            current,
+                            current.subject.bgMode,
+                            current.subject.bgColorArgb
+                        )
+                    }
+                    return@launchWork
+                }
+                previewSession.applySubjectComposite(composite)
+                pendingGrading = null
+                commitGrading(current.copy(subject = applyGrading(current.subject, subject)))
+            }
+            return
+        }
+        if (job?.isActive == true || awaitingMask) return
+        awaitingMask = true
+        if (!installer.isInstalled()) {
+            installer.showPrompt(
+                onDownload = { downloadModel(graph, target.bgMode, target.bgColorArgb) },
+                onDismiss = {
+                    if (!installer.isInstalled() && !installer.isBusy()) awaitingMask = false
+                }
+            )
+            return
+        }
+        launchWork {
+            generateWithModel(installer.modelFile(), graph, target.bgMode, target.bgColorArgb)
+        }
+    }
+
+    /** Seals the coalesced `AI_SUBJECT` undo step when the user lifts the dial. */
+    fun endAdjustment() {
+        undoController.onParameterRelease()
+        onGraphCommitted(undoController.currentGraph, EditParameterKey.AI_SUBJECT)
+    }
+
+    /**
      * Restores the cut-out after reopening the editor.
      *
      * A cached mask is reused without inference; a subject mode whose mask is gone falls back to
      * `ORIGINAL` so the canvas never shows an unexplained un-edited frame.
      */
     fun restore(graph: EditGraph) {
-        if (graph.subject.bgMode == SubjectBackgroundMode.ORIGINAL) return
+        if (!graph.subject.requiresMaskProcessing()) return
         if (graph.subject.maskRef.isBlank()) {
-            commit(
-                graph.copy(subject = graph.subject.copy(bgMode = SubjectBackgroundMode.ORIGINAL)),
-                null
-            )
+            if (graph.subject.bgMode != SubjectBackgroundMode.ORIGINAL) {
+                commit(
+                    graph.copy(subject = graph.subject.copy(bgMode = SubjectBackgroundMode.ORIGINAL)),
+                    null
+                )
+            }
             return
         }
         launchWork {
@@ -255,18 +339,46 @@ internal class EditorSubjectController(
         mode: SubjectBackgroundMode = graph.subject.bgMode,
         color: Int = graph.subject.bgColorArgb
     ) {
-        val result = inference.run(modelFile) ?: return
-        commitOnMain(
-            undoController.currentGraph.copy(
-                subject = undoController.currentGraph.subject.copy(
-                    maskRef = result.maskRef,
-                    bgMode = mode,
-                    bgColorArgb = color
-                )
-            ),
-            result.composite
+        val result = inference.run(modelFile) ?: run {
+            awaitingMask = false
+            return
+        }
+        val current = undoController.currentGraph
+        val base = current.subject.copy(
+            maskRef = result.maskRef,
+            bgMode = mode,
+            bgColorArgb = color
         )
+        val graded = pendingGrading?.let { applyGrading(target = base, grading = it) } ?: base
+        pendingGrading = null
+        awaitingMask = false
+        commitOnMain(current.copy(subject = graded), result.composite)
     }
+
+    /** Commits one coalesced dial tick; the undo snapshot merges inside the 300 ms window. */
+    private fun commitGrading(graph: EditGraph) {
+        val applied = undoController.onParameterDrag(graph, EditParameterKey.AI_SUBJECT)
+        onGraphCommitted(applied, EditParameterKey.AI_SUBJECT)
+    }
+
+    /** Commits a discrete graph change without touching the staged composite or its cache. */
+    private fun commitDiscrete(graph: EditGraph) {
+        awaitingMask = false
+        val applied = undoController.onParameterDrag(graph, EditParameterKey.AI_SUBJECT)
+        undoController.onParameterRelease()
+        onGraphCommitted(applied, EditParameterKey.AI_SUBJECT)
+    }
+
+    /** Copies only the effect axes of [grading]; mask, mode and colour stay from [target]. */
+    private fun applyGrading(target: SubjectOps, grading: SubjectOps): SubjectOps = target.copy(
+        blur = grading.blur,
+        fgExposure = grading.fgExposure,
+        fgTemp = grading.fgTemp,
+        fgSat = grading.fgSat,
+        bgExposure = grading.bgExposure,
+        bgTemp = grading.bgTemp,
+        bgSat = grading.bgSat
+    )
 
     private fun commitOnMain(graph: EditGraph, composite: SubjectComposite?) {
         previewSession.applySubjectComposite(composite)
@@ -275,6 +387,7 @@ internal class EditorSubjectController(
 
     private fun commit(graph: EditGraph, composite: SubjectComposite?) {
         if (composite != null) composites.store(graph.subject, composite) else composites.reset()
+        awaitingMask = false
         val applied = undoController.onParameterDrag(graph, EditParameterKey.AI_SUBJECT)
         undoController.onParameterRelease()
         onGraphCommitted(applied, EditParameterKey.AI_SUBJECT)

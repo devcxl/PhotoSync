@@ -11,7 +11,6 @@ import cn.devcxl.photosync.editor.domain.ForegroundColorEstimator
 import cn.devcxl.photosync.editor.domain.ForegroundEstimate
 import cn.devcxl.photosync.editor.domain.ImageFilters
 import cn.devcxl.photosync.editor.domain.Mat3
-import cn.devcxl.photosync.editor.domain.SubjectBackgroundMode
 import cn.devcxl.photosync.editor.domain.Uv
 import cn.devcxl.photosync.editor.domain.WarpDisplacementField
 import cn.devcxl.photosync.editor.render.SubjectComposite
@@ -40,11 +39,9 @@ internal class BakeSubjectSupport(
     private val inverseMatrix: Mat3
 ) {
 
-    private val mode = graph.subject.bgMode
-
     /** True when the band compositor should run. */
     val isActive: Boolean
-        get() = mode != SubjectBackgroundMode.ORIGINAL
+        get() = graph.subject.requiresMaskProcessing()
 
     /**
      * Composes one band.
@@ -143,8 +140,24 @@ internal class BakeSubjectSupport(
         }
     }
 
-    private fun mapBandAlpha(width: Int, height: Int, band: ColumnBand): FloatArray {
-        val alpha = FloatArray(width * height)
+    /**
+     * Coarse band-aligned alpha used by Pass B relight and the Pass C bokeh, before the band pixels
+     * exist. The refined composite used by Pass D is built later by [composeBand].
+     *
+     * @return One alpha per band pixel, or `null` when the subject group is neutral or the buffer
+     *   cannot be allocated.
+     */
+    fun bandAlpha(width: Int, height: Int, band: ColumnBand): FloatArray? {
+        if (!isActive) return null
+        return try {
+            mapBandAlpha(width, height, band)
+        } catch (oom: OutOfMemoryError) {
+            Timber.e(oom, "OOM while mapping the subject mask into a bake band")
+            null
+        }
+    }
+
+    private fun mapBandAlpha(width: Int, height: Int, band: ColumnBand): FloatArray {        val alpha = FloatArray(width * height)
         for (row in 0 until height) {
             val localV = (row + 0.5f) / height
             val globalV = band.tileUv.mapV(localV)

@@ -37,7 +37,9 @@ import cn.devcxl.photosync.editor.domain.EditGraphJsonCodec
 import cn.devcxl.photosync.editor.render.BackgroundPreviewRenderer
 import cn.devcxl.photosync.editor.render.RecentEditorSourceCache
 import cn.devcxl.photosync.editor.vision.DeviceMemoryTier
+import cn.devcxl.photosync.editor.render.ModnetTetheredSubjectPresetPreparer
 import cn.devcxl.photosync.editor.vision.OrtSessionManager
+import cn.devcxl.photosync.editor.render.TetheredSubjectPresetPreparer
 import cn.devcxl.photosync.export.MediaStoreGallerySink
 import cn.devcxl.photosync.ptp.manager.UsbPtpConnectionController
 import cn.devcxl.photosync.receiver.UsbPermissionReceiver
@@ -105,6 +107,20 @@ class App : Application() {
      */
     val ortSessionManager: OrtSessionManager by lazy {
         OrtSessionManager(tier = DeviceMemoryTier.detect(this))
+    }
+
+    /**
+     * Computes a new photo's own subject mask for a `LiveTetherPreset` that carries `SubjectOps`.
+     *
+     * Shares the process-wide ORT manager, so a tethered ingest can never open a second native
+     * session next to an open editor. Construction is cheap; the first `prepare` touches ORT.
+     */
+    val tetheredSubjectPreparer: TetheredSubjectPresetPreparer by lazy {
+        ModnetTetheredSubjectPresetPreparer(
+            context = this,
+            filesDir = filesDir,
+            sessions = ortSessionManager
+        )
     }
 
     /** Photo ids that arrived from the camera while the app was already running. */
@@ -250,7 +266,11 @@ class App : Application() {
     private fun createIngestor(editStore: RoomEditStore): TetheredPhotoIngestor =
         TetheredPhotoIngestor(
             editStore = editStore,
-            committer = RoomTetheredPhotoCommitter(AppDatabase.getInstance(this), cacheDir),
+            committer = RoomTetheredPhotoCommitter(
+                database = AppDatabase.getInstance(this),
+                cacheDir = cacheDir,
+                filesDir = filesDir
+            ),
             stagingDir = cacheDir,
             renderPreview = { sourcePath, isRaw, graph, outDir ->
                 BackgroundPreviewRenderer.renderToDir(
@@ -261,7 +281,19 @@ class App : Application() {
                     isRaw = isRaw,
                     graph = graph
                 )
-            }
+            },
+            renderPreviewWithSubject = { sourcePath, isRaw, graph, subjectMask, outDir ->
+                BackgroundPreviewRenderer.renderToDir(
+                    context = this,
+                    filesDir = filesDir,
+                    outDir = outDir,
+                    sourcePath = sourcePath,
+                    isRaw = isRaw,
+                    graph = graph,
+                    subjectMaskOverride = subjectMask
+                )
+            },
+            subjectPreparer = tetheredSubjectPreparer
         )
 
     private suspend fun seedPresets(editStore: RoomEditStore) {

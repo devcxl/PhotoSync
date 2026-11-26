@@ -135,7 +135,14 @@ internal object PreviewDrawRequests {
             texelWidth = frame.texelWidth,
             texelHeight = frame.texelHeight,
             ditherAmp = ditherAmp,
-            flipVerticalForScreen = flipVerticalForScreen
+            flipVerticalForScreen = flipVerticalForScreen,
+            subject = state.subjectOps,
+            subjectWeightTextureId = request.subjectWeightTextureId,
+            subjectLocalSpace = false,
+            subjectUvMatrix = state.subjectUvMatrix,
+            subjectWarpTextureId = if (state.subjectWarpActive) request.subjectWarpTextureId else 0,
+            subjectWarpScale = request.subjectWarpScale,
+            subjectWarpOffset = request.subjectWarpOffset
         )
     }
 }

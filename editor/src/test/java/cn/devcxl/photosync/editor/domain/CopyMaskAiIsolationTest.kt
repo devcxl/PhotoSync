@@ -73,12 +73,14 @@ class CopyMaskAiIsolationTest {
     )
 
     @Test
-    fun shouldNeverCopyInpaintOrCloudLayer_whenEveryCopyAxisIsEnabled() {
+    fun shouldCopySubjectParametersWithoutTheMask_whenEveryCopyAxisIsEnabled() {
         val pasted = allAxesEnabled().apply(sourceGraph(), EditGraph())
 
         assertTrue("inpaint must never travel across photos", pasted.inpaint.isEmpty())
         assertNull("cloudLayer must never travel across photos", pasted.cloudLayer)
-        assertEquals("subject stays a frame-local mask", SubjectOps(), pasted.subject)
+        assertEquals("the subject mask belongs to the source frame", "", pasted.subject.maskRef)
+        assertEquals(SubjectBackgroundMode.TRANSPARENT, pasted.subject.bgMode)
+        assertEquals(40, pasted.subject.blur)
         assertEquals("sky stays a frame-local mask", SkyOps(), pasted.sky)
         assertEquals(0.5f, pasted.tone.exposure, 1e-4f)
     }
@@ -94,12 +96,14 @@ class CopyMaskAiIsolationTest {
     }
 
     @Test
-    fun shouldExtractOnlyParameterAxes_whenSavingAPresetFromAnAiEditedPhoto() {
+    fun shouldExtractSubjectParametersWithoutTheMask_whenSavingAPresetFromAnAiEditedPhoto() {
         val extracted = PresetGraphMerger.extractPreset(sourceGraph())
 
         assertTrue(extracted.inpaint.isEmpty())
         assertNull(extracted.cloudLayer)
-        assertEquals(SubjectOps(), extracted.subject)
+        assertEquals("", extracted.subject.maskRef)
+        assertEquals(SubjectBackgroundMode.TRANSPARENT, extracted.subject.bgMode)
+        assertEquals(40, extracted.subject.blur)
         assertEquals(SkyOps(), extracted.sky)
         assertEquals(0.5f, extracted.tone.exposure, 1e-4f)
     }

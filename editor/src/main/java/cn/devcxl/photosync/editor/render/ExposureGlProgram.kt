@@ -5,6 +5,7 @@ import timber.log.Timber
 
 import cn.devcxl.photosync.editor.domain.BaseLook
 import cn.devcxl.photosync.editor.domain.ColorGradingParams
+import cn.devcxl.photosync.editor.domain.SubjectOps
 import cn.devcxl.photosync.editor.domain.ToneShaderParams
 
 /**
@@ -28,8 +29,29 @@ internal data class ExposureDrawParams(
     /** Triangular dither amplitude in display units; `1/255` for 8-bit targets. */
     val ditherAmp: Float = 0.0f,
     /** True only when presenting directly to the default screen framebuffer (`FBO 0`). */
-    val flipVerticalForScreen: Boolean = false
-)
+    val flipVerticalForScreen: Boolean = false,
+    /** Foreground/background relative grade; `null` or neutral keeps the shader branch closed. */
+    val subject: SubjectOps? = null,
+    /** Refined subject alpha texture; `0` disables the relight even with a non-neutral group. */
+    val subjectWeightTextureId: Int = 0,
+    /** True when [subjectWeightTextureId] is already in this draw's coordinate grid (bake band). */
+    val subjectLocalSpace: Boolean = false,
+    /** Output-UV to pre-crop-UV matrix for a source-space mask. */
+    val subjectUvMatrix: FloatArray = IDENTITY_MATRIX,
+    /** `uWarpTex` to mirror the Pass A liquify/portrait displacement, or `0`. */
+    val subjectWarpTextureId: Int = 0,
+    val subjectWarpScale: Float = 1.0f,
+    val subjectWarpOffset: Float = 0.0f
+) {
+
+    companion object {
+        val IDENTITY_MATRIX = floatArrayOf(
+            1.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f,
+            0.0f, 0.0f, 1.0f
+        )
+    }
+}
 
 /**
  * Compiles and executes the full Pass B tone & display-color GLSL program (Pass B1 + Pass B2).
@@ -74,6 +96,16 @@ internal class ExposureGlProgram {
     private var uSplitShAbLoc: Int = -1
     private var uSplitBalanceLoc: Int = -1
     private var uDitherAmpLoc: Int = -1
+    private var uSubjectMaskLoc: Int = -1
+    private var uSubjectGradeActiveLoc: Int = -1
+    private var uSubjectLocalLoc: Int = -1
+    private var uSubjectWarpLoc: Int = -1
+    private var uHasSubjectWarpLoc: Int = -1
+    private var uSubjectUvMatrixLoc: Int = -1
+    private var uSubjectWarpScaleLoc: Int = -1
+    private var uSubjectWarpOffsetLoc: Int = -1
+    private var uSubjectFgGradeLoc: Int = -1
+    private var uSubjectBgGradeLoc: Int = -1
 
     private val quad = QuadMesh()
 
@@ -148,6 +180,7 @@ internal class ExposureGlProgram {
         GLES20.glUniform1f(uDitherAmpLoc, params.ditherAmp)
         applyToneUniforms(params)
         applyColorUniforms(params)
+        applySubjectUniforms(params)
 
         val orientation = if (params.flipVerticalForScreen) {
             QuadOrientation.SCREEN
@@ -205,7 +238,65 @@ internal class ExposureGlProgram {
         uSplitHiAbLoc = GLES20.glGetUniformLocation(programId, "uSplitHiAb")
         uSplitShAbLoc = GLES20.glGetUniformLocation(programId, "uSplitShAb")
         uSplitBalanceLoc = GLES20.glGetUniformLocation(programId, "uSplitBalance")
+        uSubjectMaskLoc = GLES20.glGetUniformLocation(programId, "uSubjectMaskTex")
+        uSubjectGradeActiveLoc = GLES20.glGetUniformLocation(programId, "uSubjectGradeActive")
+        uSubjectLocalLoc = GLES20.glGetUniformLocation(programId, "uSubjectLocal")
+        uSubjectWarpLoc = GLES20.glGetUniformLocation(programId, "uSubjectWarpTex")
+        uHasSubjectWarpLoc = GLES20.glGetUniformLocation(programId, "uHasSubjectWarpTex")
+        uSubjectUvMatrixLoc = GLES20.glGetUniformLocation(programId, "uSubjectUvMatrix")
+        uSubjectWarpScaleLoc = GLES20.glGetUniformLocation(programId, "uSubjectWarpScale")
+        uSubjectWarpOffsetLoc = GLES20.glGetUniformLocation(programId, "uSubjectWarpOffset")
+        uSubjectFgGradeLoc = GLES20.glGetUniformLocation(programId, "uSubjectFgGrade")
+        uSubjectBgGradeLoc = GLES20.glGetUniformLocation(programId, "uSubjectBgGrade")
     }
+
+    private fun applySubjectUniforms(params: ExposureDrawParams) {
+        val subject = params.subject
+        val active = subject != null &&
+            subject.hasGradingAdjustments() &&
+            params.subjectWeightTextureId != 0 &&
+            !params.compareOriginal
+        GLES20.glUniform1i(uSubjectGradeActiveLoc, if (active) 1 else 0)
+        GLES20.glUniform1i(uSubjectLocalLoc, if (params.subjectLocalSpace) 1 else 0)
+        if (active && subject != null) {
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, params.subjectWeightTextureId)
+            GLES20.glUniform1i(uSubjectMaskLoc, 2)
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE3)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, params.subjectWarpTextureId)
+            GLES20.glUniform1i(uSubjectWarpLoc, 3)
+            GLES20.glUniform1i(
+                uHasSubjectWarpLoc,
+                if (params.subjectWarpTextureId != 0) 1 else 0
+            )
+            GLES20.glUniformMatrix3fv(uSubjectUvMatrixLoc, 1, false, params.subjectUvMatrix, 0)
+            GLES20.glUniform2f(
+                uSubjectWarpScaleLoc,
+                params.subjectWarpScale,
+                params.subjectWarpScale
+            )
+            GLES20.glUniform2f(
+                uSubjectWarpOffsetLoc,
+                params.subjectWarpOffset,
+                params.subjectWarpOffset
+            )
+            GLES20.glUniform3f(
+                uSubjectFgGradeLoc,
+                subject.fgExposure.toGrade(),
+                subject.fgTemp.toGrade(),
+                subject.fgSat.toGrade()
+            )
+            GLES20.glUniform3f(
+                uSubjectBgGradeLoc,
+                subject.bgExposure.toGrade(),
+                subject.bgTemp.toGrade(),
+                subject.bgSat.toGrade()
+            )
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+        }
+    }
+
+    private fun Int.toGrade(): Float = this / 100.0f
 
     private fun applyToneUniforms(params: ExposureDrawParams) {
         val tone = params.toneParams

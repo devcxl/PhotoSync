@@ -28,7 +28,6 @@ import cn.devcxl.photosync.editor.domain.Lut3dSamples
 import cn.devcxl.photosync.editor.domain.SourceDimensions
 import cn.devcxl.photosync.editor.domain.SourceResidencyPlan
 import cn.devcxl.photosync.editor.domain.SourceResidencyPlanner
-import cn.devcxl.photosync.editor.domain.SubjectBackgroundMode
 import cn.devcxl.photosync.editor.domain.WarpDisplacementField
 import cn.devcxl.photosync.editor.lut.CubeLutStore
 import cn.devcxl.photosync.editor.render.InpaintOverlay
@@ -241,8 +240,9 @@ class BakeExporter(
     /**
      * Resolves the bake's subject support and Pass D plan.
      *
-     * @return `null` only when the graph asks for a cut-out but its mask cannot be loaded; an
-     *   inactive subject returns a pair of `null`s so the normal bake proceeds unchanged.
+     * @return `null` only when the graph needs the subject mask (cut-out, bokeh or a
+     *   foreground/background grade) but the mask cannot be loaded; a neutral subject returns a
+     *   pair of `null`s so the normal bake proceeds unchanged.
      */
     private fun resolveSubject(
         request: BakeRequest,
@@ -250,19 +250,22 @@ class BakeExporter(
         warpField: WarpDisplacementField?,
         source: BakeSourceTextures
     ): ResolvedBakeSubject? {
-        if (graph.subject.bgMode == SubjectBackgroundMode.ORIGINAL) {
+        if (!graph.subject.requiresMaskProcessing()) {
             return ResolvedBakeSubject(null, null)
         }
         val mask = SubjectCompositeLoader.loadMask(filesDir, graph) ?: return null
-        val initial = SubjectCompositeLoader.resolveForFile(
-            graph = graph,
-            sourcePath = request.sourcePath,
-            isRaw = request.isRaw,
-            filesDir = filesDir,
-            inpaint = InpaintOverlay.of(filesDir, graph)
-        )
         val plan = SubjectRenderContract.plan(graph, hasMask = true)
-            ?: return ResolvedBakeSubject(null, null)
+        val initial = if (plan != null) {
+            SubjectCompositeLoader.resolveForFile(
+                graph = graph,
+                sourcePath = request.sourcePath,
+                isRaw = request.isRaw,
+                filesDir = filesDir,
+                inpaint = InpaintOverlay.of(filesDir, graph)
+            )
+        } else {
+            null
+        }
         return ResolvedBakeSubject(
             support = BakeSubjectSupport(
                 graph = graph,

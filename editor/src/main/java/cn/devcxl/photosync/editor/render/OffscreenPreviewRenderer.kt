@@ -41,7 +41,7 @@ internal data class OffscreenPreviewRequest(
     val skinMask: FloatArray? = null,
     val lut: Lut3dSamples? = null,
     val outDir: File,
-    /** Source-space subject composite of `graph.subject`, or `null` when the stage is inactive. */
+    /** Source-space subject composite of `graph.subject`; `null` when no mask effect is active. */
     val subject: SubjectComposite? = null,
     /** Repair patches of `graph.inpaint`; blended before the source is uploaded. */
     val inpaint: InpaintOverlay? = null

@@ -132,6 +132,14 @@ class ModnetSubjectSegmenter(
     }
 
     /**
+     * Encodes [mask] as the exact grayscale PNG payload the content-addressed store persists.
+     *
+     * Exposed for hosts that must stage a mask before the photo id (and therefore the final
+     * `edits/<photoId>/` directory) exists.
+     */
+    fun encodeMask(mask: SubjectMask): ByteArray? = SubjectMaskCodec.encode(mask)
+
+    /**
      * Loads and verifies the mask referenced by a `subject.maskRef` path.
      *
      * @param maskRef Relative path such as `edits/42/subject_mask_<sha256>.png`.

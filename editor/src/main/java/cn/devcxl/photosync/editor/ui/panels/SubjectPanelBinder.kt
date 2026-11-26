@@ -13,6 +13,12 @@ import cn.devcxl.photosync.editor.ui.widgets.SubjectPanelView
  * A mode change is not a plain graph write: the controller must first guarantee that a subject mask
  * exists (model download, inference, composite load), so the binder only forwards the user's intent
  * through [Host]. The controller then owns the undo transaction and the asynchronous work.
+ *
+ * The seven effect dials are forwarded straight to
+ * [cn.devcxl.photosync.editor.ui.EditorSubjectController] by
+ * [cn.devcxl.photosync.editor.ui.EditorAiToolHost] through the view's own grading listener: they are
+ * continuous parameter writes with a different failure policy (a first drag may start the same
+ * inference), so routing them through the exclusive mode/colour host would blur both contracts.
  */
 internal class SubjectPanelBinder(
     private val binding: ActivityEditorBinding,

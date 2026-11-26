@@ -125,7 +125,11 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
                 state = state,
                 compareOriginal = compareOriginal,
                 graphRevision = prepassRevision,
-                subjectTextureId = pipeline.subjectTextureId
+                subjectTextureId = pipeline.subjectTextureId,
+                subjectWeightTextureId = pipeline.subjectWeightTextureId,
+                subjectWarpTextureId = pipeline.warpTextureId,
+                subjectWarpScale = pipeline.warpDecodeScale,
+                subjectWarpOffset = pipeline.warpDecodeOffset
             )
         )
         lastPassCDrawCalls = pipeline.lastPassCDrawCalls
@@ -186,6 +190,8 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
     /** Stages the source-space subject composite for the next Pass D draw. */
     fun setSubjectComposite(composite: SubjectComposite?) {
         pipeline.stageSubjectComposite(composite)
+        pipeline.invalidatePrepass()
+        prepassRevision++
     }
 
     private fun publishWarpLocked() {
@@ -238,7 +244,8 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
                 subjectColorRgb = subjectPlan?.solidColorRgb
                     ?: (SubjectOps.DEFAULT_BG_COLOR_ARGB and RGB_MASK),
                 subjectUvMatrix = if (geometryActive) inverseMatrix else RenderFrameState.IDENTITY_MATRIX,
-                subjectWarpActive = subjectPlan != null && warpActive
+                subjectWarpActive = pipeline.isSubjectCompositeAvailable && warpActive,
+                subjectOps = graph.subject
             )
             isPassCActive = !useFastProxy && !spatialParams.isZeroDrawCallShortCircuit
             val prepassSig = prepassSignature(graph, warpActive, portraitFaceWarp, portraitBodyWarp)
@@ -246,8 +253,7 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
                 lastPrepassInputSignature = prepassSig
                 pipeline.invalidatePrepass()
                 prepassRevision++
-            }
-        }
+            }        }
     }
 
     private fun prepassSignature(
@@ -261,6 +267,7 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
         hash = 31 * hash + graph.tone.hashCode()
         hash = 31 * hash + graph.color.copy(lut = null).hashCode()
         hash = 31 * hash + graph.effects.ca.hashCode()
+        hash = 31 * hash + graph.subject.hashCode()
         hash = 31 * hash + warpActive.hashCode()
         hash = 31 * hash + (faceWarp?.contentHashCode() ?: 0)
         hash = 31 * hash + (bodyWarp?.contentHashCode() ?: 0)

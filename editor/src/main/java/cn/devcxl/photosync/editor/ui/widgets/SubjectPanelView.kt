@@ -15,21 +15,21 @@ import cn.devcxl.photosync.editor.domain.SubjectOps
 import cn.devcxl.photosync.editor.ui.panels.PanelChipFactory
 
 /**
- * Tier-1 panel of `AI -> 主体`: the three background modes plus the preset solid-colour swatches.
+ * Tier-1 panel of `AI -> 主体`: the three background modes, the preset solid-colour swatches and the
+ * seven subject effect dials (background blur plus independent foreground/background exposure,
+ * temperature and saturation).
  *
  * The view is a pure presentation binder. It never writes the `EditGraph`; [Listener] hands the
- * selected mode/colour to [cn.devcxl.photosync.editor.ui.panels.EditorPanelController], which owns
- * the undo transaction and the asynchronous mask generation.
- *
- * The structure deliberately has room for the Wave 3 additions (background blur and independent
- * foreground/background grading): those controls will be added as sibling rows under the swatches.
+ * mode/colour to [cn.devcxl.photosync.editor.ui.panels.EditorPanelController] and [GradingListener]
+ * forwards the dial values to the subject controller, which owns the undo transaction and the
+ * asynchronous mask generation triggered by the first adjustment.
  */
 internal class SubjectPanelView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null
 ) : LinearLayout(context, attrs) {
 
-    /** Callbacks the panel reports to the controller. */
+    /** Callbacks the panel reports for the exclusive background choices. */
     interface Listener {
         /** The user selected [mode]; a cut-out mode may need a model download first. */
         fun onModeSelected(mode: SubjectBackgroundMode)
@@ -38,14 +38,32 @@ internal class SubjectPanelView @JvmOverloads constructor(
         fun onColorSelected(argb: Int)
     }
 
+    /**
+     * Callbacks of the seven effect dials.
+     *
+     * Deliberately separate from [Listener]: grading is a continuous parameter write that may need a
+     * mask inference first, while mode/colour go through the cut-out controller.
+     */
+    interface GradingListener {
+        /** The user moved a dial; [subject] carries the new value and any earlier ones. */
+        fun onSubjectAdjusted(subject: SubjectOps)
+
+        /** The user lifted the finger; the undo transaction can be sealed. */
+        fun onSubjectAdjustmentStopped()
+    }
+
     var listener: Listener? = null
+    var gradingListener: GradingListener? = null
 
     private val modeChips = linkedMapOf<SubjectBackgroundMode, TextView>()
     private val swatchViews = mutableListOf<View>()
+    private val dials = mutableListOf<DialBinding>()
     private var selectedColor: Int = SubjectOps.DEFAULT_BG_COLOR_ARGB
     private var selectedMode: SubjectBackgroundMode = SubjectBackgroundMode.ORIGINAL
+    private var selectedSubject: SubjectOps = SubjectOps()
     private lateinit var modeRow: LinearLayout
     private lateinit var swatchRow: LinearLayout
+    private lateinit var dialContainer: LinearLayout
 
     init {
         orientation = VERTICAL
@@ -56,12 +74,15 @@ internal class SubjectPanelView @JvmOverloads constructor(
         super.onFinishInflate()
         modeRow = findViewById(R.id.subjectModeRow)
         swatchRow = findViewById(R.id.subjectSwatchRow)
+        dialContainer = findViewById(R.id.subjectDialContainer)
         buildModeChips()
         buildSwatches()
+        buildDials()
     }
 
     /** Repaints the panel from [subject]. */
     fun bind(subject: SubjectOps) {
+        selectedSubject = subject
         selectedMode = subject.bgMode
         selectedColor = subject.bgColorArgb
         modeChips.forEach { (mode, chip) ->
@@ -74,6 +95,7 @@ internal class SubjectPanelView @JvmOverloads constructor(
             view.background = swatchBackground(color, color == selectedColor)
         }
         swatchRow.alpha = if (selectedMode == SubjectBackgroundMode.SOLID) 1.0f else 0.6f
+        dials.forEach { it.row.setValue(it.read(selectedSubject)) }
     }
 
     private fun buildModeChips() {
@@ -123,6 +145,94 @@ internal class SubjectPanelView @JvmOverloads constructor(
         }
     }
 
+    private fun buildDials() {
+        addDial(
+            labelRes = R.string.editor_subject_blur,
+            min = 0.0f,
+            max = 100.0f,
+            signed = false,
+            read = { it.blur },
+            write = { subject, value -> subject.copy(blur = value) }
+        )
+        addDial(
+            labelRes = R.string.editor_subject_fg_exposure,
+            min = -100.0f,
+            max = 100.0f,
+            signed = true,
+            read = { it.fgExposure },
+            write = { subject, value -> subject.copy(fgExposure = value) }
+        )
+        addDial(
+            labelRes = R.string.editor_subject_fg_temp,
+            min = -100.0f,
+            max = 100.0f,
+            signed = true,
+            read = { it.fgTemp },
+            write = { subject, value -> subject.copy(fgTemp = value) }
+        )
+        addDial(
+            labelRes = R.string.editor_subject_fg_sat,
+            min = -100.0f,
+            max = 100.0f,
+            signed = true,
+            read = { it.fgSat },
+            write = { subject, value -> subject.copy(fgSat = value) }
+        )
+        addDial(
+            labelRes = R.string.editor_subject_bg_exposure,
+            min = -100.0f,
+            max = 100.0f,
+            signed = true,
+            read = { it.bgExposure },
+            write = { subject, value -> subject.copy(bgExposure = value) }
+        )
+        addDial(
+            labelRes = R.string.editor_subject_bg_temp,
+            min = -100.0f,
+            max = 100.0f,
+            signed = true,
+            read = { it.bgTemp },
+            write = { subject, value -> subject.copy(bgTemp = value) }
+        )
+        addDial(
+            labelRes = R.string.editor_subject_bg_sat,
+            min = -100.0f,
+            max = 100.0f,
+            signed = true,
+            read = { it.bgSat },
+            write = { subject, value -> subject.copy(bgSat = value) }
+        )
+    }
+
+    private fun addDial(
+        labelRes: Int,
+        min: Float,
+        max: Float,
+        signed: Boolean,
+        read: (SubjectOps) -> Int,
+        write: (SubjectOps, Int) -> SubjectOps
+    ) {
+        val row = LabeledDialRow.create(
+            context = context,
+            labelRes = labelRes,
+            min = min,
+            max = max,
+            zeroSnap = if (signed) ZERO_SNAP else 0.0f,
+            formatRes = if (signed) {
+                R.string.editor_value_signed_fmt
+            } else {
+                R.string.editor_value_unsigned_fmt
+            },
+            onChanged = { value ->
+                selectedSubject = write(selectedSubject, value)
+                gradingListener?.onSubjectAdjusted(selectedSubject)
+            },
+            onStopTracking = { gradingListener?.onSubjectAdjustmentStopped() }
+        )
+        dials += DialBinding(row, read)
+        dialContainer.addView(row.rowView)
+    }
+
     private fun swatchColors(): List<Int> =
         resources.getStringArray(R.array.editor_subject_swatch_colors).map(::parseColor)
 
@@ -144,9 +254,15 @@ internal class SubjectPanelView @JvmOverloads constructor(
         }
     }
 
+    private data class DialBinding(
+        val row: LabeledDialRow,
+        val read: (SubjectOps) -> Int
+    )
+
     private companion object {
         const val STROKE_SELECTED_DP = 3
         const val STROKE_IDLE_DP = 1
+        const val ZERO_SNAP = 2.0f
         const val SELECTED_STROKE_COLOR = 0xFF2F80ED.toInt()
         const val IDLE_STROKE_COLOR = 0x55FFFFFF
     }

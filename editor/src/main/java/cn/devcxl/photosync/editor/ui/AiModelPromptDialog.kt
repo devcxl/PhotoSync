@@ -22,12 +22,15 @@ internal object AiModelPromptDialog {
      * @param spec Catalog entry about to be installed.
      * @param onDownload Invoked when the user confirms the download.
      * @param onImport Invoked when the user prefers a local `.onnx` file.
+     * @param onDismiss Invoked after the sheet closes for any reason, so a caller can clear a
+     *   "prompt already shown" guard.
      */
     fun show(
         context: Context,
         spec: AiModelSpec,
         onDownload: () -> Unit,
-        onImport: () -> Unit
+        onImport: () -> Unit,
+        onDismiss: () -> Unit = {}
     ) {
         val megabytes = spec.byteSize / BYTES_PER_MB.toDouble()
         AlertDialog.Builder(context)
@@ -43,6 +46,7 @@ internal object AiModelPromptDialog {
             .setPositiveButton(R.string.editor_subject_model_download) { _, _ -> onDownload() }
             .setNeutralButton(R.string.editor_subject_model_import) { _, _ -> onImport() }
             .setNegativeButton(R.string.editor_subject_model_cancel, null)
+            .setOnDismissListener { onDismiss() }
             .show()
     }
 

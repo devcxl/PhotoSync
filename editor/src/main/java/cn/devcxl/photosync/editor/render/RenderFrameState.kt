@@ -4,6 +4,7 @@ import cn.devcxl.photosync.editor.domain.BaseLook
 import cn.devcxl.photosync.editor.domain.ColorGradingParams
 import cn.devcxl.photosync.editor.domain.PassDEffectsParams
 import cn.devcxl.photosync.editor.domain.SpatialDetailParams
+import cn.devcxl.photosync.editor.domain.SubjectOps
 import cn.devcxl.photosync.editor.domain.ToneShaderParams
 
 /**
@@ -27,7 +28,8 @@ internal data class RenderFrameState(
     val subjectMode: Int = 0,
     val subjectColorRgb: Int = 0xFFFFFF,
     val subjectUvMatrix: FloatArray = IDENTITY_MATRIX,
-    val subjectWarpActive: Boolean = false
+    val subjectWarpActive: Boolean = false,
+    val subjectOps: SubjectOps = SubjectOps()
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -47,7 +49,8 @@ internal data class RenderFrameState(
             subjectMode == other.subjectMode &&
             subjectColorRgb == other.subjectColorRgb &&
             subjectUvMatrix.contentEquals(other.subjectUvMatrix) &&
-            subjectWarpActive == other.subjectWarpActive
+            subjectWarpActive == other.subjectWarpActive &&
+            subjectOps == other.subjectOps
     }
 
     override fun hashCode(): Int {
@@ -67,6 +70,7 @@ internal data class RenderFrameState(
         result = 31 * result + subjectColorRgb
         result = 31 * result + subjectUvMatrix.contentHashCode()
         result = 31 * result + subjectWarpActive.hashCode()
+        result = 31 * result + subjectOps.hashCode()
         return result
     }
 
@@ -106,5 +110,11 @@ internal data class PreviewFrameRequest(
     val compareOriginal: Boolean,
     val graphRevision: Int,
     /** Uploaded source-space subject composite, or `0` when the stage is inactive. */
-    val subjectTextureId: Int = 0
+    val subjectTextureId: Int = 0,
+    /** Uploaded refined subject alpha for Pass B relight and the terminal Pass C bokeh. */
+    val subjectWeightTextureId: Int = 0,
+    /** `uWarpTex` name and decode constants used to align the source-space subject alpha. */
+    val subjectWarpTextureId: Int = 0,
+    val subjectWarpScale: Float = 1.0f,
+    val subjectWarpOffset: Float = 0.0f
 )

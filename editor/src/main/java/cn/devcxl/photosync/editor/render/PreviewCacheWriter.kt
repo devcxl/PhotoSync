@@ -139,8 +139,7 @@ internal object PreviewCacheWriter {
         lut: Lut3dSamples?,
         skinMask: FloatArray?,
         subject: SubjectComposite?
-    ): Bitmap? {
-        val sourceAspect = source.width.toFloat() / source.height.toFloat()
+    ): Bitmap? {        val sourceAspect = source.width.toFloat() / source.height.toFloat()
         val outputAspect = GeometryMath.outputAspect(graph.geometry, sourceAspect)
         val (outW, outH) = previewSize(outputAspect)
         val geometryActive = graph.requiresPassAGeometry(hasWarp = warpField?.isZero() == false)
@@ -180,7 +179,8 @@ internal object PreviewCacheWriter {
                     ).copyInto(buffer)
                 }
             },
-            afterEffects = checkerboardEffects(graph, subject)
+            afterEffects = checkerboardEffects(graph, subject),
+            subjectWeight = resolveSubjectWeight(subject, graph, linearFrame.width, linearFrame.height, warpField)
         )
         return Bitmap.createBitmap(
             pixels,
@@ -241,7 +241,8 @@ internal object PreviewCacheWriter {
             skinMask = skinMask,
             subject = subject,
             inverseMatrix = geometry,
-            warpField = warpField
+            warpField = warpField,
+            subjectWeight = resolveSubjectWeight(subject, graph, width, height, warpField, geometry)
         )
         return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).apply {
             setPixels(graded, 0, width, 0, 0, width, height)
@@ -263,16 +264,18 @@ internal object PreviewCacheWriter {
         subject: SubjectComposite? = null,
         inverseMatrix: Mat3 =
             Mat3.identity(),
-        warpField: WarpDisplacementField? = null
+        warpField: WarpDisplacementField? = null,
+        subjectWeight: FloatArray? = null
     ): IntArray {
-        applyPassBToPixels(pixels, width, height, graph)
+        applyPassBToPixels(pixels, width, height, graph, subjectWeight)
         val afterPassC = applyPassCToPixels(
             pixels = pixels,
             width = width,
             height = height,
             graph = graph,
             fullResolutionShortEdge = fullResolutionShortEdge,
-            skinMask = skinMask
+            skinMask = skinMask,
+            subjectWeight = subjectWeight
         )
         val afterSubject = SubjectCpuComposer.applyForeground(
             pixels = afterPassC,
@@ -305,7 +308,8 @@ internal object PreviewCacheWriter {
         height: Int,
         graph: EditGraph,
         fullResolutionShortEdge: Int,
-        skinMask: FloatArray?
+        skinMask: FloatArray?,
+        subjectWeight: FloatArray?
     ): IntArray {
         if (SpatialDetailParams.from(graph).isZeroDrawCallShortCircuit && skinMask == null) {
             return pixels
@@ -316,7 +320,8 @@ internal object PreviewCacheWriter {
             height,
             graph,
             fullResolutionShortEdge = fullResolutionShortEdge,
-            skinMask = skinMask
+            skinMask = skinMask,
+            subjectWeight = subjectWeight
         )
     }
 
@@ -332,10 +337,17 @@ internal object PreviewCacheWriter {
         PassDEffectsMath.applyDisplayEffects(pixels, width, height, params, lut)
     }
 
-    private fun applyPassBToPixels(pixels: IntArray, width: Int, height: Int, graph: EditGraph) {
+    private fun applyPassBToPixels(
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        graph: EditGraph,
+        subjectWeight: FloatArray?
+    ) {
         val toneParams = ToneShaderParams.from(graph)
         val colorParams = ColorGradingParams.from(graph)
-        if (toneParams.isIdentity && colorParams.isIdentity) return
+        val subject = graph.subject.takeIf { it.hasGradingAdjustments() && subjectWeight != null }
+        if (toneParams.isIdentity && colorParams.isIdentity && subject == null) return
         val curveLut = if (colorParams.hasCurve) CurveLutBuilder.buildFloatLut(graph.color.curve) else null
         val lumaMap = if (colorParams.defringe > 0.0f) buildLumaMap(pixels) else null
         val linear = FloatArray(CHANNELS_RGB)
@@ -347,7 +359,10 @@ internal object PreviewCacheWriter {
             linear[1] = ExposureShaderMath.decodeSrgb(((pixel ushr 8) and 0xFF) / 255.0f)
             linear[2] = ExposureShaderMath.decodeSrgb((pixel and 0xFF) / 255.0f)
             val grad = lumaMap?.let { Srgb8Packer.neighborGradient(it, width, height, index) } ?: 0.0f
-            PassBColorMath.apply(toneParams, colorParams, curveLut, linear, display, grad, scratch)
+            val weight = subjectWeight?.getOrNull(index) ?: 0.0f
+            PassBColorMath.apply(
+                toneParams, colorParams, curveLut, linear, display, grad, scratch, subject, weight
+            )
             pixels[index] = Srgb8Packer.packRgb(display[0], display[1], display[2], alphaBits = pixel)
         }
     }
@@ -389,8 +404,28 @@ internal object PreviewCacheWriter {
         }
     }
 
-    private fun previewSize(outputAspect: Float): Pair<Int, Int> {
-        val aspect = outputAspect.takeIf { it.isFinite() && it > 0.0f } ?: 1.0f
+    /**
+     * Builds the frame-aligned subject alpha when the graph needs it, or `null` for the neutral
+     * zero-cost path.
+     */
+    private fun resolveSubjectWeight(
+        subject: SubjectComposite?,
+        graph: EditGraph,
+        width: Int,
+        height: Int,
+        warpField: WarpDisplacementField?,
+        inverseMatrix: Mat3? = null
+    ): FloatArray? {
+        if (subject == null) return null
+        if (!graph.subject.hasGradingAdjustments() && !graph.subject.hasBackgroundBlur()) return null
+        val matrix = inverseMatrix ?: GeometryMath.buildPassAInverseMatrix(
+            graph.geometry,
+            width.toFloat() / height.toFloat()
+        )
+        return SubjectWeightPlane.compute(subject, width, height, matrix, warpField)
+    }
+
+    private fun previewSize(outputAspect: Float): Pair<Int, Int> {        val aspect = outputAspect.takeIf { it.isFinite() && it > 0.0f } ?: 1.0f
         return if (aspect >= 1.0f) {
             PREVIEW_MAX_EDGE_PX to (PREVIEW_MAX_EDGE_PX / aspect).roundToInt().coerceAtLeast(1)
         } else {

@@ -67,7 +67,8 @@ internal class SpatialDetailGlChain(private val capabilities: GlCapabilities) {
         prepassTextureId: Int,
         skinMaskTextureId: Int,
         atmosphericLight: FloatArray,
-        guideTransform: TileUvTransform = TileUvTransform.IDENTITY
+        guideTransform: TileUvTransform = TileUvTransform.IDENTITY,
+        subjectBokeh: SubjectBokehDrawParams? = null
     ): Int {
         lastDrawCalls = 0
         if (!program.isReady || inputTextureId == 0 || plan.stages.isEmpty()) return inputTextureId
@@ -90,7 +91,8 @@ internal class SpatialDetailGlChain(private val capabilities: GlCapabilities) {
             program.draw(
                 buildStageDrawParams(
                     stage, current, prepassTextureId, skinMaskTextureId, params,
-                    atmosphericLight, scaledRadiusPx, skinBlurScale, width, height, ditherAmp, guideTransform
+                    atmosphericLight, scaledRadiusPx, skinBlurScale, width, height, ditherAmp,
+                    guideTransform, subjectBokeh
                 )
             )
             target.unbind()
@@ -113,12 +115,14 @@ internal class SpatialDetailGlChain(private val capabilities: GlCapabilities) {
         width: Int,
         height: Int,
         ditherAmp: Float,
-        guideTransform: TileUvTransform
+        guideTransform: TileUvTransform,
+        subjectBokeh: SubjectBokehDrawParams?
     ): SpatialDetailDrawParams = SpatialDetailDrawParams(
         stage = stage,
         inputTextureId = inputTextureId,
         prepassTextureId = if (needsPrepass(stage)) prepassTextureId else 0,
         skinMaskTextureId = if (needsSkinMask(stage)) skinMaskTextureId else 0,
+        subjectBokeh = if (stage == SpatialDetailStage.SUBJECT_BOKEH) subjectBokeh else null,
         skinSmooth = params.skinSmooth,
         skinTexture = params.skinTexture,
         skinEvenTone = params.skinEvenTone,

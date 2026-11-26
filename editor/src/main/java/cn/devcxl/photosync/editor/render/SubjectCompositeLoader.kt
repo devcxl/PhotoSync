@@ -8,7 +8,6 @@ import timber.log.Timber
 import cn.devcxl.photosync.editor.domain.AiAssetStore
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.LinearRawPreviewRenderer
-import cn.devcxl.photosync.editor.domain.SubjectBackgroundMode
 import cn.devcxl.photosync.editor.vision.SubjectImage
 import cn.devcxl.photosync.editor.vision.SubjectMask
 import cn.devcxl.photosync.editor.vision.SubjectMaskCodec
@@ -39,7 +38,7 @@ internal object SubjectCompositeLoader {
         filesDir: File,
         inpaint: InpaintOverlay? = null
     ): SubjectComposite? {
-        if (graph.subject.bgMode == SubjectBackgroundMode.ORIGINAL) return null
+        if (!graph.subject.requiresMaskProcessing()) return null
         val mask = loadMask(filesDir, graph) ?: return null
         if (inpaint == null) return fromSource(source, mask)
         val composed = EditorSourceComposer.compose(source, inpaint)
@@ -66,7 +65,7 @@ internal object SubjectCompositeLoader {
         filesDir: File,
         inpaint: InpaintOverlay? = null
     ): SubjectComposite? {
-        if (graph.subject.bgMode == SubjectBackgroundMode.ORIGINAL) return null
+        if (!graph.subject.requiresMaskProcessing()) return null
         val mask = loadMask(filesDir, graph) ?: return null
         return fromFile(sourcePath, isRaw, mask, inpaint)
     }

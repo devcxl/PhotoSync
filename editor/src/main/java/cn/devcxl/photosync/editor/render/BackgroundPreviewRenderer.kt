@@ -24,6 +24,7 @@ import cn.devcxl.photosync.editor.export.BakeConcurrencyGate
 import cn.devcxl.photosync.editor.export.BakePortraitSupport
 import cn.devcxl.photosync.editor.lut.CubeLutStore
 import cn.devcxl.photosync.editor.vision.PortraitPreviewCache
+import cn.devcxl.photosync.editor.vision.SubjectMask
 
 /**
  * Renders the screen-sized preview JPEG of a graph that no editor session ever opened — used both
@@ -112,7 +113,8 @@ object BackgroundPreviewRenderer {
         outDir: File,
         sourcePath: String,
         isRaw: Boolean,
-        graph: EditGraph
+        graph: EditGraph,
+        subjectMaskOverride: SubjectMask? = null
     ): File? {
         if (sourcePath.isBlank() || graph.isIdentity()) return null
         if (!outDir.isDirectory && !outDir.mkdirs()) {
@@ -125,7 +127,9 @@ object BackgroundPreviewRenderer {
         val produced = AtomicReference<File?>(null)
         return try {
             withContext(Dispatchers.IO) {
-                val rendered = renderInDir(context, filesDir, outDir, sourcePath, isRaw, graph)
+                val rendered = renderInDir(
+                    context, filesDir, outDir, sourcePath, isRaw, graph, subjectMaskOverride
+                )
                 produced.set(rendered)
                 rendered
             }
@@ -141,7 +145,8 @@ object BackgroundPreviewRenderer {
         outDir: File,
         sourcePath: String,
         isRaw: Boolean,
-        graph: EditGraph
+        graph: EditGraph,
+        subjectMaskOverride: SubjectMask?
     ): File? {
         val startedAt = SystemClock.elapsedRealtime()
         var acquireMs = 0L
@@ -173,7 +178,9 @@ object BackgroundPreviewRenderer {
             // Preparation owns the lease until the GPU dispatch takes it over.
             val prepStartedAt = SystemClock.elapsedRealtime()
             val request = PreviewFailurePolicy.prepareOrRelease(lease) {
-                buildRequest(context, filesDir, outDir, sourcePath, isRaw, graph, lease.source)
+                buildRequest(
+                    context, filesDir, outDir, sourcePath, isRaw, graph, lease.source, subjectMaskOverride
+                )
             }
             prepareMs = SystemClock.elapsedRealtime() - prepStartedAt
             if (request == null) return null
@@ -359,10 +366,13 @@ object BackgroundPreviewRenderer {
         sourcePath: String,
         isRaw: Boolean,
         graph: EditGraph,
-        source: EditorSource
+        source: EditorSource,
+        subjectMaskOverride: SubjectMask?
     ): OffscreenPreviewRequest {
         val portrait = resolvePortrait(context, filesDir, sourcePath, isRaw, graph, source)
         val inpaint = InpaintOverlay.of(filesDir, graph)
+        val subject = subjectMaskOverride?.let { SubjectCompositeLoader.fromSource(source, it) }
+            ?: SubjectCompositeLoader.resolve(graph, source, filesDir, inpaint)
         return OffscreenPreviewRequest(
             source = source,
             graph = graph,
@@ -370,7 +380,7 @@ object BackgroundPreviewRenderer {
             skinMask = portrait.skinMask,
             lut = loadLut(filesDir, graph),
             outDir = outDir,
-            subject = SubjectCompositeLoader.resolve(graph, source, filesDir, inpaint),
+            subject = subject,
             inpaint = inpaint
         )
     }

@@ -26,6 +26,8 @@ internal object LinearRawPreviewRenderer {
      * @param afterEffects Optional presentation stage inserted **after** Pass D. The transparent
      *   cut-out draws its checkerboard here so LUT/grain/vignette can never tint the presentation
      *   background, matching the Pass D shader order exactly.
+     * @param subjectWeight Optional frame-aligned subject alpha that drives the Pass B
+     *   foreground/background grade and the terminal Pass C bokeh.
      */
     fun renderArgb(
         source: LinearRawBuffer,
@@ -34,7 +36,8 @@ internal object LinearRawPreviewRenderer {
         fullResolutionShortEdge: Int = minOf(source.width, source.height),
         skinMask: FloatArray? = null,
         beforeEffects: ((pixels: IntArray, width: Int, height: Int) -> Unit)? = null,
-        afterEffects: ((pixels: IntArray, width: Int, height: Int) -> Unit)? = null
+        afterEffects: ((pixels: IntArray, width: Int, height: Int) -> Unit)? = null,
+        subjectWeight: FloatArray? = null
     ): IntArray {
         val toneParams = ToneShaderParams.from(graph)
         val colorParams = ColorGradingParams.from(graph)
@@ -46,15 +49,20 @@ internal object LinearRawPreviewRenderer {
         val pixelCount = width * height
         val argb = IntArray(pixelCount)
 
+        val subject = graph.subject.takeIf {
+            it.hasGradingAdjustments() && subjectWeight != null
+        }
         if (colorParams.defringe > 0.0f) {
             renderWithDefringe(
                 source, gain, graph.baseLook, lookLut,
-                toneParams, colorParams, curveLut, width, height, argb, PassBColorMath.Scratch()
+                toneParams, colorParams, curveLut, width, height, argb, PassBColorMath.Scratch(),
+                subject, subjectWeight
             )
         } else {
             renderStraight(
                 source, gain, graph.baseLook, lookLut,
-                toneParams, colorParams, curveLut, pixelCount, argb, PassBColorMath.Scratch()
+                toneParams, colorParams, curveLut, pixelCount, argb, PassBColorMath.Scratch(),
+                subject, subjectWeight
             )
         }
         val detailed = PreviewDetailPass.apply(
@@ -63,7 +71,8 @@ internal object LinearRawPreviewRenderer {
             height = height,
             graph = graph,
             fullResolutionShortEdge = fullResolutionShortEdge,
-            skinMask = skinMask
+            skinMask = skinMask,
+            subjectWeight = subjectWeight
         )
         beforeEffects?.invoke(detailed, width, height)
         val graded = applyPassDEffects(detailed, width, height, graph, lut)
@@ -81,7 +90,9 @@ internal object LinearRawPreviewRenderer {
         curveLut: FloatArray?,
         pixelCount: Int,
         argb: IntArray,
-        scratch: PassBColorMath.Scratch
+        scratch: PassBColorMath.Scratch,
+        subject: SubjectOps?,
+        subjectWeight: FloatArray?
     ) {
         val sample = FloatArray(CHANNELS)
         val display = FloatArray(CHANNELS_RGB)
@@ -89,10 +100,13 @@ internal object LinearRawPreviewRenderer {
         for (index in 0 until pixelCount) {
             source.readPixel(index, sample)
             computeBaseLookLinear(sample, gain, baseLook, lookLut, linear, display)
-            if (toneParams.isIdentity && colorParams.isIdentity) {
+            val weight = subjectWeight?.getOrNull(index) ?: 0.0f
+            if (toneParams.isIdentity && colorParams.isIdentity && subject == null) {
                 argb[index] = packLinearAsSrgb(linear)
             } else {
-                PassBColorMath.apply(toneParams, colorParams, curveLut, linear, display, 0.0f, scratch)
+                PassBColorMath.apply(
+                    toneParams, colorParams, curveLut, linear, display, 0.0f, scratch, subject, weight
+                )
                 argb[index] = Srgb8Packer.packRgb(display[0], display[1], display[2])
             }
         }
@@ -120,7 +134,9 @@ internal object LinearRawPreviewRenderer {
         width: Int,
         height: Int,
         argb: IntArray,
-        scratch: PassBColorMath.Scratch
+        scratch: PassBColorMath.Scratch,
+        subject: SubjectOps?,
+        subjectWeight: FloatArray?
     ): IntArray {
         val pixelCount = width * height
         // Cache base-looked linear RGB once so defringe never decodes the LinearRawBuffer twice.
@@ -148,7 +164,10 @@ internal object LinearRawPreviewRenderer {
             linear[1] = cachedLinear[base + 1]
             linear[2] = cachedLinear[base + 2]
             val grad = Srgb8Packer.neighborGradient(lumaMap, width, height, i)
-            PassBColorMath.apply(toneParams, colorParams, curveLut, linear, display, grad, scratch)
+            val weight = subjectWeight?.getOrNull(i) ?: 0.0f
+            PassBColorMath.apply(
+                toneParams, colorParams, curveLut, linear, display, grad, scratch, subject, weight
+            )
             argb[i] = Srgb8Packer.packRgb(display[0], display[1], display[2])
         }
         return argb

@@ -16,6 +16,8 @@ import cn.devcxl.photosync.editor.domain.PassDEffectsParams
 import cn.devcxl.photosync.editor.domain.SourceSliceRect
 import cn.devcxl.photosync.editor.domain.SpatialDetailParams
 import cn.devcxl.photosync.editor.domain.SpatialDetailPlanner
+import cn.devcxl.photosync.editor.domain.SubjectBokehMath
+import cn.devcxl.photosync.editor.domain.SubjectOps
 import cn.devcxl.photosync.editor.domain.ToneShaderParams
 import cn.devcxl.photosync.editor.domain.WarpDisplacementField
 import cn.devcxl.photosync.editor.lut.Lut3dTexture
@@ -30,9 +32,11 @@ import cn.devcxl.photosync.editor.render.GlCapabilities
 import cn.devcxl.photosync.editor.render.OffscreenColorTarget
 import cn.devcxl.photosync.editor.render.SkinMaskTexture
 import cn.devcxl.photosync.editor.render.SpatialDetailGlChain
+import cn.devcxl.photosync.editor.render.SubjectBokehDrawParams
 import cn.devcxl.photosync.editor.render.SubjectDrawParams
 import cn.devcxl.photosync.editor.render.SubjectMaskTexture
 import cn.devcxl.photosync.editor.render.SubjectRenderPlan
+import cn.devcxl.photosync.editor.render.SubjectWeightTexture
 import cn.devcxl.photosync.editor.render.WarpTexture
 
 /** Every graph-derived uniform one bake band needs, plus the band geometry and source binding. */
@@ -54,7 +58,8 @@ internal data class BakeFrame(
     val cropWidth: Int,
     val cropHeight: Int,
     val fullResolutionShortEdge: Int,
-    val maxWarpDisplacementUv: Float = 0.0f
+    val maxWarpDisplacementUv: Float = 0.0f,
+    val subjectOps: SubjectOps = SubjectOps()
 )
 
 /**
@@ -81,6 +86,7 @@ internal class BakePassChain {
     private val warpTexture = WarpTexture()
     private val skinMaskTexture = SkinMaskTexture()
     private val subjectTexture = SubjectMaskTexture()
+    private val subjectWeightTexture = SubjectWeightTexture()
     private val curveLutTexture = CurveLutTexture()
     private val lutTexture = Lut3dTexture()
 
@@ -117,6 +123,8 @@ internal class BakePassChain {
         skinMaskTexture.uploadIfNeeded()
         subjectTexture.stage(null)
         subjectTexture.uploadIfNeeded()
+        subjectWeightTexture.stage(null, 0, 0)
+        subjectWeightTexture.uploadIfNeeded()
         isReady = passA && passC && passD && copy
         return isReady
     }
@@ -179,6 +187,7 @@ internal class BakePassChain {
         val width = frame.band.fboWidth
         val height = frame.band.fboHeight
         if (!drawPassA(frame, geometryTarget)) return 0
+        stageSubjectBandMask(frame, width, height)
         passBTarget.ensureSize(width, height, allowHalfFloat = true, exactSize = true)
         if (!passBTarget.isReady) return 0
         passBTarget.bind()
@@ -186,7 +195,16 @@ internal class BakePassChain {
         val ditherPassB = if (passBTarget.isHalfFloatTarget) 0.0f else PassDEffectsMath.DITHER_AMPLITUDE
         val linearPassBInput = frame.isLinear && geometryTarget.isHalfFloatTarget
         exposureProgram.draw(
-            passBParams(frame, geometryTarget.textureId, width, height, linearPassBInput, ditherPassB)
+            passBParams(
+                frame, geometryTarget.textureId, width, height, linearPassBInput, ditherPassB,
+                subject = frame.subjectOps,
+                subjectWeightTextureId = if (subjectWeightTexture.isActive) {
+                    subjectWeightTexture.textureId
+                } else {
+                    0
+                },
+                subjectLocalSpace = true
+            )
         )
         passBTarget.unbind()
 
@@ -227,6 +245,7 @@ internal class BakePassChain {
         warpTexture.release()
         skinMaskTexture.release()
         subjectTexture.release()
+        subjectWeightTexture.release()
         curveLutTexture.release()
         lutTexture.release()
         geometryTarget.release()
@@ -247,8 +266,8 @@ internal class BakePassChain {
         width: Int,
         height: Int
     ): SubjectDrawParams? {
-        val support = subjectSupport ?: return null
         val plan = subjectPlan ?: return null
+        val support = subjectSupport ?: return null
         val inputTexture = if (detailTexture != 0) detailTexture else passBTarget.textureId
         val pixels = copyAndReadBand(inputTexture, width, height)
         val composite = if (pixels != null) {
@@ -353,7 +372,8 @@ internal class BakePassChain {
         val plan = SpatialDetailPlanner.plan(
             params = frame.spatialParams,
             prepassAvailable = prepassTextureId != 0,
-            skinMaskAvailable = skinMaskTexture.isActive
+            skinMaskAvailable = skinMaskTexture.isActive,
+            subjectMaskAvailable = subjectWeightTexture.isActive
         )
         if (plan.stages.isEmpty()) return 0
         return spatialChain.run(
@@ -366,7 +386,45 @@ internal class BakePassChain {
             prepassTextureId = prepassTextureId,
             skinMaskTextureId = if (skinMaskTexture.isActive) skinMaskTexture.textureId else 0,
             atmosphericLight = atmosphericLight,
-            guideTransform = frame.band.tileUv
+            guideTransform = frame.band.tileUv,
+            subjectBokeh = bokehParams(frame, width, height)
+        )
+    }
+
+    /**
+     * Stages the coarse band alpha before Pass B and Pass C run.
+     *
+     * The refined Pass D composite needs the graded band pixels and is built later; the relative
+     * grade and bokeh only need the model/guided mask, and mapping it through the band's global
+     * `tileUv` keeps every band consistent with its neighbours.
+     */
+    private fun stageSubjectBandMask(frame: BakeFrame, width: Int, height: Int) {
+        val support = subjectSupport
+        val needsWeight = frame.subjectOps.hasGradingAdjustments() ||
+            frame.subjectOps.hasBackgroundBlur()
+        val alpha = if (support != null && needsWeight) {
+            support.bandAlpha(width, height, frame.band)
+        } else {
+            null
+        }
+        subjectWeightTexture.stage(alpha, width, height)
+        subjectWeightTexture.uploadIfNeeded()
+    }
+
+    private fun bokehParams(frame: BakeFrame, width: Int, height: Int): SubjectBokehDrawParams? {
+        if (!frame.subjectOps.hasBackgroundBlur() || !subjectWeightTexture.isActive) return null
+        val maxRadius = if (frame.band.halo > 0) frame.band.halo - 2 else Int.MAX_VALUE
+        val radius = SubjectBokehMath.radiusPixels(
+            blur = frame.subjectOps.blur,
+            shortEdge = minOf(frame.cropWidth, frame.cropHeight),
+            maxRadiusPx = maxRadius
+        )
+        if (radius <= 0) return null
+        return SubjectBokehDrawParams(
+            maskTextureId = subjectWeightTexture.textureId,
+            radiusPx = radius.toFloat(),
+            localSpace = true,
+            uvMatrix = IDENTITY_MATRIX
         )
     }
 
@@ -376,7 +434,10 @@ internal class BakePassChain {
         texelWidth: Int,
         texelHeight: Int,
         isLinearInput: Boolean,
-        ditherAmp: Float
+        ditherAmp: Float,
+        subject: SubjectOps? = null,
+        subjectWeightTextureId: Int = 0,
+        subjectLocalSpace: Boolean = false
     ): ExposureDrawParams = ExposureDrawParams(
         textureId = textureId,
         compareOriginal = false,
@@ -392,7 +453,10 @@ internal class BakePassChain {
         curveTextureId = curveLutTexture.textureId,
         texelWidth = texelWidth,
         texelHeight = texelHeight,
-        ditherAmp = ditherAmp
+        ditherAmp = ditherAmp,
+        subject = subject,
+        subjectWeightTextureId = subjectWeightTextureId,
+        subjectLocalSpace = subjectLocalSpace
     )
 
     private companion object {

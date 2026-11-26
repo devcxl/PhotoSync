@@ -6,7 +6,14 @@
     <string name="editor_subject_mode_original">Original</string>
     <string name="editor_subject_mode_transparent">Transparent</string>
     <string name="editor_subject_mode_solid">Solid colour</string>
-    <string name="editor_subject_wave3_hint">Background blur and independent foreground/background grading arrive in a later wave</string>
+    <string name="editor_subject_blur">Background blur</string>
+    <string name="editor_subject_fg_exposure">FG exposure</string>
+    <string name="editor_subject_fg_temp">FG temp</string>
+    <string name="editor_subject_fg_sat">FG saturation</string>
+    <string name="editor_subject_bg_exposure">BG exposure</string>
+    <string name="editor_subject_bg_temp">BG temp</string>
+    <string name="editor_subject_bg_sat">BG saturation</string>
+    <string name="editor_subject_wave3_hint">Moving a dial generates the mask on demand; cross-photo copies carry parameters, never the mask file</string>
     <string name="editor_subject_swatch_description">Background colour %1$s</string>
     <string name="editor_subject_inference_label">Generating the subject mask (MODNet)…</string>
     <string name="editor_subject_refine_label">Refining hair edges and colour decontamination…</string>

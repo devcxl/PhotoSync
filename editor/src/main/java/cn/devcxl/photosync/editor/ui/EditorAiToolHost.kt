@@ -14,10 +14,12 @@ import cn.devcxl.photosync.editor.domain.EditorUndoController
 import cn.devcxl.photosync.editor.domain.LiquifySession
 import cn.devcxl.photosync.editor.domain.PortraitAnalysis
 import cn.devcxl.photosync.editor.domain.SubjectBackgroundMode
+import cn.devcxl.photosync.editor.domain.SubjectOps
 import cn.devcxl.photosync.editor.render.EditorPreviewSession
 import cn.devcxl.photosync.editor.ui.gesture.CanvasTransform
 import cn.devcxl.photosync.editor.ui.gesture.EditorTool
 import cn.devcxl.photosync.editor.ui.panels.AiInferenceBarController
+import cn.devcxl.photosync.editor.ui.widgets.SubjectPanelView
 
 /**
  * Owns every AI tool of the editor: the shared inference bar, the subject cut-out and the erase
@@ -100,6 +102,12 @@ internal class EditorAiToolHost(
             },
             launchImport = launchImport
         )
+        binding.subjectPanel.root.gradingListener = object : SubjectPanelView.GradingListener {
+            override fun onSubjectAdjusted(subject: SubjectOps) =
+                subjectController.requestAdjustment(subject)
+
+            override fun onSubjectAdjustmentStopped() = subjectController.endAdjustment()
+        }
     }
 
     private fun cancelAiJobs() {
@@ -119,6 +127,7 @@ internal class EditorAiToolHost(
 
     /** Cancels every AI job and drops the listeners; the shared ORT session stays alive. */
     fun release() {
+        binding.subjectPanel.root.gradingListener = null
         inferenceBar.dismiss()
         inpaintTools.release()
         subjectController.release()

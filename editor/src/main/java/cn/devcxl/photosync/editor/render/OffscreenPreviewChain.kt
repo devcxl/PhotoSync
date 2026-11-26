@@ -148,7 +148,8 @@ internal class OffscreenPreviewChain(
                         autoBrightGain = autoBrightGain,
                         graph = graph,
                         toneParams = toneParams,
-                        colorParams = colorParams
+                        colorParams = colorParams,
+                        subjectUvMatrix = inverseMatrix
                     )
                 }
                 if (!analysed || !checkpoint(guard)) return null
@@ -173,7 +174,8 @@ internal class OffscreenPreviewChain(
                 autoBrightGain = autoBrightGain,
                 graph = graph,
                 toneParams = toneParams,
-                colorParams = colorParams
+                colorParams = colorParams,
+                subjectUvMatrix = inverseMatrix
             )
             if (!passB || !checkpoint(guard)) return null
 
@@ -181,7 +183,9 @@ internal class OffscreenPreviewChain(
                 width = outWidth,
                 height = outHeight,
                 spatialParams = spatialParams,
-                fullResolutionShortEdge = minOf(source.width, source.height)
+                fullResolutionShortEdge = minOf(source.width, source.height),
+                graph = graph,
+                subjectUvMatrix = inverseMatrix
             ) ?: return null
             if (!checkpoint(guard)) return null
 

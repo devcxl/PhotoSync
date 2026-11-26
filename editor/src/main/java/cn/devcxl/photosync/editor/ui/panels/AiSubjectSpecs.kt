@@ -27,7 +27,7 @@ internal object AiSubjectSpecs {
         )
     )
 
-    /** True when the subject group carries a mode or a cached mask worth a modified marker. */
+    /** True when the subject group carries a mode, an effect or a cached mask worth a marker. */
     fun isSubjectModified(graph: EditGraph): Boolean =
         !graph.subject.isIdentity() || graph.subject.maskRef.isNotBlank()
 }
