@@ -78,9 +78,9 @@ class SkyAssetStore(
     }
 
     private fun resolveCustom(sky: SkyOps): SkyAssetRef {
-        val digest = sky.assetSha256.trim().ifBlank {
-            custom.shaFromReference(sky.assetIdOrRelPath).orEmpty()
-        }
+        val digest = sky.assetSha256.trim()
+        // A custom asset is only addressable through a full SHA-256. A blank digest must never skip
+        // the integrity check, otherwise a hand-edited graph could point at arbitrary bytes.
         if (!isSha256Hex(digest)) return SkyAssetRef.Missing
         val file = custom.fileFor(digest) ?: return SkyAssetRef.Missing
         if (!file.isFile) return SkyAssetRef.Missing
@@ -94,9 +94,11 @@ class SkyAssetStore(
     private fun resolvePack(sky: SkyOps): SkyAssetRef {
         val packId = sky.assetIdOrRelPath.trim()
         if (packId.isEmpty()) return SkyAssetRef.Missing
+        val digest = sky.assetSha256.trim()
+        if (!isSha256Hex(digest)) return SkyAssetRef.Missing
         val file = packFileResolver(packId) ?: return SkyAssetRef.Missing
         if (!file.isFile) return SkyAssetRef.Missing
-        return SkyAssetRef.Pack(packId = packId, file = file, sha256 = sky.assetSha256.trim())
+        return SkyAssetRef.Pack(packId = packId, file = file, sha256 = digest)
     }
 
     private fun readPack(asset: SkyAssetRef.Pack): ByteArray? {
@@ -107,12 +109,10 @@ class SkyAssetStore(
             Timber.e(io, "Sky pack could not be read")
             return null
         }
-        if (asset.sha256.isNotBlank()) {
-            val actual = LiquifyMeshCodec.sha256Hex(payload)
-            if (!actual.equals(asset.sha256, ignoreCase = true)) {
-                Timber.w("Sky pack rejected: sha256 digest mismatch")
-                return null
-            }
+        val actual = LiquifyMeshCodec.sha256Hex(payload)
+        if (!actual.equals(asset.sha256, ignoreCase = true)) {
+            Timber.w("Sky pack rejected: sha256 digest mismatch")
+            return null
         }
         return payload
     }

@@ -129,6 +129,15 @@ class SkyRelightingAndBlendTest {
     }
 
     @Test
+    fun shouldScaleEdgeShiftByTheFullResolutionShortEdge_whenTheSourceSizeChanges() {
+        val atFourK = SkyBlendMath.edgeScale(2, 4000)
+        val atProxy = SkyBlendMath.edgeScale(2, 1000)
+
+        assertTrue("the same tick must be a smaller UV shrink on a larger source", atFourK < atProxy)
+        assertEquals(1.0f, SkyBlendMath.edgeScale(2, 0), 1e-6f)
+    }
+
+    @Test
     fun shouldLimitSpillSuppressionToTheTransitionBand() {
         assertTrue(SkyBlendMath.isSpillBand(0.5f))
         assertFalse(SkyBlendMath.isSpillBand(0.01f))
@@ -169,6 +178,35 @@ class SkyRelightingAndBlendTest {
         assertTrue("the LUT must grade the composited sky too", (out[0] ushr 16) and 0xFF > 200)
         assertTrue((out[0] ushr 8) and 0xFF < 60)
         assertTrue(out[0] and 0xFF < 60)
+    }
+
+    @Test
+    fun shouldRelightTheForeground_whenOnlyTheSkyRelightIsActive() {
+        val input = argb(220, 220, 220)
+        val pixels = intArrayOf(input)
+        val sky = SkyCpuLayer(
+            width = 1,
+            height = 1,
+            coverage = floatArrayOf(0.0f),
+            skySrgb = intArrayOf(argb(80, 140, 220)),
+            params = SkyBlendParams(procedural = ProceduralSkyPreset.CLEAR_BLUE),
+            stats = SkyRelightStats(deltaL = 0.12f, deltaA = 0.0f, deltaB = 0.0f),
+            relight = 100
+        )
+
+        val out = PreviewCacheWriter.gradeDisplayPixels(
+            pixels = pixels,
+            width = 1,
+            height = 1,
+            graph = EditGraph(),
+            fullResolutionShortEdge = 1,
+            sky = sky
+        )
+
+        assertTrue(
+            "a relight-only graph must still warm the foreground (in=$input out=${out[0]})",
+            ((out[0] ushr 16) and 0xFF) > ((input ushr 16) and 0xFF)
+        )
     }
 
     @Test

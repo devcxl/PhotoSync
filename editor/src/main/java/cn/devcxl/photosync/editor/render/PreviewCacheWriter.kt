@@ -163,60 +163,18 @@ internal object PreviewCacheWriter {
     ): Bitmap? {
         val sourceAspect = source.width.toFloat() / source.height.toFloat()
         val outputAspect = GeometryMath.outputAspect(graph.geometry, sourceAspect)
-        val (outW, outH) = previewSize(outputAspect)
-        val geometryActive = graph.requiresPassAGeometry(hasWarp = warpField?.isZero() == false)
-        val linearFrame = if (geometryActive) {
-            val ca = graph.effects.ca
-            GeometryCpuResampler.resampleLinear(
-                source = source,
-                inverseMatrix = GeometryMath.buildPassAInverseMatrix(graph.geometry, sourceAspect),
-                outputWidth = outW,
-                outputHeight = outH,
-                caRedK = GeometryMath.lateralCaKFromSlider(ca.redCyan),
-                caBlueK = GeometryMath.lateralCaKFromSlider(ca.blueYellow),
-                warpField = warpField
-            )
-        } else {
-            source.downscaledTo(PREVIEW_MAX_EDGE_PX)
-        }
-        val pixels = LinearRawPreviewRenderer.renderArgb(
-            source = linearFrame,
+        val linearFrame = resampleLinearFrame(source, graph, warpField, outputAspect)
+        val pixels = renderLinearPixels(
+            source = source,
+            sourceAspect = sourceAspect,
             graph = graph,
+            warpField = warpField,
             lut = lut,
-            fullResolutionShortEdge = minOf(source.width, source.height),
-            skinMask = skinMask?.takeIf { it.size == SkinMaskMath.MASK_SIZE * SkinMaskMath.MASK_SIZE },
-            beforeEffects = subject?.let { composite ->
-                { buffer, width, height ->
-                    SubjectCpuComposer.applyForeground(
-                        pixels = buffer,
-                        width = width,
-                        height = height,
-                        graph = graph,
-                        composite = composite,
-                        inverseMatrix = GeometryMath.buildPassAInverseMatrix(
-                            graph.geometry,
-                            sourceAspect
-                        ),
-                        warpField = warpField
-                    ).copyInto(buffer)
-                }
-            },
-            afterEffects = checkerboardEffects(graph, subject),
-            subjectWeight = resolveSubjectWeight(
-                subject,
-                graph,
-                linearFrame.width,
-                linearFrame.height,
-                warpField
-            ),
-            cloud = cloudPreviewLayer(cloudAssets, graph, linearFrame.width, linearFrame.height),
-            sky = SkyPreparer.cpuLayer(
-                layer = sky,
-                inverseMatrix = GeometryMath.buildPassAInverseMatrix(graph.geometry, sourceAspect),
-                warpField = warpField,
-                width = linearFrame.width,
-                height = linearFrame.height
-            )
+            skinMask = skinMask,
+            subject = subject,
+            cloudAssets = cloudAssets,
+            sky = sky,
+            frame = linearFrame
         )
         return Bitmap.createBitmap(
             pixels,
@@ -225,6 +183,71 @@ internal object PreviewCacheWriter {
             Bitmap.Config.ARGB_8888
         )
     }
+
+    private fun resampleLinearFrame(
+        source: LinearRawBuffer,
+        graph: EditGraph,
+        warpField: WarpDisplacementField?,
+        outputAspect: Float
+    ): LinearRawBuffer {
+        val (outW, outH) = previewSize(outputAspect)
+        val geometryActive = graph.requiresPassAGeometry(hasWarp = warpField?.isZero() == false)
+        if (!geometryActive) return source.downscaledTo(PREVIEW_MAX_EDGE_PX)
+        val ca = graph.effects.ca
+        val sourceAspect = source.width.toFloat() / source.height.toFloat()
+        return GeometryCpuResampler.resampleLinear(
+            source = source,
+            inverseMatrix = GeometryMath.buildPassAInverseMatrix(graph.geometry, sourceAspect),
+            outputWidth = outW,
+            outputHeight = outH,
+            caRedK = GeometryMath.lateralCaKFromSlider(ca.redCyan),
+            caBlueK = GeometryMath.lateralCaKFromSlider(ca.blueYellow),
+            warpField = warpField
+        )
+    }
+
+    private fun renderLinearPixels(
+        source: LinearRawBuffer,
+        sourceAspect: Float,
+        graph: EditGraph,
+        warpField: WarpDisplacementField?,
+        lut: Lut3dSamples?,
+        skinMask: FloatArray?,
+        subject: SubjectComposite?,
+        cloudAssets: AiAssetStore?,
+        sky: SkyLayerPixels?,
+        frame: LinearRawBuffer
+    ): IntArray = LinearRawPreviewRenderer.renderArgb(
+        source = frame,
+        graph = graph,
+        lut = lut,
+        fullResolutionShortEdge = minOf(source.width, source.height),
+        skinMask = skinMask?.takeIf { it.size == SkinMaskMath.MASK_SIZE * SkinMaskMath.MASK_SIZE },
+        beforeEffects = subject?.let { composite ->
+            { buffer, width, height ->
+                SubjectCpuComposer.applyForeground(
+                    pixels = buffer,
+                    width = width,
+                    height = height,
+                    graph = graph,
+                    composite = composite,
+                    inverseMatrix = GeometryMath.buildPassAInverseMatrix(graph.geometry, sourceAspect),
+                    warpField = warpField
+                ).copyInto(buffer)
+            }
+        },
+        afterEffects = checkerboardEffects(graph, subject),
+        subjectWeight = resolveSubjectWeight(subject, graph, frame.width, frame.height, warpField),
+        cloud = cloudPreviewLayer(cloudAssets, graph, frame.width, frame.height),
+        sky = SkyPreparer.cpuLayer(
+            layer = sky,
+            inverseMatrix = GeometryMath.buildPassAInverseMatrix(graph.geometry, sourceAspect),
+            warpField = warpField,
+            width = frame.width,
+            height = frame.height,
+            referenceShortEdge = minOf(source.width, source.height)
+        )
+    )
 
     private fun renderBitmapFrame(
         source: Bitmap,
@@ -286,7 +309,14 @@ internal object PreviewCacheWriter {
             inverseMatrix = geometry,
             warpField = warpField,
             subjectWeight = resolveSubjectWeight(subject, graph, width, height, warpField, geometry),
-            sky = SkyPreparer.cpuLayer(sky, geometry, warpField, width, height)
+            sky = SkyPreparer.cpuLayer(
+                sky,
+                geometry,
+                warpField,
+                width,
+                height,
+                referenceShortEdge = minOf(source.width, source.height)
+            )
         )
         return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).apply {
             setPixels(graded, 0, width, 0, 0, width, height)
@@ -394,7 +424,12 @@ internal object PreviewCacheWriter {
         val toneParams = ToneShaderParams.from(graph)
         val colorParams = ColorGradingParams.from(graph)
         val subject = graph.subject.takeIf { it.hasGradingAdjustments() && subjectWeight != null }
-        if (toneParams.isIdentity && colorParams.isIdentity && subject == null) return
+        // A sky relight is a Pass B effect of its own: when only `sky.relight` is enabled the loop
+        // below must still run, otherwise the cached preview and the GL canvas disagree.
+        val skyRelight = sky?.takeIf { it.relight > 0 && !it.stats.isIdentity() }
+        if (toneParams.isIdentity && colorParams.isIdentity && subject == null && skyRelight == null) {
+            return
+        }
         val curveLut = if (colorParams.hasCurve) CurveLutBuilder.buildFloatLut(graph.color.curve) else null
         val lumaMap = if (colorParams.defringe > 0.0f) buildLumaMap(pixels) else null
         val linear = FloatArray(CHANNELS_RGB)
@@ -407,13 +442,13 @@ internal object PreviewCacheWriter {
             linear[2] = ExposureShaderMath.decodeSrgb((pixel and 0xFF) / 255.0f)
             val grad = lumaMap?.let { Srgb8Packer.neighborGradient(it, width, height, index) } ?: 0.0f
             val weight = subjectWeight?.getOrNull(index) ?: 0.0f
-            if (sky != null && sky.relight > 0 && !sky.stats.isIdentity()) {
+            if (skyRelight != null) {
                 SkyRelightMath.apply(
-                    stats = sky.stats,
-                    relight = sky.relight,
-                    skyCoverage = sky.coverage.getOrNull(index) ?: 0.0f,
+                    stats = skyRelight.stats,
+                    relight = skyRelight.relight,
+                    skyCoverage = skyRelight.coverage.getOrNull(index) ?: 0.0f,
                     linear = linear,
-                    cachedDeltaRgb = sky.relightDeltaRgb
+                    cachedDeltaRgb = skyRelight.relightDeltaRgb
                 )
             }
             PassBColorMath.apply(

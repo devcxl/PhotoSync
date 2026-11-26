@@ -5,6 +5,7 @@ import android.opengl.GLES30
 import timber.log.Timber
 
 import cn.devcxl.photosync.editor.domain.PassDEffectsParams
+import cn.devcxl.photosync.editor.domain.ProceduralSky
 import cn.devcxl.photosync.editor.domain.TileUvTransform
 
 /**
@@ -41,53 +42,7 @@ internal data class EffectsDrawParams(
 internal class EffectsOutputGlProgram {
 
     private var programId: Int = 0
-    private var aPositionLoc: Int = -1
-    private var aTexCoordLoc: Int = -1
-    private var uTextureLoc: Int = -1
-    private var uLutLoc: Int = -1
-    private var uCompareOriginalLoc: Int = -1
-    private var uLutActiveLoc: Int = -1
-    private var uLutStrengthLoc: Int = -1
-    private var uLutSizeLoc: Int = -1
-    private var uGrainLoc: Int = -1
-    private var uVignetteLoc: Int = -1
-    private var uAspectLoc: Int = -1
-    private var uDitherAmpLoc: Int = -1
-    private var uScaleLoc: Int = -1
-    private var uOffsetLoc: Int = -1
-    private var uTileUvTransformLoc: Int = -1
-    private var uTilePixelScaleLoc: Int = -1
-    private var uSubjectModeLoc: Int = -1
-    private var uSubjectTexLoc: Int = -1
-    private var uSubjectColorLoc: Int = -1
-    private var uSubjectUvMatrixLoc: Int = -1
-    private var uSubjectLocalLoc: Int = -1
-    private var uSubjectWarpTexLoc: Int = -1
-    private var uHasSubjectWarpTexLoc: Int = -1
-    private var uSubjectWarpScaleLoc: Int = -1
-    private var uSubjectWarpOffsetLoc: Int = -1
-    private var uSubjectCheckerLoc: Int = -1
-    private var uSkyActiveLoc: Int = -1
-    private var uSkyProceduralLoc: Int = -1
-    private var uSkyMaskLoc: Int = -1
-    private var uSkyAssetLoc: Int = -1
-    private var uSkyUvMatrixLoc: Int = -1
-    private var uSkyWarpLoc: Int = -1
-    private var uHasSkyWarpLoc: Int = -1
-    private var uSkyWarpScaleLoc: Int = -1
-    private var uSkyWarpOffsetLoc: Int = -1
-    private var uSkyTileUvLoc: Int = -1
-    private var uSkyPixelScaleLoc: Int = -1
-    private var uSkyParamsLoc: Int = -1
-    private var uSkyRelightActiveLoc: Int = -1
-    private var uSkyRelightParamsLoc: Int = -1
-    private var uSkyRelightDeltaLLoc: Int = -1
-    private var uSkyZenithLoc: Int = -1
-    private var uSkyHorizonLoc: Int = -1
-    private var uSkySunColorLoc: Int = -1
-    private var uSkySunLoc: Int = -1
-    private var uSkyHazeLoc: Int = -1
-
+    private val uniforms = EffectsOutputUniformLocations()
     private val quad = QuadMesh()
 
     val isReady: Boolean
@@ -105,7 +60,7 @@ internal class EffectsOutputGlProgram {
             EffectsOutputShaderSources.FRAGMENT_SHADER_ES3
         )
         if (programId == 0) return false
-        resolveLocations()
+        uniforms.resolve(programId)
         return true
     }
 
@@ -115,15 +70,15 @@ internal class EffectsOutputGlProgram {
         GLES20.glUseProgram(programId)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, params.textureId)
-        GLES20.glUniform1i(uTextureLoc, 0)
+        GLES20.glUniform1i(uniforms.uTextureLoc, 0)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
         GLES20.glBindTexture(GLES30.GL_TEXTURE_3D, params.lutTextureId)
-        GLES20.glUniform1i(uLutLoc, 1)
+        GLES20.glUniform1i(uniforms.uLutLoc, 1)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
 
-        GLES20.glUniform1i(uCompareOriginalLoc, if (params.compareOriginal) 1 else 0)
-        GLES20.glUniform2f(uScaleLoc, params.scaleX, params.scaleY)
-        GLES20.glUniform2f(uOffsetLoc, params.offsetX, params.offsetY)
+        GLES20.glUniform1i(uniforms.uCompareOriginalLoc, if (params.compareOriginal) 1 else 0)
+        GLES20.glUniform2f(uniforms.uScaleLoc, params.scaleX, params.scaleY)
+        GLES20.glUniform2f(uniforms.uOffsetLoc, params.offsetX, params.offsetY)
         bindEffectUniforms(params)
         bindSubjectUniforms(params.subject)
         bindSkyUniforms(params.sky, params.compareOriginal)
@@ -132,7 +87,7 @@ internal class EffectsOutputGlProgram {
         } else {
             QuadOrientation.OFFSCREEN
         }
-        quad.draw(aPositionLoc, aTexCoordLoc, orientation)
+        quad.draw(uniforms.aPositionLoc, uniforms.aTexCoordLoc, orientation)
     }
 
     /** Logs driver diagnostics before the context goes away, then drops the program name. */
@@ -147,60 +102,67 @@ internal class EffectsOutputGlProgram {
     private fun bindEffectUniforms(params: EffectsDrawParams) {
         val effects = params.effects
         val lutActive = params.lutTextureId != 0 && effects.hasLutEffects
-        GLES20.glUniform1i(uLutActiveLoc, if (lutActive) 1 else 0)
-        GLES20.glUniform1f(uLutStrengthLoc, effects.lutStrength)
-        GLES20.glUniform1f(uLutSizeLoc, effects.lutSize.toFloat())
+        GLES20.glUniform1i(uniforms.uLutActiveLoc, if (lutActive) 1 else 0)
+        GLES20.glUniform1f(uniforms.uLutStrengthLoc, effects.lutStrength)
+        GLES20.glUniform1f(uniforms.uLutSizeLoc, effects.lutSize.toFloat())
         GLES20.glUniform4f(
-            uGrainLoc,
+            uniforms.uGrainLoc,
             effects.grainAmount,
             effects.grainSize,
             effects.grainRoughness,
             effects.grainSeed.toFloat()
         )
         GLES20.glUniform4f(
-            uVignetteLoc,
+            uniforms.uVignetteLoc,
             effects.vignetteAmount,
             effects.vignetteMidpoint,
             effects.vignetteFeather,
             effects.vignetteRoundness
         )
-        GLES20.glUniform1f(uAspectLoc, effects.aspectRatio)
-        GLES20.glUniform1f(uDitherAmpLoc, params.ditherAmp)
-        GLES20.glUniform4fv(uTileUvTransformLoc, 1, params.tileUv.toVec4(), 0)
-        GLES20.glUniform2f(uTilePixelScaleLoc, params.pixelScaleX, params.pixelScaleY)
+        GLES20.glUniform1f(uniforms.uAspectLoc, effects.aspectRatio)
+        GLES20.glUniform1f(uniforms.uDitherAmpLoc, params.ditherAmp)
+        GLES20.glUniform4fv(uniforms.uTileUvTransformLoc, 1, params.tileUv.toVec4(), 0)
+        GLES20.glUniform2f(uniforms.uTilePixelScaleLoc, params.pixelScaleX, params.pixelScaleY)
     }
 
     private fun bindSubjectUniforms(subject: SubjectDrawParams?) {
         if (subject == null || subject.textureId == 0 || subject.mode == 0) {
-            GLES20.glUniform1i(uSubjectModeLoc, 0)
-            GLES20.glUniform1i(uSubjectCheckerLoc, 0)
+            GLES20.glUniform1i(uniforms.uSubjectModeLoc, 0)
+            GLES20.glUniform1i(uniforms.uSubjectCheckerLoc, 0)
             return
         }
         GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, subject.textureId)
-        GLES20.glUniform1i(uSubjectTexLoc, 2)
+        GLES20.glUniform1i(uniforms.uSubjectTexLoc, 2)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE3)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, subject.warpTextureId)
-        GLES20.glUniform1i(uSubjectWarpTexLoc, 3)
+        GLES20.glUniform1i(uniforms.uSubjectWarpTexLoc, 3)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
 
-        GLES20.glUniform1i(uSubjectModeLoc, subject.mode)
+        GLES20.glUniform1i(uniforms.uSubjectModeLoc, subject.mode)
         GLES20.glUniform3f(
-            uSubjectColorLoc,
+            uniforms.uSubjectColorLoc,
             ((subject.solidColorRgb ushr 16) and 0xFF) / 255.0f,
             ((subject.solidColorRgb ushr 8) and 0xFF) / 255.0f,
             (subject.solidColorRgb and 0xFF) / 255.0f
         )
-        GLES20.glUniformMatrix3fv(uSubjectUvMatrixLoc, 1, false, subject.uvMatrix, 0)
-        GLES20.glUniform1i(uSubjectLocalLoc, if (subject.localSpace) 1 else 0)
-        GLES20.glUniform1i(uHasSubjectWarpTexLoc, if (subject.warpTextureId != 0) 1 else 0)
-        GLES20.glUniform2f(uSubjectWarpScaleLoc, subject.warpScale, subject.warpScale)
+        GLES20.glUniformMatrix3fv(uniforms.uSubjectUvMatrixLoc, 1, false, subject.uvMatrix, 0)
+        GLES20.glUniform1i(uniforms.uSubjectLocalLoc, if (subject.localSpace) 1 else 0)
+        GLES20.glUniform1i(
+            uniforms.uHasSubjectWarpTexLoc,
+            if (subject.warpTextureId != 0) 1 else 0
+        )
         GLES20.glUniform2f(
-            uSubjectWarpOffsetLoc,
+            uniforms.uSubjectWarpScaleLoc,
+            subject.warpScale,
+            subject.warpScale
+        )
+        GLES20.glUniform2f(
+            uniforms.uSubjectWarpOffsetLoc,
             subject.warpOffset,
             subject.warpOffset
         )
-        GLES20.glUniform1i(uSubjectCheckerLoc, if (subject.checkerboard) 1 else 0)
+        GLES20.glUniform1i(uniforms.uSubjectCheckerLoc, if (subject.checkerboard) 1 else 0)
     }
 
     /**
@@ -209,39 +171,43 @@ internal class EffectsOutputGlProgram {
      */
     private fun bindSkyUniforms(sky: SkyDrawParams?, compareOriginal: Boolean) {
         val active = sky != null && sky.isCompositeActive && !compareOriginal
-        GLES20.glUniform1i(uSkyActiveLoc, if (active) 1 else 0)
-        GLES20.glUniform1i(uSkyRelightActiveLoc, 0)
+        GLES20.glUniform1i(uniforms.uSkyActiveLoc, if (active) 1 else 0)
+        GLES20.glUniform1i(uniforms.uSkyRelightActiveLoc, 0)
         if (sky == null) return
         val procedural = sky.procedural != null
-        GLES20.glUniform1i(uSkyProceduralLoc, if (procedural) 1 else 0)
-        GLES20.glUniformMatrix3fv(uSkyUvMatrixLoc, 1, false, sky.uvMatrix, 0)
-        GLES20.glUniform4fv(uSkyTileUvLoc, 1, sky.tileUv.toVec4(), 0)
-        GLES20.glUniform2f(uSkyPixelScaleLoc, sky.pixelScaleX, sky.pixelScaleY)
+        GLES20.glUniform1i(uniforms.uSkyProceduralLoc, if (procedural) 1 else 0)
+        GLES20.glUniformMatrix3fv(uniforms.uSkyUvMatrixLoc, 1, false, sky.uvMatrix, 0)
+        GLES20.glUniform4fv(uniforms.uSkyTileUvLoc, 1, sky.tileUv.toVec4(), 0)
+        GLES20.glUniform2f(uniforms.uSkyPixelScaleLoc, sky.pixelScaleX, sky.pixelScaleY)
         GLES20.glUniform4f(
-            uSkyParamsLoc,
+            uniforms.uSkyParamsLoc,
             sky.blend.horizonOffset,
             sky.blend.featherFraction,
             sky.blend.edgeShift.toFloat(),
-            0.0f
+            if (sky.maskLocalSpace) 1.0f else 0.0f
         )
         bindPalette(sky)
         if (!active) return
+        bindSkyTextures(sky, procedural)
+    }
+
+    private fun bindSkyTextures(sky: SkyDrawParams, procedural: Boolean) {
         GLES20.glActiveTexture(GLES20.GL_TEXTURE4)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, sky.maskTextureId)
-        GLES20.glUniform1i(uSkyMaskLoc, SKY_MASK_UNIT)
+        GLES20.glUniform1i(uniforms.uSkyMaskLoc, SKY_MASK_UNIT)
         if (!procedural) {
             GLES20.glActiveTexture(GLES20.GL_TEXTURE5)
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, sky.assetTextureId)
-            GLES20.glUniform1i(uSkyAssetLoc, SKY_ASSET_UNIT)
+            GLES20.glUniform1i(uniforms.uSkyAssetLoc, SKY_ASSET_UNIT)
         }
         val hasWarp = sky.warpTextureId != 0
-        GLES20.glUniform1i(uHasSkyWarpLoc, if (hasWarp) 1 else 0)
+        GLES20.glUniform1i(uniforms.uHasSkyWarpLoc, if (hasWarp) 1 else 0)
         if (hasWarp) {
             GLES20.glActiveTexture(GLES20.GL_TEXTURE3)
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, sky.warpTextureId)
-            GLES20.glUniform1i(uSkyWarpLoc, SKY_WARP_UNIT)
-            GLES20.glUniform2f(uSkyWarpScaleLoc, sky.warpScale, sky.warpScale)
-            GLES20.glUniform2f(uSkyWarpOffsetLoc, sky.warpOffset, sky.warpOffset)
+            GLES20.glUniform1i(uniforms.uSkyWarpLoc, SKY_WARP_UNIT)
+            GLES20.glUniform2f(uniforms.uSkyWarpScaleLoc, sky.warpScale, sky.warpScale)
+            GLES20.glUniform2f(uniforms.uSkyWarpOffsetLoc, sky.warpOffset, sky.warpOffset)
         }
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
     }
@@ -249,34 +215,34 @@ internal class EffectsOutputGlProgram {
     private fun bindPalette(sky: SkyDrawParams) {
         val preset = sky.procedural
         if (preset == null) {
-            GLES20.glUniform3f(uSkyZenithLoc, 0.0f, 0.0f, 0.0f)
-            GLES20.glUniform3f(uSkyHorizonLoc, 0.0f, 0.0f, 0.0f)
-            GLES20.glUniform3f(uSkySunColorLoc, 0.0f, 0.0f, 0.0f)
-            GLES20.glUniform3f(uSkySunLoc, 0.5f, 0.5f, 0.0f)
-            GLES20.glUniform1f(uSkyHazeLoc, 0.0f)
+            GLES20.glUniform3f(uniforms.uSkyZenithLoc, 0.0f, 0.0f, 0.0f)
+            GLES20.glUniform3f(uniforms.uSkyHorizonLoc, 0.0f, 0.0f, 0.0f)
+            GLES20.glUniform3f(uniforms.uSkySunColorLoc, 0.0f, 0.0f, 0.0f)
+            GLES20.glUniform3f(uniforms.uSkySunLoc, 0.5f, 0.5f, 0.0f)
+            GLES20.glUniform1f(uniforms.uSkyHazeLoc, 0.0f)
             return
         }
-        val palette = cn.devcxl.photosync.editor.domain.ProceduralSky.palette(preset)
+        val palette = ProceduralSky.palette(preset)
         GLES20.glUniform3f(
-            uSkyZenithLoc,
+            uniforms.uSkyZenithLoc,
             red(palette.zenithArgb),
             green(palette.zenithArgb),
             blue(palette.zenithArgb)
         )
         GLES20.glUniform3f(
-            uSkyHorizonLoc,
+            uniforms.uSkyHorizonLoc,
             red(palette.horizonArgb),
             green(palette.horizonArgb),
             blue(palette.horizonArgb)
         )
         GLES20.glUniform3f(
-            uSkySunColorLoc,
+            uniforms.uSkySunColorLoc,
             red(palette.sunArgb),
             green(palette.sunArgb),
             blue(palette.sunArgb)
         )
-        GLES20.glUniform3f(uSkySunLoc, palette.sunX, palette.sunY, palette.sunIntensity)
-        GLES20.glUniform1f(uSkyHazeLoc, palette.haze)
+        GLES20.glUniform3f(uniforms.uSkySunLoc, palette.sunX, palette.sunY, palette.sunIntensity)
+        GLES20.glUniform1f(uniforms.uSkyHazeLoc, palette.haze)
     }
 
     private fun red(argb: Int): Float = ((argb ushr 16) and 0xFF) / 255.0f
@@ -284,55 +250,6 @@ internal class EffectsOutputGlProgram {
     private fun green(argb: Int): Float = ((argb ushr 8) and 0xFF) / 255.0f
 
     private fun blue(argb: Int): Float = (argb and 0xFF) / 255.0f
-
-    private fun resolveLocations() {
-        aPositionLoc = GLES20.glGetAttribLocation(programId, "aPosition")
-        aTexCoordLoc = GLES20.glGetAttribLocation(programId, "aTexCoord")
-        uTextureLoc = GLES20.glGetUniformLocation(programId, "uTex0")
-        uLutLoc = GLES20.glGetUniformLocation(programId, "uLutTex")
-        uCompareOriginalLoc = GLES20.glGetUniformLocation(programId, "uCompareOriginal")
-        uLutActiveLoc = GLES20.glGetUniformLocation(programId, "uLutActive")
-        uLutStrengthLoc = GLES20.glGetUniformLocation(programId, "uLutStrength")
-        uLutSizeLoc = GLES20.glGetUniformLocation(programId, "uLutSize")
-        uGrainLoc = GLES20.glGetUniformLocation(programId, "uGrain")
-        uVignetteLoc = GLES20.glGetUniformLocation(programId, "uVignette")
-        uAspectLoc = GLES20.glGetUniformLocation(programId, "uAspect")
-        uDitherAmpLoc = GLES20.glGetUniformLocation(programId, "uDitherAmp")
-        uScaleLoc = GLES20.glGetUniformLocation(programId, "uScale")
-        uOffsetLoc = GLES20.glGetUniformLocation(programId, "uOffset")
-        uTileUvTransformLoc = GLES20.glGetUniformLocation(programId, "uTileUvTransform")
-        uTilePixelScaleLoc = GLES20.glGetUniformLocation(programId, "uTilePixelScale")
-        uSubjectModeLoc = GLES20.glGetUniformLocation(programId, "uSubjectMode")
-        uSubjectTexLoc = GLES20.glGetUniformLocation(programId, "uSubjectTex")
-        uSubjectColorLoc = GLES20.glGetUniformLocation(programId, "uSubjectColor")
-        uSubjectUvMatrixLoc = GLES20.glGetUniformLocation(programId, "uSubjectUvMatrix")
-        uSubjectLocalLoc = GLES20.glGetUniformLocation(programId, "uSubjectLocal")
-        uSubjectWarpTexLoc = GLES20.glGetUniformLocation(programId, "uSubjectWarpTex")
-        uHasSubjectWarpTexLoc = GLES20.glGetUniformLocation(programId, "uHasSubjectWarpTex")
-        uSubjectWarpScaleLoc = GLES20.glGetUniformLocation(programId, "uSubjectWarpScale")
-        uSubjectWarpOffsetLoc = GLES20.glGetUniformLocation(programId, "uSubjectWarpOffset")
-        uSubjectCheckerLoc = GLES20.glGetUniformLocation(programId, "uSubjectChecker")
-        uSkyActiveLoc = GLES20.glGetUniformLocation(programId, "uSkyActive")
-        uSkyProceduralLoc = GLES20.glGetUniformLocation(programId, "uSkyProcedural")
-        uSkyMaskLoc = GLES20.glGetUniformLocation(programId, "uSkyMaskTex")
-        uSkyAssetLoc = GLES20.glGetUniformLocation(programId, "uSkyAssetTex")
-        uSkyUvMatrixLoc = GLES20.glGetUniformLocation(programId, "uSkyUvMatrix")
-        uSkyWarpLoc = GLES20.glGetUniformLocation(programId, "uSkyWarpTex")
-        uHasSkyWarpLoc = GLES20.glGetUniformLocation(programId, "uHasSkyWarpTex")
-        uSkyWarpScaleLoc = GLES20.glGetUniformLocation(programId, "uSkyWarpScale")
-        uSkyWarpOffsetLoc = GLES20.glGetUniformLocation(programId, "uSkyWarpOffset")
-        uSkyTileUvLoc = GLES20.glGetUniformLocation(programId, "uSkyTileUv")
-        uSkyPixelScaleLoc = GLES20.glGetUniformLocation(programId, "uSkyPixelScale")
-        uSkyParamsLoc = GLES20.glGetUniformLocation(programId, "uSkyParams")
-        uSkyRelightActiveLoc = GLES20.glGetUniformLocation(programId, "uSkyRelightActive")
-        uSkyRelightParamsLoc = GLES20.glGetUniformLocation(programId, "uSkyRelightParams")
-        uSkyRelightDeltaLLoc = GLES20.glGetUniformLocation(programId, "uSkyRelightDeltaL")
-        uSkyZenithLoc = GLES20.glGetUniformLocation(programId, "uSkyZenithColor")
-        uSkyHorizonLoc = GLES20.glGetUniformLocation(programId, "uSkyHorizonColor")
-        uSkySunColorLoc = GLES20.glGetUniformLocation(programId, "uSkySunColor")
-        uSkySunLoc = GLES20.glGetUniformLocation(programId, "uSkySun")
-        uSkyHazeLoc = GLES20.glGetUniformLocation(programId, "uSkyHaze")
-    }
 
     private companion object {
         const val SKY_MASK_UNIT = 4

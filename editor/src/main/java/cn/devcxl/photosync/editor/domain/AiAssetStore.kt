@@ -17,7 +17,6 @@ public enum class AiAssetKind(val fileNamePrefix: String, val extension: String)
     INPAINT_PATCH("inpaint_patch", "png"),
     INPAINT_MASK("inpaint_mask", "png"),
     SKY_MASK("sky_mask", "png"),
-    SKY_ASSET("sky_asset", "png"),
     CLOUD_LAYER("cloud_layer", "png"),
     CLOUD_MASK("cloud_mask", "png")
 }

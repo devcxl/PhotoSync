@@ -149,10 +149,20 @@ class ClassicSkySegmenter(
         val proxy = image.scaledToMaxEdge(proxyMaxEdge)
         val width = proxy.width
         val height = proxy.height
-        val count = width * height
-        val luma = FloatArray(count)
-        val score = FloatArray(count)
-        for (index in 0 until count) {
+        val luma = FloatArray(width * height)
+        val score = scorePixels(proxy, luma)
+        val probability = refineProbability(score, luma, width, height)
+        val coverage = SkyMask.coverageOf(probability)
+        val mask = SkyMask(width, height, probability, coverage)
+        return SkySegmentation(mask = mask, hasSky = coverage >= SkyMask.MIN_USABLE_COVERAGE)
+    }
+
+    /** Scores every proxy pixel from OKLCH evidence and the vertical sky prior. */
+    private fun scorePixels(proxy: SubjectImage, luma: FloatArray): FloatArray {
+        val width = proxy.width
+        val height = proxy.height
+        val score = FloatArray(width * height)
+        for (index in score.indices) {
             val pixel = proxy.argb[index]
             val red = ((pixel ushr RED_SHIFT) and 0xFF) / 255.0f
             val green = ((pixel ushr GREEN_SHIFT) and 0xFF) / 255.0f
@@ -172,8 +182,18 @@ class ClassicSkySegmenter(
                 vertical = verticalPrior(index / width, height)
             )
         }
+        return score
+    }
+
+    /** Region growth, guided refinement and the bottom gate of one proxy. */
+    private fun refineProbability(
+        score: FloatArray,
+        luma: FloatArray,
+        width: Int,
+        height: Int
+    ): FloatArray {
         val accepted = growFromTop(score, luma, width, height)
-        val seeded = FloatArray(count) { index ->
+        val seeded = FloatArray(score.size) { index ->
             if (accepted[index]) max(score[index], GROWN_FLOOR) else 0.0f
         }
         // The fast guided filter computes its coefficients on a subsampled grid and evaluates them
@@ -187,13 +207,9 @@ class ClassicSkySegmenter(
             radius = guidedRadius,
             epsilon = guidedEpsilon
         )
-        val probability = FloatArray(count) { index ->
-            val capped = refined[index] * bottomGate(index / width, height)
-            capped.coerceIn(0.0f, 1.0f)
+        return FloatArray(score.size) { index ->
+            (refined[index] * bottomGate(index / width, height)).coerceIn(0.0f, 1.0f)
         }
-        val coverage = SkyMask.coverageOf(probability)
-        val mask = SkyMask(width, height, probability, coverage)
-        return SkySegmentation(mask = mask, hasSky = coverage >= SkyMask.MIN_USABLE_COVERAGE)
     }
 
     /**

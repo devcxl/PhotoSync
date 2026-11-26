@@ -13,7 +13,7 @@
     <string name="editor_sky_horizon_offset">Horizon offset</string>
     <string name="editor_sky_horizon_feather">Horizon feather</string>
     <string name="editor_sky_edge_shift">Edge shrink</string>
-    <string name="editor_sky_no_sky_hint">No obvious sky detected (&lt; 3%); the photo was left untouched</string>
+    <string name="editor_sky_no_sky_hint">No obvious sky detected (&lt; 3%); the original sky was restored</string>
     <string name="editor_sky_hint">Four procedural skies work offline with 0 KB; imported skies are stored by SHA-256 and can be removed with a long press</string>
     <string name="editor_sky_importing">Importing sky…</string>
     <string name="editor_sky_import_failed">Sky import failed; choose a JPEG image</string>

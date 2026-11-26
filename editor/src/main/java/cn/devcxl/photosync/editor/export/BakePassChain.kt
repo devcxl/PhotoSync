@@ -8,10 +8,12 @@ import timber.log.Timber
 
 import cn.devcxl.photosync.editor.domain.CurveOps
 import cn.devcxl.photosync.editor.domain.Lut3dSamples
+import cn.devcxl.photosync.editor.domain.Mat3
 import cn.devcxl.photosync.editor.domain.PassDEffectsMath
 import cn.devcxl.photosync.editor.domain.PassDEffectsParams
 import cn.devcxl.photosync.editor.domain.SpatialDetailPlanner
 import cn.devcxl.photosync.editor.domain.SubjectOps
+import cn.devcxl.photosync.editor.domain.TileUvTransform
 import cn.devcxl.photosync.editor.domain.WarpDisplacementField
 import cn.devcxl.photosync.editor.lut.Lut3dTexture
 import cn.devcxl.photosync.editor.render.CloudLayerPixels
@@ -76,6 +78,8 @@ internal class BakePassChain {
     private var subjectSupport: BakeSubjectSupport? = null
     private var subjectPlan: SubjectRenderPlan? = null
     private var skyLayer: SkyLayerPixels? = null
+    private var skySupport: BakeSkySupport? = null
+    private var warpField: WarpDisplacementField? = null
     private var subjectReadback: ByteBuffer? = null
 
     private var prepassTextureId: Int = 0
@@ -119,6 +123,7 @@ internal class BakePassChain {
         graphCurve: CurveOps,
         lut: Lut3dSamples?
     ) {
+        this.warpField = warpField
         warpTexture.stage(warpField)
         warpTexture.uploadIfNeeded()
         skinMaskTexture.stage(skinMask)
@@ -163,6 +168,7 @@ internal class BakePassChain {
      */
     fun setSky(layer: SkyLayerPixels?): Boolean {
         skyLayer = layer
+        skySupport = layer?.let(::BakeSkySupport)
         skyTextures.stage(layer)
         skyTextures.uploadIfNeeded()
         if (layer != null && !skyTextures.isActive) {
@@ -208,6 +214,7 @@ internal class BakePassChain {
         val width = frame.band.fboWidth
         val height = frame.band.fboHeight
         if (!drawPassA(frame, geometryTarget)) return 0
+        stageSkyBandMask(frame, width, height)
         stageSubjectBandMask(frame, width, height)
         passBTarget.ensureSize(width, height, allowHalfFloat = true, exactSize = true)
         if (!passBTarget.isReady) return 0
@@ -275,6 +282,8 @@ internal class BakePassChain {
         subjectReadback = null
         subjectSupport = null
         subjectPlan = null
+        skySupport = null
+        warpField = null
         // The headless context is destroyed right after this call, so nothing stays cached.
         capabilities.reset()
         isReady = false
@@ -418,6 +427,33 @@ internal class BakePassChain {
      * grade and bokeh only need the model/guided mask, and mapping it through the band's global
      * `tileUv` keeps every band consistent with its neighbours.
      */
+    /**
+     * Stages the per-band sky mask before Pass B.
+     *
+     * Pass B's relight and Pass D's composite must sample the same refined plane, so the mask is
+     * built once per band from the Pass A luma and uploaded as a band-local texture. A failed
+     * read-back or allocation keeps the bilinear source-space mask.
+     */
+    private fun stageSkyBandMask(frame: BakeFrame, width: Int, height: Int) {
+        val support = skySupport
+        if (support == null) {
+            skyTextures.stageBandMask(null, 0, 0)
+            return
+        }
+        val pixels = copyAndReadBand(geometryTarget.textureId, width, height)
+        val mask = support.refineBandMask(
+            pixels = pixels,
+            width = width,
+            height = height,
+            band = frame.band,
+            inverseMatrix = Mat3.fromColumnMajorFloatArray(frame.columnMajorInverseMatrix),
+            warpField = warpField,
+            referenceShortEdge = frame.fullResolutionShortEdge
+        )
+        skyTextures.stageBandMask(mask, width, height)
+        skyTextures.uploadIfNeeded()
+    }
+
     private fun stageSubjectBandMask(frame: BakeFrame, width: Int, height: Int) {
         val support = subjectSupport
         val needsWeight = frame.subjectOps.hasGradingAdjustments() ||
@@ -488,21 +524,24 @@ internal class BakePassChain {
      */
     private fun skyParams(frame: BakeFrame, width: Int, height: Int): SkyDrawParams? {
         val layer = skyLayer ?: return null
-        if (skyTextures.maskTextureId == 0 || !layer.isActive) return null
+        val maskId = skyTextures.drawMaskTextureId
+        if (maskId == 0 || !layer.isActive) return null
+        val localMask = skyTextures.maskLocalSpace
         return SkyDrawParams(
-            maskTextureId = skyTextures.maskTextureId,
+            maskTextureId = maskId,
             assetTextureId = if (skyTextures.hasAsset) skyTextures.assetTextureId else 0,
             procedural = layer.procedural,
             blend = layer.blend,
             stats = layer.stats,
             relight = layer.ops.relight,
-            uvMatrix = frame.columnMajorInverseMatrix,
+            uvMatrix = if (localMask) IDENTITY_MATRIX else frame.columnMajorInverseMatrix,
             warpTextureId = if (warpTexture.isWarpActive) warpTexture.textureId else 0,
             warpScale = warpTexture.decodeScale,
             warpOffset = warpTexture.decodeOffset,
-            tileUv = frame.band.tileUv,
-            pixelScaleX = frame.cropWidth.toFloat(),
-            pixelScaleY = frame.cropHeight.toFloat()
+            tileUv = if (localMask) TileUvTransform.IDENTITY else frame.band.tileUv,
+            pixelScaleX = frame.fullResolutionShortEdge.toFloat(),
+            pixelScaleY = frame.fullResolutionShortEdge.toFloat(),
+            maskLocalSpace = localMask
         )
     }
 

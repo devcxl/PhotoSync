@@ -14,7 +14,7 @@
     <string name="editor_sky_horizon_offset">地平线偏移</string>
     <string name="editor_sky_horizon_feather">地平线柔化</string>
     <string name="editor_sky_edge_shift">边缘微缩</string>
-    <string name="editor_sky_no_sky_hint">未检测到明显天空区域（&lt; 3%），已保持原图</string>
+    <string name="editor_sky_no_sky_hint">未检测到明显天空区域（&lt; 3%），已恢复原天空</string>
     <string name="editor_sky_hint">4 组程序化天空 0 KB 离线可用；导入的自拍天空按 SHA-256 存于本机，可长按删除</string>
     <string name="editor_sky_importing">正在导入天空…</string>
     <string name="editor_sky_import_failed">天空导入失败，请选择一张 JPEG 图片</string>

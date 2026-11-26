@@ -125,7 +125,7 @@ class AiAssetStoreTest {
             store().write(8L, AiAssetKind.CLOUD_LAYER, byteArrayOf(3, 3, 3))
         )
         val activePhotoAsset = checkNotNull(
-            store().write(9L, AiAssetKind.SKY_ASSET, byteArrayOf(4))
+            store().write(9L, AiAssetKind.CLOUD_LAYER, byteArrayOf(4))
         )
 
         val report = store().collectOrphanAssets(

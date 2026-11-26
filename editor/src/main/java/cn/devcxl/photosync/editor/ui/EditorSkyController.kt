@@ -1,13 +1,9 @@
 package cn.devcxl.photosync.editor.ui
 
-import java.io.ByteArrayOutputStream
 import java.io.File
-import java.io.IOException
 import java.io.InputStream
 
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.widget.Toast
 
 import androidx.appcompat.app.AlertDialog
@@ -32,11 +28,13 @@ import cn.devcxl.photosync.editor.domain.SkyCustomAsset
 import cn.devcxl.photosync.editor.domain.SkyCustomAssetStore
 import cn.devcxl.photosync.editor.domain.SkyOps
 import cn.devcxl.photosync.editor.render.EditorPreviewSession
+import cn.devcxl.photosync.editor.render.EditorSource
 import cn.devcxl.photosync.editor.render.SkySourceProxy
 import cn.devcxl.photosync.editor.ui.panels.AiInferenceBarController
 import cn.devcxl.photosync.editor.vision.ClassicSkySegmenter
 import cn.devcxl.photosync.editor.vision.SkyMask
 import cn.devcxl.photosync.editor.vision.SkyMaskCodec
+import cn.devcxl.photosync.editor.vision.SkySegmenter
 
 /**
  * Owns the `AI -> 天空` workflow from a chip tap to the committed `EditGraph`.
@@ -63,12 +61,13 @@ internal class EditorSkyController(
     private val scope: CoroutineScope,
     private val onGraphEdited: (EditGraph, EditParameterKey) -> Unit,
     private val onGraphCommitted: (EditGraph, EditParameterKey) -> Unit,
-    private val onUiRefresh: () -> Unit
+    private val onUiRefresh: () -> Unit,
+    private val segmenter: SkySegmenter = ClassicSkySegmenter(),
+    private val sourceProvider: () -> EditorSource? = { previewSession.source }
 ) {
 
     private val assetStore = AiAssetStore(filesDir)
     private val customStore = SkyCustomAssetStore(filesDir)
-    private val segmenter = ClassicSkySegmenter()
     private var job: Job? = null
     private var customAssets: List<SkyCustomAsset> = emptyList()
     private var hasSky: Boolean = true
@@ -166,7 +165,9 @@ internal class EditorSkyController(
         job?.cancel()
         job = scope.launch {
             inferenceBar.show(context.getString(R.string.editor_sky_importing))
-            val imported = withContext(Dispatchers.IO) { importFromStream(input) }
+            val imported = withContext(Dispatchers.IO) {
+                SkyImportPipeline.import(input, customStore)
+            }
             inferenceBar.dismiss()
             if (imported == null) {
                 Toast.makeText(context, R.string.editor_sky_import_failed, Toast.LENGTH_SHORT).show()
@@ -186,32 +187,46 @@ internal class EditorSkyController(
 
     private fun ensureMaskAndApply(sky: SkyOps) {
         job?.cancel()
-        job = scope.launch {
-            inferenceBar.show(context.getString(R.string.editor_sky_segmentation_label))
-            val mask = withContext(Dispatchers.Default) { segment() }
-            currentCoroutineContext().ensureActive()
-            inferenceBar.dismiss()
-            if (mask == null) {
-                Toast.makeText(context, R.string.editor_sky_apply_failed, Toast.LENGTH_SHORT).show()
-                return@launch
-            }
-            hasSky = mask.coverageRatio >= SkyMask.MIN_USABLE_COVERAGE
-            if (!hasSky) {
-                // The gentle hint is the whole action: a < 3 % sky must not paint over the frame.
-                onUiRefresh()
-                return@launch
-            }
-            val payload = SkyMaskCodec.encode(mask) ?: return@launch
-            val reference = assetStore.write(photoId, AiAssetKind.SKY_MASK, payload) ?: return@launch
-            lastMaskRef = reference.relativePath
-            val graph = undoController.currentGraph
-            commit(sky.copy(maskRef = reference.relativePath))
-            onUiRefresh()
+        job = scope.launch { applySkyWhenMaskAvailable(sky) }
+    }
+
+    /**
+     * Segments the current source and commits [sky] only when a usable mask exists.
+     *
+     * A `< 3 %` result is a neutral state, not a half-built sky group: any stale sky parameters are
+     * reset to [SkyOps] and the gentle hint is shown, so the graph can never reference an empty mask.
+     *
+     * @return True when the sky was committed; false for a too-small or failed mask.
+     */
+    internal suspend fun applySkyWhenMaskAvailable(sky: SkyOps): Boolean {
+        inferenceBar.show(context.getString(R.string.editor_sky_segmentation_label))
+        val mask = withContext(Dispatchers.Default) { segment() }
+        currentCoroutineContext().ensureActive()
+        inferenceBar.dismiss()
+        if (mask == null) {
+            Toast.makeText(context, R.string.editor_sky_apply_failed, Toast.LENGTH_SHORT).show()
+            return false
         }
+        hasSky = mask.coverageRatio >= SkyMask.MIN_USABLE_COVERAGE
+        if (!hasSky) {
+            // The gentle hint is the whole action: a < 3 % sky must not paint over the frame, and a
+            // leftover un-masked group must not survive as a half-applied edit.
+            if (undoController.currentGraph.sky != SkyOps()) commit(SkyOps())
+            Toast.makeText(context, R.string.editor_sky_no_sky_hint, Toast.LENGTH_SHORT).show()
+            onUiRefresh()
+            return false
+        }
+        val payload = SkyMaskCodec.encode(mask) ?: return false
+        val reference = assetStore.write(photoId, AiAssetKind.SKY_MASK, payload) ?: return false
+        lastMaskRef = reference.relativePath
+        val graph = undoController.currentGraph
+        commit(sky.copy(maskRef = reference.relativePath))
+        onUiRefresh()
+        return true
     }
 
     private fun segment(): SkyMask? {
-        val source = previewSession.source ?: return null
+        val source = sourceProvider() ?: return null
         val image = SkySourceProxy.of(source) ?: return null
         val result = segmenter.segment(image).getOrElse { error ->
             if (error is OutOfMemoryError) {
@@ -238,7 +253,12 @@ internal class EditorSkyController(
         onGraphCommitted(applied, EditParameterKey.AI_SKY)
     }
 
-    private fun deleteCustom(sha256: String) {
+    /**
+     * Deletes the imported sky [sha256] and resets the graph when it was the selected asset.
+     *
+     * Exposed to the module's tests; user-initiated deletion goes through [requestDeleteCustom].
+     */
+    internal fun deleteCustom(sha256: String) {
         val deleted = customStore.delete(sha256)
         if (!deleted) {
             Toast.makeText(context, R.string.editor_sky_import_failed, Toast.LENGTH_SHORT).show()
@@ -254,75 +274,4 @@ internal class EditorSkyController(
         onUiRefresh()
     }
 
-    private fun importFromStream(input: InputStream): SkyCustomAsset? {
-        val payload = try {
-            readBounded(input, MAX_IMPORT_BYTES) ?: return null
-        } catch (io: IOException) {
-            Timber.e(io, "The selected sky could not be read")
-            return null
-        }
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(payload, 0, payload.size, bounds)
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-        val options = BitmapFactory.Options().apply {
-            inSampleSize = sampleSizeFor(bounds.outWidth, bounds.outHeight)
-        }
-        val decoded = BitmapFactory.decodeByteArray(payload, 0, payload.size, options) ?: return null
-        return try {
-            val scaled = scaleToMaxEdge(decoded, SkyCustomAssetStore.MAX_EDGE_PX)
-            try {
-                val jpeg = ByteArrayOutputStream().use { stream ->
-                    scaled.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, stream)
-                    stream.toByteArray()
-                }
-                customStore.importJpeg(jpeg, scaled.width, scaled.height)
-            } finally {
-                if (scaled !== decoded && !scaled.isRecycled) scaled.recycle()
-            }
-        } finally {
-            if (!decoded.isRecycled) decoded.recycle()
-        }
-    }
-
-    private fun scaleToMaxEdge(bitmap: Bitmap, maxEdge: Int): Bitmap {
-        val longEdge = maxOf(bitmap.width, bitmap.height)
-        if (longEdge <= maxEdge) return bitmap
-        val scale = maxEdge.toFloat() / longEdge
-        return Bitmap.createScaledBitmap(
-            bitmap,
-            (bitmap.width * scale).toInt().coerceAtLeast(1),
-            (bitmap.height * scale).toInt().coerceAtLeast(1),
-            true
-        )
-    }
-
-    private fun sampleSizeFor(width: Int, height: Int): Int {
-        var sample = 1
-        while (maxOf(width / sample, height / sample) > MAX_IMPORT_EDGE_PX * 2) sample *= 2
-        return sample
-    }
-
-    private fun readBounded(input: InputStream, limit: Int): ByteArray? {
-        val output = ByteArrayOutputStream()
-        val buffer = ByteArray(BUFFER_BYTES)
-        var total = 0
-        while (true) {
-            val read = input.read(buffer)
-            if (read < 0) break
-            total += read
-            if (total > limit) {
-                Timber.w("Rejected a sky import above the byte budget")
-                return null
-            }
-            output.write(buffer, 0, read)
-        }
-        return output.toByteArray()
-    }
-
-    private companion object {
-        const val MAX_IMPORT_EDGE_PX = 4096
-        const val MAX_IMPORT_BYTES = 32 * 1024 * 1024
-        const val BUFFER_BYTES = 16 * 1024
-        const val JPEG_QUALITY = 92
-    }
 }

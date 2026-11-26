@@ -308,62 +308,79 @@ class TetheredPhotoIngestor(
         val decoded = EditGraphJsonCodec.decode(preset.graphJson) ?: return null
         // A preset must never hand its own masks to the new photo, even if a stale row still
         // references one: both masks describe the source frame's pixels.
-        var graph = decoded.copy(
+        val cleared = decoded.copy(
             subject = decoded.subject.copy(maskRef = ""),
             sky = decoded.sky.copy(maskRef = "")
         )
-        var subjectMask: SubjectMask? = null
-        var subjectPayload: ByteArray? = null
-        if (graph.subject.requiresMaskProcessing()) {
-            val preparation = try {
-                subjectPreparer?.prepare(file.absolutePath, isRaw, graph)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: RuntimeException) {
-                Timber.w(error, "Subject preset preparation threw; applying the traditional grade")
-                null
-            }
-            if (preparation == null) {
-                Timber.i("LiveTetherPreset subject effect degraded to the traditional grade")
-                graph = graph.copy(subject = SubjectOps())
-            } else {
-                subjectMask = preparation.mask
-                subjectPayload = preparation.payload
-            }
-        }
-        if (!graph.sky.isIdentity()) {
-            val preparation = try {
-                skyPreparer?.prepare(file.absolutePath, isRaw, graph)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: RuntimeException) {
-                Timber.w(error, "Sky preset preparation threw; applying the traditional grade")
-                null
-            }
-            if (preparation == null) {
-                Timber.i("LiveTetherPreset sky effect degraded to the traditional grade")
-                graph = graph.copy(sky = SkyOps())
-            } else {
-                return PreparedPreset(
-                    graphJson = EditGraphJsonCodec.encode(graph),
-                    fallbackGraphJson = EditGraphJsonCodec.encode(degradeAi(decoded)),
-                    subjectMask = subjectMask,
-                    subjectMaskPayload = subjectPayload,
-                    skyMask = preparation.mask,
-                    skyMaskPayload = preparation.payload
-                )
-            }
-        }
-        val cleanJson = EditGraphJsonCodec.encode(graph)
+        val subject = prepareSubject(file, isRaw, cleared)
+        val sky = prepareSky(file, isRaw, subject.graph)
         return PreparedPreset(
-            graphJson = cleanJson,
+            graphJson = EditGraphJsonCodec.encode(sky.graph),
             fallbackGraphJson = EditGraphJsonCodec.encode(degradeAi(decoded)),
-            subjectMask = subjectMask,
-            subjectMaskPayload = subjectPayload,
-            skyMask = null,
-            skyMaskPayload = null
+            subjectMask = subject.mask,
+            subjectMaskPayload = subject.payload,
+            skyMask = sky.mask,
+            skyMaskPayload = sky.payload
         )
     }
+
+    /** Runs the optional MODNet preparation; a failure clears the subject group only. */
+    private suspend fun prepareSubject(
+        file: File,
+        isRaw: Boolean,
+        graph: EditGraph
+    ): PreparedSubject {
+        if (!graph.subject.requiresMaskProcessing()) return PreparedSubject(graph, null, null)
+        val preparation = try {
+            subjectPreparer?.prepare(file.absolutePath, isRaw, graph)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: RuntimeException) {
+            Timber.w(error, "Subject preset preparation threw; applying the traditional grade")
+            null
+        }
+        if (preparation == null) {
+            Timber.i("LiveTetherPreset subject effect degraded to the traditional grade")
+            return PreparedSubject(graph.copy(subject = SubjectOps()), null, null)
+        }
+        return PreparedSubject(graph, preparation.mask, preparation.payload)
+    }
+
+    /** Runs the classic sky segmentation; a `< 3 %` or failed mask clears the sky group only. */
+    private suspend fun prepareSky(
+        file: File,
+        isRaw: Boolean,
+        graph: EditGraph
+    ): PreparedSky {
+        if (graph.sky.isIdentity()) return PreparedSky(graph, null, null)
+        val preparation = try {
+            skyPreparer?.prepare(file.absolutePath, isRaw, graph)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: RuntimeException) {
+            Timber.w(error, "Sky preset preparation threw; applying the traditional grade")
+            null
+        }
+        if (preparation == null) {
+            Timber.i("LiveTetherPreset sky effect degraded to the traditional grade")
+            return PreparedSky(graph.copy(sky = SkyOps()), null, null)
+        }
+        return PreparedSky(graph, preparation.mask, preparation.payload)
+    }
+
+    /** The graph plus the subject mask staged by [prepareSubject]. */
+    private data class PreparedSubject(
+        val graph: EditGraph,
+        val mask: SubjectMask?,
+        val payload: ByteArray?
+    )
+
+    /** The graph plus the sky mask staged by [prepareSky]. */
+    private data class PreparedSky(
+        val graph: EditGraph,
+        val mask: SkyMask?,
+        val payload: ByteArray?
+    )
 
     private suspend fun stagePreview(
         file: File,

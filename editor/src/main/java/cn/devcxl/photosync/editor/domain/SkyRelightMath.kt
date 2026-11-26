@@ -1,5 +1,6 @@
 package cn.devcxl.photosync.editor.domain
 
+import kotlin.math.abs
 import kotlin.math.max
 
 import cn.devcxl.photosync.editor.vision.SkyMask
@@ -24,9 +25,7 @@ data class SkyRelightStats(
 
     /** True when the delta is numerically neutral and can skip the Pass B relight branch. */
     fun isIdentity(): Boolean =
-        kotlin.math.abs(deltaL) < EPSILON &&
-            kotlin.math.abs(deltaA) < EPSILON &&
-            kotlin.math.abs(deltaB) < EPSILON
+        abs(deltaL) < EPSILON && abs(deltaA) < EPSILON && abs(deltaB) < EPSILON
 
     companion object {
         /** A neutral delta; the original sky already matches the replacement. */

@@ -49,34 +49,49 @@ class SkyCustomAssetStore(private val filesDir: File) {
      *   long edge exceeds [MAX_EDGE_PX], the dimensions are invalid or the write failed.
      */
     fun importJpeg(jpeg: ByteArray, width: Int, height: Int): SkyCustomAsset? {
+        if (!isImportable(jpeg, width, height)) return null
+        val digest = LiquifyMeshCodec.sha256Hex(jpeg)
+        val directory = ensureDirectory() ?: return null
+        val target = File(directory, fileNameFor(digest))
+        if (target.isFile && target.length() == jpeg.size.toLong()) {
+            return storedAsset(digest, width, height, target)
+        }
+        return writeAtomically(jpeg, digest, width, height, directory, target)
+    }
+
+    private fun isImportable(jpeg: ByteArray, width: Int, height: Int): Boolean {
         if (jpeg.isEmpty() || jpeg.size > MAX_BYTES) {
             Timber.w("Custom sky rejected: payload is empty or exceeds the size budget")
-            return null
+            return false
         }
-        if (!hasJpegSignature(jpeg)) {
+        if (!SkyJpegProbe.hasSignature(jpeg)) {
             Timber.w("Custom sky rejected: payload is not a JPEG")
-            return null
+            return false
         }
         if (width <= 0 || height <= 0 || maxOf(width, height) > MAX_EDGE_PX) {
             Timber.w("Custom sky rejected: dimensions exceed the long-edge budget")
-            return null
+            return false
         }
-        val digest = LiquifyMeshCodec.sha256Hex(jpeg)
+        return true
+    }
+
+    private fun ensureDirectory(): File? {
         val directory = directory()
         if (!directory.isDirectory && !directory.mkdirs() && !directory.isDirectory) {
             Timber.e("Custom sky directory could not be created")
             return null
         }
-        val target = File(directory, fileNameFor(digest))
-        if (target.isFile && target.length() == jpeg.size.toLong()) {
-            return SkyCustomAsset(
-                sha256 = digest,
-                relativePath = relativePathFor(digest),
-                width = width,
-                height = height,
-                byteSize = target.length()
-            )
-        }
+        return directory
+    }
+
+    private fun writeAtomically(
+        jpeg: ByteArray,
+        digest: String,
+        width: Int,
+        height: Int,
+        directory: File,
+        target: File
+    ): SkyCustomAsset? {
         val temporary = try {
             File.createTempFile("${target.name}.", TEMP_SUFFIX, directory)
         } catch (io: IOException) {
@@ -94,13 +109,7 @@ class SkyCustomAssetStore(private val filesDir: File) {
                 Timber.e("Custom sky could not be moved into place")
                 null
             } else {
-                SkyCustomAsset(
-                    sha256 = digest,
-                    relativePath = relativePathFor(digest),
-                    width = width,
-                    height = height,
-                    byteSize = target.length()
-                )
+                storedAsset(digest, width, height, target)
             }
         } catch (io: IOException) {
             temporary.delete()
@@ -108,6 +117,15 @@ class SkyCustomAssetStore(private val filesDir: File) {
             null
         }
     }
+
+    private fun storedAsset(digest: String, width: Int, height: Int, file: File): SkyCustomAsset =
+        SkyCustomAsset(
+            sha256 = digest,
+            relativePath = relativePathFor(digest),
+            width = width,
+            height = height,
+            byteSize = file.length()
+        )
 
     /**
      * Lists every stored sky, newest first is not tracked, so the order is the stable file order.
@@ -187,7 +205,7 @@ class SkyCustomAssetStore(private val filesDir: File) {
         } catch (io: IOException) {
             Timber.w(io, "Custom sky entry could not be inspected")
             return null
-        }.let(::jpegDimensions)
+        }.let(SkyJpegProbe::dimensions)
         return SkyCustomAsset(
             sha256 = digest.lowercase(),
             relativePath = relativePathFor(digest),
@@ -237,53 +255,5 @@ class SkyCustomAssetStore(private val filesDir: File) {
         fun fileNameFor(sha256: String): String = "sky_${sha256.lowercase()}.jpg"
 
         fun relativePathFor(sha256: String): String = "$SKIES_DIR/${fileNameFor(sha256)}"
-
-        fun hasJpegSignature(payload: ByteArray): Boolean =
-            payload.size >= 3 &&
-                payload[0] == 0xFF.toByte() &&
-                payload[1] == 0xD8.toByte() &&
-                payload[2] == 0xFF.toByte()
-
-        /**
-         * Reads the dimensions from the first JPEG SOF segment.
-         *
-         * The importer already knows the dimensions from the decoded bitmap; this parser only lets the
-         * picker show a size for files the store finds on disk.
-         */
-        fun jpegDimensions(payload: ByteArray): Pair<Int, Int>? {
-            if (!hasJpegSignature(payload)) return null
-            var offset = 2
-            while (offset + 9 < payload.size) {
-                if (payload[offset] != 0xFF.toByte()) {
-                    offset++
-                    continue
-                }
-                val marker = payload[offset + 1].toInt() and 0xFF
-                if (marker == MARKER_SOI || marker in MARKER_RESTART_RANGE) {
-                    offset += 2
-                    continue
-                }
-                if (marker == MARKER_EOI) return null
-                val length = ((payload[offset + 2].toInt() and 0xFF) shl 8) or
-                    (payload[offset + 3].toInt() and 0xFF)
-                if (length < 2 || offset + 2 + length > payload.size) return null
-                if (marker in MARKER_SOF_RANGE) {
-                    val height = ((payload[offset + 5].toInt() and 0xFF) shl 8) or
-                        (payload[offset + 6].toInt() and 0xFF)
-                    val width = ((payload[offset + 7].toInt() and 0xFF) shl 8) or
-                        (payload[offset + 8].toInt() and 0xFF)
-                    return if (width > 0 && height > 0) width to height else null
-                }
-                offset += 2 + length
-            }
-            return null
-        }
-
-        private const val MARKER_SOI = 0xD8
-        private const val MARKER_EOI = 0xD9
-        private val MARKER_RESTART_RANGE = 0xD0..0xD7
-        private val MARKER_SOF_RANGE = setOf(
-            0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF
-        )
     }
 }

@@ -11,6 +11,8 @@ import android.opengl.GLES20
  */
 internal class ExposureUniformLocations {
 
+    var aPositionLoc: Int = -1
+    var aTexCoordLoc: Int = -1
     var uTextureLoc: Int = -1
     var uCompareOriginalLoc: Int = -1
     var uScaleLoc: Int = -1
@@ -84,6 +86,8 @@ internal class ExposureUniformLocations {
     }
 
     private fun resolveInputAndTone(programId: Int) {
+        aPositionLoc = GLES20.glGetAttribLocation(programId, "aPosition")
+        aTexCoordLoc = GLES20.glGetAttribLocation(programId, "aTexCoord")
         uTextureLoc = GLES20.glGetUniformLocation(programId, "uTex0")
         uCompareOriginalLoc = GLES20.glGetUniformLocation(programId, "uCompareOriginal")
         uScaleLoc = GLES20.glGetUniformLocation(programId, "uScale")

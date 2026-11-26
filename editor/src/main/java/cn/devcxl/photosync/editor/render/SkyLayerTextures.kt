@@ -6,6 +6,8 @@ import java.nio.ByteOrder
 import android.opengl.GLES20
 import timber.log.Timber
 
+import cn.devcxl.photosync.editor.vision.SkyMask
+
 /**
  * Owns the two `RGBA8` textures of one sky layer: the source-space probability mask and the
  * frame-aspect-cropped replacement image.
@@ -28,9 +30,21 @@ internal class SkyLayerTextures {
     var assetTextureId: Int = 0
         private set
 
+    /** True when a per-band refined mask replaced the source-space mask. */
+    var maskLocalSpace: Boolean = false
+        private set
+
+    /** Texture holding the bake band's guided-filter-refined mask, or `0`. */
+    var bandMaskTextureId: Int = 0
+        private set
+
+    /** The mask the next draw must bind: a band plane when present, otherwise the source mask. */
+    val drawMaskTextureId: Int
+        get() = if (maskLocalSpace) bandMaskTextureId else maskTextureId
+
     /** True when the mask can be sampled by the next draw. */
     val isActive: Boolean
-        get() = maskTextureId != 0
+        get() = drawMaskTextureId != 0
 
     /** True when a replacement image is bound. */
     val hasAsset: Boolean
@@ -42,17 +56,43 @@ internal class SkyLayerTextures {
     @Volatile
     private var needsUpload: Boolean = false
 
+    private var stagedBandMask: FloatArray? = null
+    private var stagedBandWidth: Int = 0
+    private var stagedBandHeight: Int = 0
+
     private var maskBuffer: ByteBuffer? = null
     private var assetBuffer: ByteBuffer? = null
+    private var bandMaskBuffer: ByteBuffer? = null
 
     /** Stages [layer] for the next GL-thread upload, or `null` to unbind the sky. */
     fun stage(layer: SkyLayerPixels?) {
         staged = layer
+        stagedBandMask = null
+        maskLocalSpace = false
         needsUpload = true
+    }
+
+    /**
+     * Stages an already band-aligned alpha produced by the bake's per-band guided filter.
+     *
+     * A `null` or mismatched plane drops the band mask and makes the next draw fall back to the
+     * bilinear source-space mask, which keeps an OOM from aborting the export.
+     */
+    fun stageBandMask(alpha: FloatArray?, width: Int, height: Int) {
+        val valid = alpha != null && width > 0 && height > 0 && alpha.size == width * height
+        stagedBandMask = if (valid) alpha else null
+        stagedBandWidth = if (valid) width else 0
+        stagedBandHeight = if (valid) height else 0
+        if (!valid) maskLocalSpace = false
     }
 
     /** Uploads the staged layer if it changed. Must run on the GL thread. */
     fun uploadIfNeeded() {
+        val band = stagedBandMask
+        if (band != null) {
+            uploadBandMask(band, stagedBandWidth, stagedBandHeight)
+            return
+        }
         if (!needsUpload) return
         needsUpload = false
         val layer = staged
@@ -77,25 +117,56 @@ internal class SkyLayerTextures {
     fun invalidate() {
         maskTextureId = 0
         assetTextureId = 0
+        bandMaskTextureId = 0
+        maskLocalSpace = false
         needsUpload = staged != null
     }
 
     /** Deletes both textures; safe only while a context is current. */
     fun release() {
-        val ids = intArrayOf(maskTextureId, assetTextureId).filter { it != 0 }.toIntArray()
+        val ids = intArrayOf(maskTextureId, assetTextureId, bandMaskTextureId)
+            .filter { it != 0 }
+            .toIntArray()
         if (ids.isNotEmpty()) GLES20.glDeleteTextures(ids.size, ids, 0)
         maskTextureId = 0
         assetTextureId = 0
+        bandMaskTextureId = 0
+        maskLocalSpace = false
         maskBuffer = null
         assetBuffer = null
+        bandMaskBuffer = null
     }
 
     private fun clearBindings() {
         maskTextureId = 0
         assetTextureId = 0
+        bandMaskTextureId = 0
+        maskLocalSpace = false
     }
 
-    private fun uploadMask(mask: cn.devcxl.photosync.editor.vision.SkyMask): Boolean {
+    private fun uploadBandMask(alpha: FloatArray, width: Int, height: Int) {
+        val required = width * height * BYTES_PER_TEXEL
+        val bytes = bandMaskBuffer?.takeIf { it.capacity() >= required }
+            ?: ByteBuffer.allocateDirect(required)
+                .order(ByteOrder.nativeOrder())
+                .also { bandMaskBuffer = it }
+        bytes.rewind()
+        for (value in alpha) {
+            val level = (value.coerceIn(0.0f, 1.0f) * 255.0f + 0.5f).toInt().coerceIn(0, 255)
+            bytes.put(level.toByte())
+            bytes.put(level.toByte())
+            bytes.put(level.toByte())
+            bytes.put(255.toByte())
+        }
+        bytes.rewind()
+        bandMaskTextureId = uploadTexture(bandMaskTextureId, width, height, bytes, GLES20.GL_LINEAR)
+        maskLocalSpace = bandMaskTextureId != 0
+        if (!maskLocalSpace) {
+            Timber.w("The sky band mask could not be uploaded; falling back to the source mask")
+        }
+    }
+
+    private fun uploadMask(mask: SkyMask): Boolean {
         val required = mask.width * mask.height * BYTES_PER_TEXEL
         val bytes = maskBuffer?.takeIf { it.capacity() >= required }
             ?: ByteBuffer.allocateDirect(required)

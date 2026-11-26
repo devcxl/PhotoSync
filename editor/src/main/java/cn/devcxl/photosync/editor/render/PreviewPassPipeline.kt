@@ -256,8 +256,10 @@ internal class PreviewPassPipeline {
             warpScale = warpTexture.decodeScale,
             warpOffset = warpTexture.decodeOffset,
             tileUv = TileUvTransform.IDENTITY,
-            pixelScaleX = request.viewportWidth.coerceAtLeast(1).toFloat(),
-            pixelScaleY = request.viewportHeight.coerceAtLeast(1).toFloat()
+            // `edgeShift` is expressed in full-resolution source pixels; using the viewport here
+            // would make a 2 px shrink mean a different amount at every zoom level.
+            pixelScaleX = request.fullResolutionShortEdge.coerceAtLeast(1).toFloat(),
+            pixelScaleY = request.fullResolutionShortEdge.coerceAtLeast(1).toFloat()
         )
     }
 

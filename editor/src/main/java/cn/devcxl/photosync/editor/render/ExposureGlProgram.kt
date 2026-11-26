@@ -5,64 +5,6 @@ import timber.log.Timber
 
 import cn.devcxl.photosync.editor.domain.BaseLook
 import cn.devcxl.photosync.editor.domain.ColorGradingParams
-import cn.devcxl.photosync.editor.domain.SubjectOps
-import cn.devcxl.photosync.editor.domain.TileUvTransform
-import cn.devcxl.photosync.editor.domain.ToneShaderParams
-
-/**
- * Uniform bundle for a single Pass B preview draw.
- */
-internal data class ExposureDrawParams(
-    val textureId: Int,
-    val compareOriginal: Boolean,
-    val scaleX: Float,
-    val scaleY: Float,
-    val offsetX: Float = 0.0f,
-    val offsetY: Float = 0.0f,
-    val isLinearInput: Boolean,
-    val baseLook: BaseLook,
-    val autoBrightGain: Float,
-    val toneParams: ToneShaderParams = ToneShaderParams(),
-    val colorParams: ColorGradingParams = ColorGradingParams(),
-    val curveTextureId: Int = 0,
-    val texelWidth: Int = 1,
-    val texelHeight: Int = 1,
-    /** Triangular dither amplitude in display units; `1/255` for 8-bit targets. */
-    val ditherAmp: Float = 0.0f,
-    /** True only when presenting directly to the default screen framebuffer (`FBO 0`). */
-    val flipVerticalForScreen: Boolean = false,
-    /** Foreground/background relative grade; `null` or neutral keeps the shader branch closed. */
-    val subject: SubjectOps? = null,
-    /** Refined subject alpha texture; `0` disables the relight even with a non-neutral group. */
-    val subjectWeightTextureId: Int = 0,
-    /** True when [subjectWeightTextureId] is already in this draw's coordinate grid (bake band). */
-    val subjectLocalSpace: Boolean = false,
-    /** Output-UV to pre-crop-UV matrix for a source-space mask. */
-    val subjectUvMatrix: FloatArray = IDENTITY_MATRIX,
-    /** `uWarpTex` to mirror the Pass A liquify/portrait displacement, or `0`. */
-    val subjectWarpTextureId: Int = 0,
-    val subjectWarpScale: Float = 1.0f,
-    val subjectWarpOffset: Float = 0.0f,
-    /** Post-Pass A cloud layer texture, or `0` when no layer may be sampled. */
-    val cloudLayerTextureId: Int = 0,
-    /** Optional cloud coverage texture; `0` means the layer covers the whole frame. */
-    val cloudMaskTextureId: Int = 0,
-    /** Effective cloud opacity in `0..1`; `0` keeps the shader branch closed. */
-    val cloudOpacity: Float = 0.0f,
-    /** Full-frame UV transform for [cloudLayerTextureId]; identity outside a bake band. */
-    val cloudUvTransform: TileUvTransform = TileUvTransform.IDENTITY,
-    /** Optional P3 sky relight; `null` or a neutral delta closes the shader branch. */
-    val sky: SkyDrawParams? = null
-) {
-
-    companion object {
-        val IDENTITY_MATRIX = floatArrayOf(
-            1.0f, 0.0f, 0.0f,
-            0.0f, 1.0f, 0.0f,
-            0.0f, 0.0f, 1.0f
-        )
-    }
-}
 
 /**
  * Compiles and executes the full Pass B tone & display-color GLSL program (Pass B1 + Pass B2).
@@ -70,10 +12,9 @@ internal data class ExposureDrawParams(
 internal class ExposureGlProgram {
 
     private var programId: Int = 0
-    private var aPositionLoc: Int = -1
-    private var aTexCoordLoc: Int = -1
 
     private val uniforms = ExposureUniformLocations()
+    private val skyBinder = ExposureSkyBinder(uniforms)
     private val quad = QuadMesh()
 
     /**
@@ -148,14 +89,14 @@ internal class ExposureGlProgram {
         applyColorUniforms(params)
         applySubjectUniforms(params)
         applyCloudUniforms(params)
-        applySkyUniforms(params)
+        skyBinder.bind(params)
 
         val orientation = if (params.flipVerticalForScreen) {
             QuadOrientation.SCREEN
         } else {
             QuadOrientation.OFFSCREEN
         }
-        quad.draw(aPositionLoc, aTexCoordLoc, orientation)
+        quad.draw(uniforms.aPositionLoc, uniforms.aTexCoordLoc, orientation)
     }
 
     /** Releases the compiled shader program when tearing down an EGL context. */
@@ -194,64 +135,6 @@ internal class ExposureGlProgram {
             GLES20.glActiveTexture(GLES20.GL_TEXTURE5)
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, params.cloudMaskTextureId)
             GLES20.glUniform1i(uniforms.uCloudMaskLoc, CLOUD_MASK_UNIT)
-        }
-        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
-    }
-
-    /**
-     * Binds the Pass B sky relight: mask at unit 6, the shared warp grid at unit 3 and the Pre-pass
-     * OKLab delta as one `vec3` plus the clamped lightness scalar.
-     */
-    private fun applySkyUniforms(params: ExposureDrawParams) {
-        val sky = params.sky
-        val active = sky != null && sky.isRelightActive && !params.compareOriginal
-        GLES20.glUniform1i(uniforms.uSkyRelightActiveLoc, if (active) 1 else 0)
-        if (sky == null) {
-            GLES20.glUniform4f(uniforms.uSkyParamsLoc, 0.0f, 0.0f, 0.0f, 0.0f)
-            GLES20.glUniform4f(uniforms.uSkyRelightParamsLoc, 0.0f, 0.0f, 0.0f, 0.0f)
-            GLES20.glUniform1f(uniforms.uSkyRelightDeltaLLoc, 0.0f)
-            return
-        }
-        GLES20.glUniformMatrix3fv(uniforms.uSkyUvMatrixLoc, 1, false, sky.uvMatrix, 0)
-        GLES20.glUniform4fv(uniforms.uSkyTileUvLoc, 1, sky.tileUv.toVec4(), 0)
-        GLES20.glUniform2f(uniforms.uSkyPixelScaleLoc, sky.pixelScaleX, sky.pixelScaleY)
-        GLES20.glUniform4f(
-            uniforms.uSkyParamsLoc,
-            sky.blend.horizonOffset,
-            sky.blend.featherFraction,
-            sky.blend.edgeShift.toFloat(),
-            0.0f
-        )
-        val delta = cn.devcxl.photosync.editor.domain.SkyRelightMath.deltaRgb(
-            sky.stats.deltaA,
-            sky.stats.deltaB
-        )
-        GLES20.glUniform4f(
-            uniforms.uSkyRelightParamsLoc,
-            delta[0],
-            delta[1],
-            delta[2],
-            sky.relight.coerceIn(0, 100) / 100.0f
-        )
-        GLES20.glUniform1f(
-            uniforms.uSkyRelightDeltaLLoc,
-            sky.stats.deltaL.coerceIn(
-                -cn.devcxl.photosync.editor.domain.SkyRelightMath.MAX_LUMA_DELTA,
-                cn.devcxl.photosync.editor.domain.SkyRelightMath.MAX_LUMA_DELTA
-            )
-        )
-        if (!active) return
-        GLES20.glActiveTexture(GLES20.GL_TEXTURE6)
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, sky.maskTextureId)
-        GLES20.glUniform1i(uniforms.uSkyMaskLoc, SKY_MASK_UNIT)
-        val hasWarp = sky.warpTextureId != 0
-        GLES20.glUniform1i(uniforms.uHasSkyWarpLoc, if (hasWarp) 1 else 0)
-        if (hasWarp) {
-            GLES20.glActiveTexture(GLES20.GL_TEXTURE3)
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, sky.warpTextureId)
-            GLES20.glUniform1i(uniforms.uSkyWarpLoc, SKY_WARP_UNIT)
-            GLES20.glUniform2f(uniforms.uSkyWarpScaleLoc, sky.warpScale, sky.warpScale)
-            GLES20.glUniform2f(uniforms.uSkyWarpOffsetLoc, sky.warpOffset, sky.warpOffset)
         }
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
     }
@@ -356,11 +239,5 @@ internal class ExposureGlProgram {
 
         /** Texture unit of the optional cloud coverage mask. */
         const val CLOUD_MASK_UNIT = 5
-
-        /** Texture unit of the source-space sky probability mask. */
-        const val SKY_MASK_UNIT = 6
-
-        /** Texture unit of the shared `uWarpTex`; the subject stage may already bind it. */
-        const val SKY_WARP_UNIT = 3
     }
 }

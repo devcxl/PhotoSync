@@ -44,10 +44,14 @@ internal object SkyShaderSources {
      *
      * `uSkyTileUv` turns a bake band's local UV into the global post-crop UV; `uSkyUvMatrix` is the
      * Pass A inverse homography; the optional warp texture mirrors the liquify/portrait displacement.
-     * `uSkyParams.z` applies the two-pixel mask erosion around the frame centre.
+     * `uSkyParams.z` applies the two-pixel mask erosion around the frame centre, and `uSkyParams.w`
+     * switches the mask to a band-aligned plane produced by the bake's per-band guided filter.
      */
     val SAMPLING_FUNCTIONS = """
         vec2 skyMaskCoords(vec2 outputUv) {
+            if (uSkyParams.w > 0.5) {
+                return outputUv;
+            }
             vec2 globalUv = outputUv * uSkyTileUv.xy + uSkyTileUv.zw;
             float shortEdge = max(min(uSkyPixelScale.x, uSkyPixelScale.y), 1.0);
             float edgeScale = 1.0 + uSkyParams.z * 2.0 / shortEdge;
@@ -98,6 +102,10 @@ internal object SkyShaderSources {
             float worldV = clamp(globalUv.y - uSkyParams.x, 0.0, 1.0);
             float up = 1.0 - worldV;
             float gradient = pow(up, 0.8);
+            // A soft band just above the horizon prevents the last few pixels of gradient from
+            // turning into a visible line against the feathered replacement mask.
+            float horizonBand = 0.02 + 0.10 * uSkyParams.y;
+            gradient = mix(gradient, 0.0, smoothstep(1.0 - horizonBand, 1.0, worldV) * 0.65);
             vec3 base = mix(uSkyHorizonColor, uSkyZenithColor, gradient);
             vec2 sunDelta = vec2(globalUv.x - uSkySun.x, worldV - uSkySun.y);
             float glow = exp(-dot(sunDelta, sunDelta) / 0.0256);
@@ -113,6 +121,17 @@ internal object SkyShaderSources {
             return clamp(sampleTex2D(uSkyAssetTex, uv).rgb, 0.0, 1.0);
         }
 
+        /** Local sky mean used by the transition-band spill suppression. */
+        vec3 skyNeighbourhoodMean(vec2 globalUv) {
+            vec2 offset = vec2(0.012, 0.012);
+            vec3 sum = replacementSkyColour(globalUv);
+            sum += replacementSkyColour(globalUv + vec2(offset.x, 0.0));
+            sum += replacementSkyColour(globalUv - vec2(offset.x, 0.0));
+            sum += replacementSkyColour(globalUv + vec2(0.0, offset.y));
+            sum += replacementSkyColour(globalUv - vec2(0.0, offset.y));
+            return sum / 5.0;
+        }
+
         vec3 applySkyComposite(vec3 srgb, vec2 outputUv, vec2 globalUv) {
             if (uSkyActive == 0) {
                 return srgb;
@@ -123,7 +142,13 @@ internal object SkyShaderSources {
             vec3 newSky = replacementSkyColour(globalUv);
             vec3 composited = mix(srgb, newSky, coverage);
             float edge = smoothstep(0.05, 0.5, raw) * (1.0 - smoothstep(0.5, 0.95, raw));
-            return mix(composited, newSky, edge * 0.20 * (1.0 - coverage));
+            if (edge <= 0.0) {
+                return composited;
+            }
+            // The spill tint is a local sky average instead of the single pixel under the edge,
+            // which keeps branches and roof lines from picking up a noisy cyan/white rim.
+            vec3 spillSky = skyNeighbourhoodMean(globalUv);
+            return mix(composited, spillSky, edge * 0.20 * (1.0 - coverage));
         }
     """.trimIndent()
 }

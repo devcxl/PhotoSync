@@ -25,8 +25,11 @@ internal data class SkyDrawParams(
     val warpScale: Float = 1.0f,
     val warpOffset: Float = 0.0f,
     val tileUv: TileUvTransform = TileUvTransform.IDENTITY,
+    /** Full-resolution source short edge that defines the `edgeShift` unit. */
     val pixelScaleX: Float = 1.0f,
-    val pixelScaleY: Float = 1.0f
+    val pixelScaleY: Float = 1.0f,
+    /** True when the mask is already band-aligned and must be sampled with the local UV. */
+    val maskLocalSpace: Boolean = false
 ) {
 
     /** True when Pass D has a replacement to composite. */

@@ -22,10 +22,6 @@ data class SkyBlendParams(
     val featherFraction: Float
         get() = horizonFeather.coerceIn(0, 100) / 100.0f
 
-    /** True when the graph carries a sky that Pass D must composite. */
-    val isActive: Boolean
-        get() = procedural != null
-
     companion object {
 
         /**
@@ -62,8 +58,9 @@ data class SkyBlendParams(
  * The composite runs **before** the 3D LUT, grain and vignette so the whole final frame — new sky and
  * original foreground alike — receives the same grade. Three rules keep the seam invisible:
  * 1. `horizonFeather` widens the mask transition, giving the new sky a hazy atmospheric edge.
- * 2. `edgeShift` samples the mask at a slightly scaled radius, eroding the sky by up to two pixels so
- *    a bright pixel row of the original sky cannot remain as a rim.
+ * 2. `edgeShift` samples the mask at a slightly scaled radius, eroding the sky by up to two pixels
+ *    of the full-resolution source short edge so a bright pixel row of the original sky cannot
+ *    remain as a rim.
  * 3. In the `0.05 < coverage < 0.95` band a small fraction of the neighbouring new-sky colour is
  *    mixed into the foreground, suppressing cyan/white colour spill on branches and roof edges.
  */
@@ -84,7 +81,8 @@ object SkyBlendMath {
     /**
      * Applies the `edgeShift` radial sampling offset to a normalized coordinate.
      *
-     * @param edgeShift Signed pixels; positive scales the sample radius outwards, shrinking the sky.
+     * @param edgeShift Signed pixels of the **full-resolution source short edge**, so preview,
+     *   bake and CPU frames all shrink the mask by the same physical amount.
      */
     fun shiftedCoordinate(
         u: Float,
@@ -95,9 +93,21 @@ object SkyBlendMath {
     ): Pair<Float, Float> {
         val shortEdge = min(width.coerceAtLeast(1), height.coerceAtLeast(1))
         if (edgeShift == 0 || shortEdge <= 0) return u to v
-        val scale = 1.0f + (edgeShift * 2.0f / shortEdge)
-        val safeScale = scale.coerceIn(0.5f, 1.5f)
-        return (0.5f + (u - 0.5f) * safeScale) to (0.5f + (v - 0.5f) * safeScale)
+        val scale = edgeScale(edgeShift, shortEdge)
+        return (0.5f + (u - 0.5f) * scale) to (0.5f + (v - 0.5f) * scale)
+    }
+
+    /**
+     * Radial scale of one `edgeShift` tick at [referenceShortEdge] source pixels.
+     *
+     * Every render path passes the **same full-resolution source short edge**, which is what makes
+     * a 2 px shrink at preview time equal the 2 px shrink of the 24MP bake instead of scaling with
+     * the viewport or the column band.
+     */
+    fun edgeScale(edgeShift: Int, referenceShortEdge: Int): Float {
+        if (edgeShift == 0 || referenceShortEdge <= 0) return 1.0f
+        val scale = 1.0f + edgeShift * 2.0f / referenceShortEdge
+        return scale.coerceIn(0.5f, 1.5f)
     }
 
     /** The feathered sky weight of one raw mask value. */
@@ -160,7 +170,10 @@ object SkyBlendMath {
             val column = index % width
             val u = (column + 0.5f) / width
             val v = (row + 0.5f) / height
-            ProceduralSky.sampleSrgb(sky, u, v, params.horizonOffset, skyColor)
+            // Apply the horizon offset exactly once here, matching `SkyPreparer.skyColour`; passing
+            // both a shifted `v` and `params.horizonOffset` would move the sky twice.
+            val worldV = v - params.horizonOffset
+            ProceduralSky.sampleSrgb(sky, u, worldV, 0.0f, skyColor, params.featherFraction)
             unpack(pixels[index], foreground)
             blendSrgb(foreground, skyColor, adjustedCoverage(raw, params), raw, blended)
             pixels[index] = pack(blended, pixels[index])

@@ -108,18 +108,21 @@ object ProceduralSky {
      *
      * @param horizonOffset Shifts the sky's horizon line in frame units; positive moves it down.
      * @param out Receives three display-referred `0..1` channels.
+     * @param featherFraction Feather slider in `0..1`; widens the softened horizon band exactly like
+     *   the Pass D shader.
      */
     fun sampleSrgb(
         sky: ProceduralSkyPreset,
         u: Float,
         v: Float,
         horizonOffset: Float = 0.0f,
-        out: FloatArray = FloatArray(CHANNELS)
+        out: FloatArray = FloatArray(CHANNELS),
+        featherFraction: Float = 0.0f
     ) {
         val palette = palette(sky)
         val worldV = (v - horizonOffset).coerceIn(0.0f, 1.0f)
         val up = 1.0f - worldV
-        val gradient = up.pow(GRADIENT_POWER)
+        val gradient = softenedGradient(up.pow(GRADIENT_POWER), worldV, featherFraction)
         val zenithR = red(palette.zenithArgb)
         val zenithG = green(palette.zenithArgb)
         val zenithB = blue(palette.zenithArgb)
@@ -148,9 +151,10 @@ object ProceduralSky {
         u: Float,
         v: Float,
         horizonOffset: Float = 0.0f,
-        out: FloatArray = FloatArray(CHANNELS)
+        out: FloatArray = FloatArray(CHANNELS),
+        featherFraction: Float = 0.0f
     ) {
-        sampleSrgb(sky, u, v, horizonOffset, out)
+        sampleSrgb(sky, u, v, horizonOffset, out, featherFraction)
         out[0] = ExposureShaderMath.decodeSrgb(out[0])
         out[1] = ExposureShaderMath.decodeSrgb(out[1])
         out[2] = ExposureShaderMath.decodeSrgb(out[2])
@@ -211,6 +215,14 @@ object ProceduralSky {
 
     private fun mix(from: Float, to: Float, weight: Float): Float = from + (to - from) * weight
 
+    /** Softens the last few percent above the horizon, mirroring the Pass D shader band. */
+    private fun softenedGradient(gradient: Float, worldV: Float, featherFraction: Float): Float {
+        val band = HORIZON_BASE_BAND +
+            (HORIZON_FEATHER_BAND - HORIZON_BASE_BAND) * featherFraction.coerceIn(0.0f, 1.0f)
+        val bandWeight = ToneShaderMath.smoothStep(1.0f - band, 1.0f, worldV) * HORIZON_SOFTEN_GAIN
+        return gradient * (1.0f - bandWeight)
+    }
+
     private fun red(argb: Int): Float = ((argb ushr RED_SHIFT) and 0xFF) / EIGHT_BIT
 
     private fun green(argb: Int): Float = ((argb ushr GREEN_SHIFT) and 0xFF) / EIGHT_BIT
@@ -218,4 +230,7 @@ object ProceduralSky {
     private fun blue(argb: Int): Float = (argb and 0xFF) / EIGHT_BIT
 
     private const val MEAN_GRID = 8
+    private const val HORIZON_BASE_BAND = 0.02f
+    private const val HORIZON_FEATHER_BAND = 0.12f
+    private const val HORIZON_SOFTEN_GAIN = 0.65f
 }
