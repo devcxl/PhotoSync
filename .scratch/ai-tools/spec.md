@@ -197,3 +197,19 @@ RAW 16-bit / JPEG 源采样
 - **文档与合规同步**：
   - 更新 `CONTEXT.md`（§1 领域词汇增量）；
   - 更新 `THIRD_PARTY_NOTICES.md`（ONNX Runtime MIT、MODNet Apache-2.0、MI-GAN MIT + `LICENSE-WEIGHTS`、CC0 天空素材清单）。
+
+---
+
+## 9. 实施收尾记录（ticket 11，2026-11-26）
+
+- **最终代码路径对齐**：
+  - 端侧 AI：`editor/.../vision/{AiModelCatalog, AiModelDownloadManager, OrtSessionManager, ModnetSubjectSegmenter, MiGanInpainter, ClassicSkySegmenter, SkyMaskCodec, SubjectMaskCodec}`；
+  - 非破坏性 AI 图节点：`EditGraph.subject/inpaint/sky/cloudLayer` 由 `AiAssetStore`（`filesDir/edits/<photoId>/<kind>_<sha256>.<ext>`）承载像素资产；渲染期由 `SubjectCompositeLoader`、`InpaintOverlay`、`SkyPreparer`、`CloudLayerBlender` 解析；
+  - 换天空术语：持久化参数为 `SkyOps`，运行期解析结果为 `SkyLayerPixels`（`SkyAssetType` = `NONE / PROCEDURAL / CUSTOM / PACK`，四组 `ProceduralSkyPreset` 为 0 KB 解析式基准）；
+  - 导出：`BakeExporter` → `BakeBandEncoder` → `JpegStripSink`（libjpeg-turbo）或 `PngStripSink`（流式 RGBA8）；
+  - GPU 降级：`GlCapabilities.tier`（Tier 1 `RGBA16F` / Tier 2 `RGBA8` / Tier 3 最小 Shader）与新增 `allowsPassDEffects`，Pass D 的 AI 合成（主体、虚化、换天）随 Tier 3 一并关闭。
+- **自动化门禁落点**：
+  - JVM：`AiDegradationMatrixTest`（降级矩阵补强）、`OrtSessionManagerTest`、`BakeSubjectSupportTest`、`BakeSkySupportTest`、`TetheredSubjectPresetTest`、`GlCapabilitiesTest`、`CloudUploadSanitizerTest`、`CloudNetworkPolicyTest`；
+  - Instrumented：`AiBakeGoldenInstrumentedTest`（24MP JPEG 三案）、`AiLowTierSessionInstrumentedTest`（LOW 档真实模型归零）、`BakeExporterInstrumentedTest`、`OffscreenPreviewRendererFallbackTest`。
+- **Release 门禁实测**（debug keystore，本地）：arm64 拆分 APK 44,506,915 B、AAB 36,983,484 B、universal APK 72,270,922 B；无 `lib/x86*`、无 `.sym`、无 `TelemetryInitializer`，`ai.onnxruntime.**` 与 `com.google.common.flogger.**` 保持原名。
+- **已知未验证项**：本轮 `adb devices` 无设备，24MP 金标与 LOW 档真实模型 Instrumented 用例仅完成编译，未在真机执行；仓库无 24MP RAW 夹具，RAW 导出未纳入 24MP 金标。

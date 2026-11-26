@@ -76,6 +76,25 @@ LGPL-2.1 第 6 条要求：把该库组合进非 LGPL 应用分发二进制时�
 - **合规说明**：仓库自身以 MIT 分发，随应用分发的声明保留在上游仓库
   `LICENSE-WEIGHTS` 与本文件；若上游权重许可发生变化，删除该按需模型即可，不影响安装包其余部分。
 
+## 程序化天空（P3）
+
+- **实现**：`editor/src/main/java/cn/devcxl/photosync/editor/domain/ProceduralSky.kt` 与
+  `editor/src/main/java/cn/devcxl/photosync/editor/render/SkyShaderSources.kt`
+- **许可**：项目自研，随本仓库以 MIT 发布
+- **分发方式**：随应用**内置** 4 组 0 KB 程序化大气基准（`clear_blue`、`sunset_glow`、
+  `blue_hour`、`warm_dusk`）。它们由 Shader 按解析式实时生成，不包含任何第三方位图或权重，
+  不产生额外署名义务。
+
+## 可选 CC0 高清云彩包（P3）
+
+- **分发方式**：**不内置**。仅在用户主动从「AI 模型管理」下载并启用时按需获取，存放于
+  `<filesDir>/models/sky-pack-cc0-clouds/`，与 ONNX 模型共享多镜像下载与 SHA-256 校验路径。
+- **许可要求**：只接受 **CC0-1.0 / Public Domain** 素材。每个包的作者、原始 URL、许可文本与
+  CC0 声明必须在发布说明和本节逐条记录，并固化精确字节数与 SHA-256 之后才可发布。
+- **当前清单**：当前版本尚未发布任何 CC0 天空包（`SkyModelCatalog.CC0_CLOUD_PACK` 是未固化
+  的预留槽位，`isPinned == false`，安装会以 `NOT_AVAILABLE` 干净失败），因此本节暂无条目。
+  新增包时必须先补齐上述出处与校验值。
+
 ## Android NDK 运行时
 
 - **libc++_shared**（`lib/<abi>/libc++_shared.so`）：Apache-2.0 with LLVM exceptions。

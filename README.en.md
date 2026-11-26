@@ -44,6 +44,14 @@ PhotoSync is an Android camera companion app for photographers and imaging enthu
 - **Face reshape** — face, eyes, nose, chin, forehead, smile (MLS mesh)
 - **Body reshape** — waist and legs with draggable guide lines
 
+**AI tools (on-device, downloaded on demand)**
+- **Subject cut-out** — MODNet mask + banded GuidedFilter + FMGE decontamination; transparent PNG (alpha preserved), solid backdrop and background bokeh
+- **Independent foreground/background grading** — separate exposure, temperature and saturation offsets
+- **Smart erase** — MI-GAN-512 content-aware repair (brush + eraser, feathered blend after confirmation)
+- **Sky replacement** — model-free classic sky segmentation, four 0 KB procedural skies, optional CC0 cloud pack (not bundled) and OKLab foreground relighting
+- **On-demand model manager** — MODNet and MI-GAN never ship in the APK; the "AI models" page downloads from ordered mirrors or imports a local `.onnx`, verified by exact byte size and SHA-256
+- **Optional cloud enhancement (off by default)** — pure BYOK OpenAI-compatible / Gemini / self-hosted ComfyUI; HTTPS only, redirects disabled, every EXIF tag and embedded thumbnail stripped before upload
+
 **Tethered darkroom**
 - **User presets** — save/apply a look including portrait work, plus five built-in presets
 - **LiveTetherPreset** — new captures automatically receive the active preset
@@ -52,14 +60,15 @@ PhotoSync is an Android camera companion app for photographers and imaging enthu
 
 **RAW and export**
 - **RAW decoding** — LibRaw + lcms2, 20+ formats including ARW, CR3, NEF, DNG, RAF
-- **Lossless export** — JPEG copied as-is; RAW and edited frames baked at full resolution (libjpeg-turbo, EXIF written back)
-- **No cloud** — everything stays on device
+- **Lossless export** — JPEG copied as-is; RAW and edited frames baked at full resolution (libjpeg-turbo for JPEG, streaming RGBA8 PNG for cut-outs, EXIF written back)
+- **Local by default** — all image processing happens on device; the optional cloud enhancement is off by default and BYOK-only
 
 ## Use Cases
 
 - On-location review without draining the camera battery
 - Quickly import RAW/JPEG to a tablet or large screen for review
 - On-location finishing: apply a preset, liquify and face/body reshaping before delivery
+- On-location delivery: cut out the subject onto a transparent PNG, erase passers-by, replace the sky
 - Batch export to local storage, no compression, no cloud upload
 
 ## Quick Start
@@ -67,7 +76,7 @@ PhotoSync is an Android camera companion app for photographers and imaging enthu
 1. Connect the camera to your phone/tablet with a USB cable
 2. Set the camera to "PC Connection" or "PTP/MTP" mode
 3. Open PhotoSync and tap "Connect camera" — photos sync into the app
-4. Open a photo in the editor: grade, curves, portrait, liquify, or apply a preset
+4. Open a photo in the editor: grade, curves, portrait, liquify, or use the AI tab for cut-out, erase and sky
 5. Save, then export to the system gallery or keep shooting
 
 ---
@@ -82,6 +91,8 @@ PhotoSync is an Android camera companion app for photographers and imaging enthu
 | Database | Room (v4: photos, edits, presets) |
 | Image processing | LibRaw 0.21.4 + lcms2 2.18 (standalone `libraw.so`), libjpeg-turbo 3.2.2 |
 | Portrait | MediaPipe Tasks (Face Landmarker + Image Segmenter) |
+| On-device AI | ONNX Runtime 1.22.0 (CPU / XNNPACK; models are downloaded on demand and never bundled) |
+| Secrets | AndroidKeyStore (AES-256-GCM, used only by the opt-in BYOK cloud enhancement) |
 | Rendering | OpenGL ES 3.0 offscreen chain (Pass A–D) |
 | Background work | WorkManager (batch export) |
 | Architecture | MVVM + Clean Architecture |
@@ -103,12 +114,13 @@ PhotoSync/
 │       ├── ptp/            # USB PTP protocol, recovery, connection management
 │       ├── receiver/       # USB broadcast receivers
 │       └── utils/          # Utilities
-├── editor/                 # Image editor module (UI, rendering, portrait, export)
+├── editor/                 # Image editor module (UI, rendering, portrait, AI, export)
 │   └── src/main/java/cn/devcxl/photosync/editor/
-│       ├── domain/         # EditGraph, presets, liquify, MLS/body warping
-│       ├── render/         # GLES Pass A–D, offscreen preview
-│       ├── vision/         # MediaPipe portrait analysis
-│       ├── export/         # Full-resolution bake
+│       ├── domain/         # EditGraph, presets, liquify, MLS/body warping, AI asset store
+│       ├── render/         # GLES Pass A–D, offscreen preview, subject/sky compositing
+│       ├── vision/         # MediaPipe portrait analysis + ONNX Runtime AI (MODNet / MI-GAN)
+│       ├── cloud/          # Optional BYOK cloud enhancement (off by default)
+│       ├── export/         # Full-resolution streaming bake (JPEG / transparent PNG)
 │       └── ui/             # Editor screens and panels
 ├── libraw/                 # Native module (standalone libraw.so + JNI bridge)
 │   └── src/main/

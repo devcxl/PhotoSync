@@ -67,7 +67,7 @@ _Avoid_: 修图历史、滤镜配置、图层文件
 _Avoid_: 滤镜包、样式模板
 
 **LiveTetherPreset（联机自动预设）**:
-在 USB 同步期间激活的一份参数预设；每张新照片从相机同步入库时自动绑定该预设并生成编辑预览，实现联机拍摄边拍边看成片观感。激活状态持久化于 `SharedPreferences` 键 `pref_live_tether_preset_id`，`PhotoEntity` 与绑定后的 `PhotoEditEntity` 在同一 Room 事务内提交。
+在 USB 同步期间激活的一份参数预设；每张新照片从相机同步入库时自动绑定该预设并生成编辑预览，实现联机拍摄边拍边看成片观感。激活状态持久化于 `SharedPreferences` 键 `pref_live_tether_preset_id`，`PhotoEntity` 与绑定后的 `PhotoEditEntity` 在同一 Room 事务内提交。预设携带主体/换天参数时，低端档（≤4 GB RAM）或模型未下载会在入库串行队列中静默降级为仅套传统调色，不阻塞 USB 同步。
 _Avoid_: 默认滤镜、相机机内风格
 
 **BaseLook（RAW 基准观感）**:
@@ -75,7 +75,7 @@ RAW 照片在所有编辑滑杆为 0 时的起始影调基底，支持在对齐�
 _Avoid_: 相机配置文件、原始模式
 
 **Bake（烘焙导出）**:
-以原始照片文件和当前 EditGraph 为输入，经全分辨率分块渲染与拍摄 EXIF 写回，在系统相册中生成全新成片文件的过程。
+以原始照片文件和当前 EditGraph 为输入，经全分辨率分块渲染与拍摄 EXIF 写回，在系统相册中生成全新成片文件的过程。去背模式（`subject.bgMode = TRANSPARENT`）输出保留 Alpha 的流式 PNG，其余路径输出 Baseline JPEG。
 _Avoid_: 覆盖保存、另存为
 
 **CopyMask（复制参数掩码）**:
@@ -198,7 +198,7 @@ _Avoid_: 人物贴纸、皮肤遮罩（`SkinMask` 专指美肤区域）
 _Avoid_: 破坏性涂改、液化网格
 
 **SkyLayer（换天空层）**:
-天空区域概率图、天空素材引用（程序化基准 / 用户 SAF 导入 / CC0 下载包）以及前景色彩协调与地平线融合参数的组合。
+天空区域概率图、天空素材引用（程序化基准 / 用户 SAF 导入 / CC0 下载包，对应 `SkyAssetType` 的 `PROCEDURAL` / `CUSTOM` / `PACK`）以及前景色彩协调与地平线融合参数的组合。程序化基准由 `ProceduralSkyPreset` 的四个解析式预设（`clear_blue`、`sunset_glow`、`blue_hour`、`warm_dusk`）提供，占 0 KB；重光照按 Pre-pass 一次性统计的 OKLab 均值差在 Pass B 执行。
 _Avoid_: 天空滤镜
 
 **CloudEditLayer（云端编辑层）**:
