@@ -7,6 +7,7 @@ import timber.log.Timber
 import cn.devcxl.photosync.editor.contract.EditorCachePaths
 import cn.devcxl.photosync.editor.domain.AiAssetStore
 import cn.devcxl.photosync.editor.domain.EditGraph
+import cn.devcxl.photosync.editor.domain.GeometryMath
 import cn.devcxl.photosync.editor.domain.Lut3dSamples
 import cn.devcxl.photosync.editor.domain.WarpDisplacementField
 import cn.devcxl.photosync.editor.lut.CubeLutStore
@@ -49,9 +50,10 @@ internal class PreviewCacheRenderer(
         // private copy, so a repeated save can never stack the same patch twice.
         val inpaint = InpaintOverlay.of(filesDir, graph)
         val subject = SubjectCompositeLoader.resolve(graph, current, filesDir, inpaint)
-        val accelerated = renderAccelerated(current, graph, warpField, skinMask, lut, subject, inpaint)
+        val sky = resolveSky(current, graph)
+        val accelerated = renderAccelerated(current, graph, warpField, skinMask, lut, subject, inpaint, sky)
         if (accelerated != null) return accelerated.absolutePath
-        return writeCpuFallback(current, graph, warpField, skinMask, lut, subject, inpaint)
+        return writeCpuFallback(current, graph, warpField, skinMask, lut, subject, inpaint, sky)
     }
 
     private fun renderAccelerated(
@@ -61,7 +63,8 @@ internal class PreviewCacheRenderer(
         skinMask: FloatArray?,
         lut: Lut3dSamples?,
         subject: SubjectComposite?,
-        inpaint: InpaintOverlay?
+        inpaint: InpaintOverlay?,
+        sky: SkyLayerPixels?
     ): File? = OffscreenPreviewRenderer.renderNow(
         OffscreenPreviewRequest(
             source = current,
@@ -72,7 +75,8 @@ internal class PreviewCacheRenderer(
             outDir = File(cacheDir, EditorCachePaths.photoEditDirName(photoId)),
             subject = subject,
             inpaint = inpaint,
-            cloudAssets = AiAssetStore(filesDir)
+            cloudAssets = AiAssetStore(filesDir),
+            sky = sky
         )
     )
 
@@ -83,7 +87,8 @@ internal class PreviewCacheRenderer(
         skinMask: FloatArray?,
         lut: Lut3dSamples?,
         subject: SubjectComposite?,
-        inpaint: InpaintOverlay?
+        inpaint: InpaintOverlay?,
+        sky: SkyLayerPixels?
     ): String? = when (current) {
         is EditorSource.LinearRawSource -> PreviewCacheWriter.writePreviewCache(
             source = current.full,
@@ -95,7 +100,8 @@ internal class PreviewCacheRenderer(
             skinMask = skinMask,
             subject = subject,
             inpaint = inpaint,
-            cloudAssets = AiAssetStore(filesDir)
+            cloudAssets = AiAssetStore(filesDir),
+            sky = sky
         )
         is EditorSource.BitmapSource -> PreviewCacheWriter.writePreviewCache(
             source = current.full,
@@ -107,8 +113,23 @@ internal class PreviewCacheRenderer(
             skinMask = skinMask,
             subject = subject,
             inpaint = inpaint,
-            cloudAssets = AiAssetStore(filesDir)
+            cloudAssets = AiAssetStore(filesDir),
+            sky = sky
         )
+    }
+
+    /**
+     * Builds the graph's sky layer at the preview size, or `null` when the group is neutral.
+     *
+     * The mask and the asset are decoded once per save; the shared Pre-pass delta is computed from
+     * the same `1024px` proxy the editor used, so a saved preview matches the canvas.
+     */
+    private fun resolveSky(current: EditorSource, graph: EditGraph): SkyLayerPixels? {
+        if (graph.sky.isIdentity()) return null
+        val sourceAspect = current.width.toFloat() / current.height.toFloat()
+        val aspect = GeometryMath.outputAspect(graph.geometry, sourceAspect)
+        val (width, height) = PreviewCacheWriter.previewSize(aspect)
+        return SkyPreparer.prepare(current, graph, filesDir, width, height)
     }
 
     private fun loadLutFor(graph: EditGraph): Lut3dSamples? {

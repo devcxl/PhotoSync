@@ -38,11 +38,20 @@ internal object EffectsOutputShaderSources {
         uniform vec2 uSubjectWarpScale;
         uniform vec2 uSubjectWarpOffset;
         uniform int uSubjectChecker;
+        ${SkyShaderSources.RELIGHT_UNIFORMS}
+        ${SkyShaderSources.COMPOSITE_UNIFORMS}
 
         const vec3 LUMA_WEIGHTS = vec3(0.2126, 0.7152, 0.0722);
         const float GRAIN_FINE_FREQUENCY = 1400.0;
         const float GRAIN_COARSE_FREQUENCY = 120.0;
         const float GRAIN_MAX_AMPLITUDE = 0.06;
+
+        vec4 sampleTex2D(sampler2D s, vec2 uv) {
+            return texture(s, uv);
+        }
+
+        ${SkyShaderSources.SAMPLING_FUNCTIONS}
+        ${SkyShaderSources.COMPOSITE_FUNCTIONS}
 
         float hash21(vec2 cell, float seed) {
             vec3 p = fract(vec3(cell.xyx) * 0.1031 + seed * 0.0173);
@@ -130,6 +139,10 @@ internal object EffectsOutputShaderSources {
             // frame was rendered in one pass or as column bands with slightly different UV math.
             vec2 pixelIndex = floor(globalUv * pixelScale);
             vec2 snappedUv = (pixelIndex + vec2(0.5)) / pixelScale;
+
+            // The sky is the background the subject composite sits on; compositing it first keeps
+            // the cut-out's alpha and decontaminated foreground authoritative.
+            srgb = applySkyComposite(srgb, vTexCoord, globalUv);
 
             float subjectAlpha = 1.0;
             if (uSubjectMode != 0) {

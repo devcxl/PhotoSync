@@ -4,6 +4,10 @@ import cn.devcxl.photosync.editor.domain.BaseLook
 import cn.devcxl.photosync.editor.domain.ColorGradingParams
 import cn.devcxl.photosync.editor.domain.PassDEffectsParams
 import cn.devcxl.photosync.editor.domain.SpatialDetailParams
+import cn.devcxl.photosync.editor.domain.ProceduralSkyPreset
+import cn.devcxl.photosync.editor.domain.SkyBlendParams
+import cn.devcxl.photosync.editor.domain.SkyOps
+import cn.devcxl.photosync.editor.domain.SkyRelightStats
 import cn.devcxl.photosync.editor.domain.SubjectOps
 import cn.devcxl.photosync.editor.domain.ToneShaderParams
 
@@ -34,7 +38,15 @@ internal data class RenderFrameState(
      * Effective cloud layer opacity in `0..1`, or `0` when the graph has no layer, the layer is
      * fully transparent, or its `geometryDigest` no longer matches the current Pass A framing.
      */
-    val cloudLayerOpacity: Float = 0.0f
+    val cloudLayerOpacity: Float = 0.0f,
+    /** Sanitized P3 sky group of the frame. */
+    val skyOps: SkyOps = SkyOps(),
+    /** The single Pre-pass OKLab delta shared by every band. */
+    val skyStats: SkyRelightStats = SkyRelightStats.NEUTRAL,
+    /** Pass D spatial parameters, or `null` when the sky group is a no-op. */
+    val skyBlend: SkyBlendParams? = null,
+    /** Built-in analytic preset, or `null` for a custom/pack texture. */
+    val skyProcedural: ProceduralSkyPreset? = null
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -56,7 +68,11 @@ internal data class RenderFrameState(
             subjectUvMatrix.contentEquals(other.subjectUvMatrix) &&
             subjectWarpActive == other.subjectWarpActive &&
             subjectOps == other.subjectOps &&
-            cloudLayerOpacity == other.cloudLayerOpacity
+            cloudLayerOpacity == other.cloudLayerOpacity &&
+            skyOps == other.skyOps &&
+            skyStats == other.skyStats &&
+            skyBlend == other.skyBlend &&
+            skyProcedural == other.skyProcedural
     }
 
     override fun hashCode(): Int {
@@ -78,6 +94,10 @@ internal data class RenderFrameState(
         result = 31 * result + subjectWarpActive.hashCode()
         result = 31 * result + subjectOps.hashCode()
         result = 31 * result + cloudLayerOpacity.hashCode()
+        result = 31 * result + skyOps.hashCode()
+        result = 31 * result + skyStats.hashCode()
+        result = 31 * result + (skyBlend?.hashCode() ?: 0)
+        result = 31 * result + (skyProcedural?.hashCode() ?: 0)
         return result
     }
 

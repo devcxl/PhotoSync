@@ -26,6 +26,9 @@ import cn.devcxl.photosync.editor.render.GeometryDrawParams
 import cn.devcxl.photosync.editor.render.GlCapabilities
 import cn.devcxl.photosync.editor.render.OffscreenColorTarget
 import cn.devcxl.photosync.editor.render.SkinMaskTexture
+import cn.devcxl.photosync.editor.render.SkyDrawParams
+import cn.devcxl.photosync.editor.render.SkyLayerPixels
+import cn.devcxl.photosync.editor.render.SkyLayerTextures
 import cn.devcxl.photosync.editor.render.SpatialDetailGlChain
 import cn.devcxl.photosync.editor.render.SubjectBokehDrawParams
 import cn.devcxl.photosync.editor.render.SubjectBokehPlanner
@@ -61,6 +64,7 @@ internal class BakePassChain {
     private val subjectTexture = SubjectMaskTexture()
     private val subjectWeightTexture = SubjectWeightTexture()
     private val cloudTextures = CloudLayerTextures()
+    private val skyTextures = SkyLayerTextures()
     private val curveLutTexture = CurveLutTexture()
     private val lutTexture = Lut3dTexture()
 
@@ -71,6 +75,7 @@ internal class BakePassChain {
 
     private var subjectSupport: BakeSubjectSupport? = null
     private var subjectPlan: SubjectRenderPlan? = null
+    private var skyLayer: SkyLayerPixels? = null
     private var subjectReadback: ByteBuffer? = null
 
     private var prepassTextureId: Int = 0
@@ -101,6 +106,8 @@ internal class BakePassChain {
         subjectWeightTexture.uploadIfNeeded()
         cloudTextures.stage(null)
         cloudTextures.uploadIfNeeded()
+        skyTextures.stage(null)
+        skyTextures.uploadIfNeeded()
         isReady = passA && passC && passD && copy
         return isReady
     }
@@ -144,6 +151,26 @@ internal class BakePassChain {
             return false
         }
         return true
+    }
+
+    /**
+     * Stages and uploads the P3 sky layer for the whole bake.
+     *
+     * The mask is source-space and the replacement image is frame-aspect cropped, so every column
+     * band maps its local UV through the Pass A inverse matrix and the band's tile transform.
+     *
+     * @return True when the sky is bound; false means the bake continues with the original sky.
+     */
+    fun setSky(layer: SkyLayerPixels?): Boolean {
+        skyLayer = layer
+        skyTextures.stage(layer)
+        skyTextures.uploadIfNeeded()
+        if (layer != null && !skyTextures.isActive) {
+            Timber.w("The sky layer could not be uploaded; baking without the replacement")
+            skyLayer = null
+            return false
+        }
+        return layer != null
     }
 
     /**
@@ -218,7 +245,8 @@ internal class BakePassChain {
                 tileUv = frame.band.tileUv,
                 pixelScaleX = frame.cropWidth.toFloat(),
                 pixelScaleY = frame.cropHeight.toFloat(),
-                subject = subject
+                subject = subject,
+                sky = skyParams(frame, width, height)
             )
         )
         outputTarget.unbind()
@@ -237,6 +265,7 @@ internal class BakePassChain {
         subjectTexture.release()
         subjectWeightTexture.release()
         cloudTextures.release()
+        skyTextures.release()
         curveLutTexture.release()
         lutTexture.release()
         geometryTarget.release()
@@ -447,8 +476,35 @@ internal class BakePassChain {
         cloudOpacity = frame.cloudLayerOpacity,
         // The cloud texture is frame-sized while Pass B here draws one band: map the band-local
         // fragment UV back onto the post-crop frame so adjacent bands agree to the pixel.
-        cloudUvTransform = frame.band.tileUv
+        cloudUvTransform = frame.band.tileUv,
+        sky = skyParams(frame, texelWidth, texelHeight)
     )
+
+    /**
+     * Builds the Pass B/D sky bundle of one band.
+     *
+     * `tileUv` maps the band-local fragment UV to the global post-crop UV before the Pass A inverse
+     * matrix is applied, so adjacent bands sample the same sky pixels and no seam can form.
+     */
+    private fun skyParams(frame: BakeFrame, width: Int, height: Int): SkyDrawParams? {
+        val layer = skyLayer ?: return null
+        if (skyTextures.maskTextureId == 0 || !layer.isActive) return null
+        return SkyDrawParams(
+            maskTextureId = skyTextures.maskTextureId,
+            assetTextureId = if (skyTextures.hasAsset) skyTextures.assetTextureId else 0,
+            procedural = layer.procedural,
+            blend = layer.blend,
+            stats = layer.stats,
+            relight = layer.ops.relight,
+            uvMatrix = frame.columnMajorInverseMatrix,
+            warpTextureId = if (warpTexture.isWarpActive) warpTexture.textureId else 0,
+            warpScale = warpTexture.decodeScale,
+            warpOffset = warpTexture.decodeOffset,
+            tileUv = frame.band.tileUv,
+            pixelScaleX = frame.cropWidth.toFloat(),
+            pixelScaleY = frame.cropHeight.toFloat()
+        )
+    }
 
     private companion object {
         const val BYTES_PER_RGBA = 4

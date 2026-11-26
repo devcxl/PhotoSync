@@ -20,6 +20,8 @@ import cn.devcxl.photosync.editor.domain.LiquifySession
 import cn.devcxl.photosync.editor.domain.PortraitAnalysis
 import cn.devcxl.photosync.editor.domain.PresetSubjectGate
 import cn.devcxl.photosync.editor.domain.SubjectBackgroundMode
+import cn.devcxl.photosync.editor.domain.SkyCustomAsset
+import cn.devcxl.photosync.editor.domain.SkyOps
 import cn.devcxl.photosync.editor.domain.SubjectOps
 import cn.devcxl.photosync.editor.render.EditorPreviewSession
 import cn.devcxl.photosync.editor.ui.gesture.CanvasTransform
@@ -74,6 +76,7 @@ internal class EditorAiToolHost(
     )
 
     private lateinit var subjectController: EditorSubjectController
+    private lateinit var skyController: EditorSkyController
     private lateinit var inpaintTools: EditorInpaintToolHost
     private lateinit var cloud: EditorCloudController
     private val warpProvider = EditorInpaintWarpProvider(
@@ -96,6 +99,18 @@ internal class EditorAiToolHost(
             onGraphCommitted = { _, _ -> onGraphChanged() },
             onImportRequested = { launchImport(subjectController::importModel) },
             onRepaintRequested = onRepaintRequested
+        )
+        skyController = EditorSkyController(
+            context = context,
+            filesDir = filesDir,
+            photoId = photoId,
+            undoController = undoController,
+            previewSession = previewSession,
+            inferenceBar = inferenceBar,
+            scope = scope,
+            onGraphEdited = { graph, _ -> onPreviewGraph(graph) },
+            onGraphCommitted = { _, _ -> onGraphChanged() },
+            onUiRefresh = { panelProvider().refresh() }
         )
         inpaintTools = EditorInpaintToolHost(
             context = context,
@@ -152,6 +167,30 @@ internal class EditorAiToolHost(
     /** Restores the cut-out after reopening the editor. */
     fun restoreSubject(graph: EditGraph) = subjectController.restore(graph)
 
+    /** Restores the `< 3 %` hint after reopening a photo that already carries a sky mask. */
+    fun restoreSky(graph: EditGraph) = skyController.restore(graph)
+
+    /** Routes a sky chip tap. */
+    fun requestSkySelected(sky: SkyOps) = skyController.select(sky)
+
+    /** Routes one sky slider tick. */
+    fun requestSkyAdjusted(sky: SkyOps) = skyController.adjust(sky)
+
+    /** Seals the coalesced `AI_SKY` undo step. */
+    fun endSkyAdjustment() = skyController.endAdjustment()
+
+    /** Imported skies offered by the panel. */
+    fun skyCustomAssets(): List<SkyCustomAsset> = skyController.assets()
+
+    /** True when the current photo has a usable sky region. */
+    fun skyHasSky(): Boolean = skyController.lastSegmentationHasSky()
+
+    /** Asks for confirmation before deleting an imported sky. */
+    fun requestSkyDelete(sha256: String) = skyController.requestDeleteCustom(sha256)
+
+    /** Imports a SAF-selected sky and selects it on success. */
+    fun importSky(input: InputStream) = skyController.importSky(input)
+
     /**
      * Computes the photo's own `SubjectMask` when an applied preset carries subject parameters.
      *
@@ -162,6 +201,14 @@ internal class EditorAiToolHost(
         if (!PresetSubjectGate.needsMask(graph)) return
         subjectController.ensureMaskForPreset()
     }
+
+    /**
+     * Computes the photo's own sky mask when an applied preset carries sky parameters.
+     *
+     * The classic segmenter needs no download, so this always runs on an eligible photo; a `< 3 %`
+     * result only shows the gentle hint and leaves the graph's sky group as a no-op.
+     */
+    fun ensureSkyMaskForPreset(graph: EditGraph) = skyController.ensureMaskForPreset(graph)
 
     /** True when the P4 cloud switch is on; read off the main thread during [refreshCloudAvailability]. */
     fun isCloudEnabled(): Boolean = cloudEnabled
@@ -188,11 +235,13 @@ internal class EditorAiToolHost(
         inferenceBar.dismiss()
         inpaintTools.release()
         subjectController.release()
+        skyController.cancel()
     }
 
     /** Convenience for the activity's tool-change hook. */
     fun onToolChanged(tool: EditorTool) {
         if (tool == EditorTool.AI_ERASE) inpaintTools.onToolOpened()
+        if (tool == EditorTool.AI_SKY) skyController.refreshAssets()
         if (tool == EditorTool.AI_CLOUD) cloud.refresh()
     }
 
@@ -200,6 +249,7 @@ internal class EditorAiToolHost(
         inpaintTools.brush.cancelInference()
         inpaintTools.cancelInstall()
         subjectController.cancel()
+        skyController.cancel()
         cloud.cancel()
     }
 

@@ -35,6 +35,7 @@ import cn.devcxl.photosync.editor.lut.CubeLutStore
 import cn.devcxl.photosync.editor.render.CloudLayerBlender
 import cn.devcxl.photosync.editor.render.CloudLayerLoad
 import cn.devcxl.photosync.editor.render.InpaintOverlay
+import cn.devcxl.photosync.editor.render.SkyPreparer
 import cn.devcxl.photosync.editor.render.SubjectCompositeLoader
 import cn.devcxl.photosync.editor.render.SubjectRenderContract
 import cn.devcxl.photosync.editor.render.SubjectRenderPlan
@@ -174,6 +175,7 @@ class BakeExporter(
                 lut = loadLut(graph)
             )
             stageCloudLayer(chain, graph, outSize)
+            stageSkyLayer(chain, graph, request, outSize)
             val maxWarpUv = maxAbsWarpUv(portrait.warpField)
             val frame = BakeFrameFactory.create(graph, source, outSize.first, outSize.second, maxWarpUv)
             val subject = resolveSubject(request, graph, portrait.warpField, source)
@@ -328,6 +330,30 @@ class BakeExporter(
             is CloudLayerLoad.NotApplied ->
                 Timber.w("Bake skips the cloud layer: %s", loaded.status)
         }
+    }
+
+    /**
+     * Decodes and stages the P3 sky for the whole bake.
+     *
+     * A missing mask or an unverifiable asset degrades to the original sky, exactly like the preview
+     * does; an export is never failed because a replacement image was deleted. The Pre-pass delta is
+     * computed once here and shared by every column band.
+     */
+    private fun stageSkyLayer(
+        chain: BakePassChain,
+        graph: EditGraph,
+        request: BakeRequest,
+        outSize: Pair<Int, Int>
+    ) {
+        val layer = SkyPreparer.prepareFromPath(
+            sourcePath = request.sourcePath,
+            isRaw = request.isRaw,
+            graph = graph,
+            filesDir = filesDir,
+            outputWidth = outSize.first,
+            outputHeight = outSize.second
+        ) ?: return
+        chain.setSky(layer)
     }
 
     private fun cloudTextureSize(outWidth: Int, outHeight: Int): Pair<Int, Int> {

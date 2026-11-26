@@ -51,6 +51,7 @@ internal class OffscreenPreviewPasses : AutoCloseable {
     private val subjectTexture = SubjectMaskTexture()
     private val subjectWeightTexture = SubjectWeightTexture()
     private val cloudTextures = CloudLayerTextures()
+    private val skyTextures = SkyLayerTextures()
     private val curveLutTexture = CurveLutTexture()
     private val lutTexture = Lut3dTexture()
     private val prepassAnalyzer = PrepassAnalyzer(capabilities)
@@ -63,6 +64,7 @@ internal class OffscreenPreviewPasses : AutoCloseable {
     private var prepassTextureId: Int = 0
     private var atmosphericLight: FloatArray = DEFAULT_ATMOSPHERIC_LIGHT
     private var cloudOpacity: Float = 0.0f
+    private var skyLayer: SkyLayerPixels? = null
 
     /** `GL_MAX_TEXTURE_SIZE` of the context, from [init]. */
     var maxTextureSize: Int = 0
@@ -120,7 +122,8 @@ internal class OffscreenPreviewPasses : AutoCloseable {
         curve: CurveOps,
         lut: Lut3dSamples?,
         subject: SubjectComposite? = null,
-        cloud: CloudLayerPixels? = null
+        cloud: CloudLayerPixels? = null,
+        sky: SkyLayerPixels? = null
     ): Boolean {
         warpTexture.stage(warpField)
         val warpUploadFailed = warpTexture.uploadIfNeeded()
@@ -154,6 +157,15 @@ internal class OffscreenPreviewPasses : AutoCloseable {
             cloudTextures.uploadIfNeeded()
         }
         cloudOpacity = if (cloudTextures.isActive) cloud?.opacity ?: 0.0f else 0.0f
+
+        skyLayer = sky
+        skyTextures.stage(sky)
+        skyTextures.uploadIfNeeded()
+        if (sky != null && !skyTextures.isActive) {
+            // The replacement is optional: fall back to the original sky instead of failing the save.
+            Timber.w("Offscreen preview: the sky layer could not be uploaded; skipping it")
+            skyLayer = null
+        }
 
         curveLutTexture.stage(curve)
         curveLutTexture.uploadIfNeeded(preferEs3 = true)
@@ -325,7 +337,8 @@ internal class OffscreenPreviewPasses : AutoCloseable {
         subjectMode: Int = 0,
         subjectColorRgb: Int = 0xFFFFFF,
         subjectUvMatrix: FloatArray? = null,
-        subjectCheckerboard: Boolean = true
+        subjectCheckerboard: Boolean = true,
+        sky: SkyDrawParams? = null
     ): Boolean {
         outputTarget.ensureSize(width, height, allowHalfFloat = false, exactSize = true)
         if (!outputTarget.isReady) return previewUnavailable("the Pass D target is incomplete")
@@ -361,7 +374,8 @@ internal class OffscreenPreviewPasses : AutoCloseable {
                 pixelScaleX = width.toFloat(),
                 pixelScaleY = height.toFloat(),
                 flipVerticalForScreen = false,
-                subject = subject
+                subject = subject,
+                sky = sky ?: skyParams(subjectUvMatrix ?: IDENTITY_MATRIX, width, height)
             )
         )
         outputTarget.unbind()
@@ -386,6 +400,7 @@ internal class OffscreenPreviewPasses : AutoCloseable {
         subjectTexture.release()
         subjectWeightTexture.release()
         cloudTextures.release()
+        skyTextures.release()
         curveLutTexture.release()
         lutTexture.release()
         prepassAnalyzer.release()
@@ -437,11 +452,43 @@ internal class OffscreenPreviewPasses : AutoCloseable {
                 subjectWarpOffset = warpTexture.decodeOffset,
                 cloudLayerTextureId = if (cloudTextures.isActive) cloudTextures.imageTextureId else 0,
                 cloudMaskTextureId = if (cloudTextures.isActive) cloudTextures.maskTextureId else 0,
-                cloudOpacity = cloudOpacity
+                cloudOpacity = cloudOpacity,
+                sky = skyParams(subjectUvMatrix, target.width, target.height)
             )
         )
         target.unbind()
         return clearOfGlErrors("Pass B")
+    }
+
+    /**
+     * Builds the Pass B/D sky bundle from the staged layer.
+     *
+     * The source-space mask is mapped through the same Pass A inverse matrix the subject stage uses,
+     * so a crop or a warp moves the sky boundary with the pixels.
+     */
+    private fun skyParams(
+        uvMatrix: FloatArray,
+        width: Int,
+        height: Int
+    ): SkyDrawParams? {
+        val layer = skyLayer ?: return null
+        val maskId = skyTextures.maskTextureId
+        if (maskId == 0) return null
+        return SkyDrawParams(
+            maskTextureId = maskId,
+            assetTextureId = if (skyTextures.hasAsset) skyTextures.assetTextureId else 0,
+            procedural = layer.procedural,
+            blend = layer.blend,
+            stats = layer.stats,
+            relight = layer.ops.relight,
+            uvMatrix = uvMatrix,
+            warpTextureId = if (warpTexture.isWarpActive) warpTexture.textureId else 0,
+            warpScale = warpTexture.decodeScale,
+            warpOffset = warpTexture.decodeOffset,
+            tileUv = TileUvTransform.IDENTITY,
+            pixelScaleX = width.toFloat(),
+            pixelScaleY = height.toFloat()
+        )
     }
 
     private fun subjectBokehParams(

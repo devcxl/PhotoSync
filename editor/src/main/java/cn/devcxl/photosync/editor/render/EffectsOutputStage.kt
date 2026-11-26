@@ -24,7 +24,9 @@ internal data class EffectsStageRequest(
     val pixelScaleX: Int = 0,
     val pixelScaleY: Int = 0,
     /** Pass D subject composite, or `null` for the zero-cost short circuit. */
-    val subject: SubjectDrawParams? = null
+    val subject: SubjectDrawParams? = null,
+    /** Pass D sky composite, or `null` for the zero-cost short circuit. */
+    val sky: SkyDrawParams? = null
 )
 
 /**
@@ -156,7 +158,8 @@ internal class EffectsOutputStage(
                 pixelScaleX = pixelScaleX.toFloat(),
                 pixelScaleY = pixelScaleY.toFloat(),
                 flipVerticalForScreen = true,
-                subject = request.subject
+                subject = request.subject,
+                sky = request.sky
             )
         )
     }

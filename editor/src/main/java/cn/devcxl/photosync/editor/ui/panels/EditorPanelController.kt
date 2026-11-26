@@ -16,6 +16,8 @@ import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.EditParameterKey
 import cn.devcxl.photosync.editor.domain.EditorUndoController
 import cn.devcxl.photosync.editor.domain.LiquifyBrushSettings
+import cn.devcxl.photosync.editor.domain.SkyCustomAsset
+import cn.devcxl.photosync.editor.domain.SkyOps
 import cn.devcxl.photosync.editor.domain.SubjectBackgroundMode
 import cn.devcxl.photosync.editor.lut.CubeLutStore
 import cn.devcxl.photosync.editor.ui.gesture.CropHandleMath
@@ -28,8 +30,8 @@ import cn.devcxl.photosync.editor.ui.widgets.DialSeekBar
  * the active category, the tier-1 control slot (`DialSeekBar`, color, spatial-detail, effect,
  * liquify, subject or inpaint panels), the crop aspect chips and the value read-out.
  *
- * The seventh `AI` tab hosts the subject cut-out and the MI-GAN erase tool; the sky tool lands in a
- * later wave inside the same chip container.
+ * The seventh `AI` tab hosts the subject cut-out, the MI-GAN erase tool and the P3 sky tool inside
+ * one chip container.
  */
 internal class EditorPanelController(
     private val context: Context,
@@ -67,6 +69,27 @@ internal class EditorPanelController(
 
         /** True when the P4 cloud switch is on, so the AI group may offer the cloud sub-tool. */
         fun isCloudToolAvailable(): Boolean
+
+        /** The user selected a sky asset (or the original sky). */
+        fun onSkySelected(sky: SkyOps)
+
+        /** A sky slider moved; the graph is updated as a transient edit. */
+        fun onSkyAdjusted(sky: SkyOps)
+
+        /** The sky slider was released; the undo transaction can be sealed. */
+        fun onSkyAdjustmentStopped()
+
+        /** The user asked to import a sky photograph through SAF. */
+        fun onSkyImportRequested()
+
+        /** The user long-pressed an imported sky and asked to delete it. */
+        fun onSkyDeleteRequested(sha256: String)
+
+        /** Imported skies offered by the sky panel. */
+        fun skyCustomAssets(): List<SkyCustomAsset>
+
+        /** True when the current segmentation found a usable sky area. */
+        fun skyHasSky(): Boolean
     }
 
     var currentGroup: EditorGroup = EditorGroup.TONE
@@ -116,6 +139,18 @@ internal class EditorPanelController(
         onImportRequested = host::onLutImportRequested,
         onEdited = ::handleSubPanelEdited,
         onCommitted = ::handleSubPanelCommitted
+    )
+    private val skyPanels = SkyPanelBinder(
+        binding = binding,
+        host = object : SkyPanelBinder.Host {
+            override fun onSkySelected(sky: SkyOps) = host.onSkySelected(sky)
+            override fun onSkyAdjusted(sky: SkyOps) = host.onSkyAdjusted(sky)
+            override fun onSkyAdjustmentStopped() = host.onSkyAdjustmentStopped()
+            override fun onSkyImportRequested() = host.onSkyImportRequested()
+            override fun onSkyDeleteRequested(sha256: String) = host.onSkyDeleteRequested(sha256)
+            override fun skyCustomAssets(): List<SkyCustomAsset> = host.skyCustomAssets()
+            override fun skyHasSky(): Boolean = host.skyHasSky()
+        }
     )
     private val subjectPanels = SubjectPanelBinder(
         binding = binding,
@@ -177,6 +212,7 @@ internal class EditorPanelController(
         effectsPanels.showFor(null)
         portraitPanels.showFor(null)
         subjectPanels.setVisible(false)
+        skyPanels.setVisible(false)
         binding.inpaintPanelView.visibility = View.GONE
         cloudPanelVisible = false
         applyCloudPanelVisibility()
@@ -196,6 +232,7 @@ internal class EditorPanelController(
         effectsPanels.refresh(graph)
         portraitPanels.refresh(graph)
         subjectPanels.refresh(graph)
+        skyPanels.refresh(graph.sky)
         presetPanels.refresh(graph)
         rotateFlipPanel.refresh(graph)
         refreshHeaderReadout(graph)
@@ -320,6 +357,7 @@ internal class EditorPanelController(
         effectsPanels.showFor(null)
         portraitPanels.showFor(null)
         subjectPanels.setVisible(false)
+        skyPanels.setVisible(false)
         binding.inpaintPanelView.visibility = View.GONE
         cloudPanelVisible = false
         applyCloudPanelVisibility()
@@ -375,6 +413,7 @@ internal class EditorPanelController(
         effectsPanels.showFor(spec.controlStyle)
         portraitPanels.showFor(spec.controlStyle)
         subjectPanels.setVisible(spec.controlStyle == EditorControlStyle.SUBJECT)
+        skyPanels.setVisible(spec.controlStyle == EditorControlStyle.SKY)
         binding.inpaintPanelView.visibility =
             if (spec.controlStyle == EditorControlStyle.INPAINT) View.VISIBLE else View.GONE
         presetPanels.setVisible(spec.controlStyle == EditorControlStyle.PRESET)

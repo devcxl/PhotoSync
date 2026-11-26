@@ -57,6 +57,7 @@ enum class EditorTool {
     BODY_RESHAPE,
     AI_SUBJECT,
     AI_ERASE,
+    AI_SKY,
     AI_CLOUD,
     PRESET
 }

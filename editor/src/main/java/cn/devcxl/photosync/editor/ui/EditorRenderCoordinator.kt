@@ -42,6 +42,8 @@ internal class EditorRenderCoordinator(
 
     private var stagedCloudKey: String? = null
     private var cloudJob: Job? = null
+    private var stagedSkyKey: String? = null
+    private var skyJob: Job? = null
 
     /** Renders the current graph, optionally at the 1024px proxy resolution. */
     fun renderCurrentGraph(useProxy: Boolean) {
@@ -51,6 +53,7 @@ internal class EditorRenderCoordinator(
         val preview = EditorPreviewGeometry.previewGraph(graph, panel.currentTool)
         val lutWarm = previewSession.applyGraph(preview, useProxy = useProxy)
         syncCloudLayer(graph)
+        syncSkyLayer(graph)
         overlaySyncProvider().sync(graph)
         panel.refresh()
         updateBaseLookPill(graph.baseLook)
@@ -77,6 +80,7 @@ internal class EditorRenderCoordinator(
         val preview = EditorPreviewGeometry.previewGraph(graph, panel.currentTool)
         previewSession.applyGraph(preview, useProxy = false)
         syncCloudLayer(graph)
+        syncSkyLayer(graph)
         binding.glSurfaceView.requestRender()
     }
 
@@ -124,6 +128,34 @@ internal class EditorRenderCoordinator(
         cloudJob = scope.launch {
             val pixels = withContext(Dispatchers.IO) { previewSession.decodeCloudLayer(graph) }
             previewSession.applyCloudLayer(pixels)
+            binding.glSurfaceView.requestRender()
+        }
+    }
+
+    /**
+     * Builds the graph's sky layer when its mask, asset or output aspect changed.
+     *
+     * Relight strength, horizon offset, feather and edge shift are Pass B/D uniforms, not decoded
+     * pixels, so dragging those sliders never re-decodes the replacement image.
+     */
+    private fun syncSkyLayer(graph: EditGraph) {
+        val sky = graph.sky
+        val key = if (sky.isIdentity() || sky.maskRef.isBlank()) {
+            null
+        } else {
+            "${sky.maskRef}|${sky.assetType.wireName}|${sky.assetIdOrRelPath}|${sky.assetSha256}|" +
+                graph.geometry.hashCode()
+        }
+        if (key == stagedSkyKey) return
+        stagedSkyKey = key
+        skyJob?.cancel()
+        if (key == null) {
+            previewSession.applySkyLayer(null)
+            return
+        }
+        skyJob = scope.launch {
+            val layer = withContext(Dispatchers.IO) { previewSession.prepareSkyLayer(graph) }
+            previewSession.applySkyLayer(layer)
             binding.glSurfaceView.requestRender()
         }
     }

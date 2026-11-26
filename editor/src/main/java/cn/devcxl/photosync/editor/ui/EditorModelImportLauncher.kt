@@ -7,10 +7,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import timber.log.Timber
 
 /**
- * Routes the next SAF `.onnx` selection to whichever AI tool asked for it.
+ * Routes the next SAF document selection to whichever AI tool asked for it.
  *
  * The launcher is registered once per activity, while the pending importer changes between the
- * subject and erase model sheets; a cancelled picker simply drops the pending importer.
+ * subject/erase `.onnx` model sheets and the sky JPEG picker; a cancelled picker simply drops the
+ * pending importer.
  */
 internal class EditorModelImportLauncher(activity: ComponentActivity) {
 
@@ -24,7 +25,7 @@ internal class EditorModelImportLauncher(activity: ComponentActivity) {
         if (uri == null || importer == null) return@registerForActivityResult
         runCatching { activity.contentResolver.openInputStream(uri) }
             .onSuccess { stream -> stream?.use(importer) }
-            .onFailure { error -> Timber.e(error, "The selected ONNX model could not be opened") }
+            .onFailure { error -> Timber.e(error, "The selected AI asset could not be opened") }
     }
 
     /** Opens the document picker and hands the chosen stream to [importer]. */

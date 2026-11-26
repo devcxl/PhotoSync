@@ -31,7 +31,8 @@ internal object PreviewDrawRequests {
         request: PreviewFrameRequest,
         frame: PreviewFrameInput,
         curveTextureId: Int,
-        ditherAmp: Float
+        ditherAmp: Float,
+        sky: SkyDrawParams? = null
     ): ExposureDrawParams {
         val (scaleX, scaleY) = letterboxScale(request, frame.aspect)
         return passB(
@@ -43,7 +44,8 @@ internal object PreviewDrawRequests {
             offsetX = request.canvas.offsetX,
             offsetY = request.canvas.offsetY,
             ditherAmp = ditherAmp,
-            flipVerticalForScreen = true
+            flipVerticalForScreen = true,
+            sky = sky
         )
     }
 
@@ -52,7 +54,8 @@ internal object PreviewDrawRequests {
         request: PreviewFrameRequest,
         frame: PreviewFrameInput,
         curveTextureId: Int,
-        subject: SubjectDrawParams? = null
+        subject: SubjectDrawParams? = null,
+        sky: SkyDrawParams? = null
     ): EffectsStageRequest {
         val (scaleX, scaleY) = letterboxScale(request, frame.aspect)
         val (targetWidth, targetHeight) = OffscreenColorTarget.targetSizeFor(
@@ -75,11 +78,13 @@ internal object PreviewDrawRequests {
                 offsetX = 0.0f,
                 offsetY = 0.0f,
                 ditherAmp = 0.0f,
-                flipVerticalForScreen = false
+                flipVerticalForScreen = false,
+                sky = sky
             ),
             pixelScaleX = targetWidth,
             pixelScaleY = targetHeight,
-            subject = subject
+            subject = subject,
+            sky = sky
         )
     }
 
@@ -116,7 +121,8 @@ internal object PreviewDrawRequests {
         offsetX: Float,
         offsetY: Float,
         ditherAmp: Float,
-        flipVerticalForScreen: Boolean
+        flipVerticalForScreen: Boolean,
+        sky: SkyDrawParams? = null
     ): ExposureDrawParams {
         val state = request.state
         return ExposureDrawParams(
@@ -145,7 +151,8 @@ internal object PreviewDrawRequests {
             subjectWarpOffset = request.subjectWarpOffset,
             cloudLayerTextureId = request.cloudLayerTextureId,
             cloudMaskTextureId = request.cloudMaskTextureId,
-            cloudOpacity = state.cloudLayerOpacity
+            cloudOpacity = state.cloudLayerOpacity,
+            sky = sky
         )
     }
 }

@@ -10,7 +10,9 @@ import org.junit.Test
  * pixel-level AI layers.
  *
  * `inpaint` and `cloudLayer` belong to the frame they were generated for. Neither a full-axis copy
- * nor a preset may carry them onto another photo, and a preset must never persist them.
+ * nor a preset may carry them onto another photo, and a preset must never persist them. `SkyOps` is
+ * the opposite case: its parameters are a reusable look, so they travel, but the source frame's mask
+ * is dropped so the target recomputes its own horizon.
  */
 class CopyMaskAiIsolationTest {
 
@@ -81,7 +83,10 @@ class CopyMaskAiIsolationTest {
         assertEquals("the subject mask belongs to the source frame", "", pasted.subject.maskRef)
         assertEquals(SubjectBackgroundMode.TRANSPARENT, pasted.subject.bgMode)
         assertEquals(40, pasted.subject.blur)
-        assertEquals("sky stays a frame-local mask", SkyOps(), pasted.sky)
+        assertEquals(SkyAssetType.CUSTOM, pasted.sky.assetType)
+        assertEquals("edits/1/sky_asset_${digest}.png", pasted.sky.assetIdOrRelPath)
+        assertEquals(35, pasted.sky.relight)
+        assertEquals("the sky mask belongs to the source frame", "", pasted.sky.maskRef)
         assertEquals(0.5f, pasted.tone.exposure, 1e-4f)
     }
 
@@ -104,7 +109,9 @@ class CopyMaskAiIsolationTest {
         assertEquals("", extracted.subject.maskRef)
         assertEquals(SubjectBackgroundMode.TRANSPARENT, extracted.subject.bgMode)
         assertEquals(40, extracted.subject.blur)
-        assertEquals(SkyOps(), extracted.sky)
+        assertEquals("", extracted.sky.maskRef)
+        assertEquals(SkyAssetType.CUSTOM, extracted.sky.assetType)
+        assertEquals(35, extracted.sky.relight)
         assertEquals(0.5f, extracted.tone.exposure, 1e-4f)
     }
 

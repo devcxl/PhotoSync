@@ -69,6 +69,9 @@ internal enum class EditorControlStyle {
     /** Inpainting brush panel: paint/erase mode, brush size, clear and confirm. */
     INPAINT,
 
+    /** P3 sky panel: four procedural presets, imported skies and the relight/horizon sliders. */
+    SKY,
+
     /** P4 BYOK cloud panel: request shape, prompt, generate and layer opacity. */
     CLOUD,
 
@@ -110,7 +113,7 @@ internal data class EditorToolSpec(
  * Registry of the tools delivered so far: geometry (including liquify), tone, white balance,
  * display color, the Pass C spatial-detail group, the Pass D effect panels (3D LUT, film grain,
  * post-crop vignette), lens dispersion / defringe, the Portrait group (skin, face and body) and the
- * AI group (subject cut-out, smart erase and the opt-in BYOK cloud layer).
+ * AI group (subject cut-out, smart erase, sky replacement and the opt-in BYOK cloud layer).
  */
 internal object EditorToolCatalog {
 
@@ -126,6 +129,7 @@ internal object EditorToolCatalog {
                 EditorPortraitSpecs.portraitSpecs() +
                 AiSubjectSpecs.subjectSpecs() +
                 AiEraseSpecs.eraseSpecs() +
+                AiSkySpecs.skySpecs() +
                 AiCloudSpecs.cloudSpecs()
             )
             .associateBy { it.tool }

@@ -178,6 +178,7 @@ internal object ExposureShaderSources {
     private val COMMON_UNIFORMS = """
         uniform sampler2D uTex0;
         $CLOUD_UNIFORMS
+        ${SkyShaderSources.RELIGHT_UNIFORMS}
         uniform int uCompareOriginal;
         uniform int uIsLinearInput;
         uniform int uBaseLook;
@@ -257,6 +258,8 @@ internal object ExposureShaderSources {
         $DITHER_GLSL
         $SRGB_GLSL
         $CLOUD_GLSL
+        ${SkyShaderSources.SAMPLING_FUNCTIONS}
+        ${SkyShaderSources.RELIGHT_FUNCTIONS}
         $CAMERA_DEFAULT_GLSL
         $TONE_GLSL
         ${ColorShaderGlsl.FUNCTIONS}
@@ -276,6 +279,7 @@ internal object ExposureShaderSources {
                 return;
             }
             linear = applySubjectRelight(linear);
+            linear = applySkyRelight(linear, vTexCoord);
             if (uToneActive == 0 && uPassB2Active == 0) {
                 vec3 passthrough = encodeSrgb(linear) + vec3(triDither(gl_FragCoord.xy));
                 fragColor = vec4(clamp(passthrough, 0.0, 1.0), src.a);
@@ -310,6 +314,8 @@ internal object ExposureShaderSources {
         $DITHER_GLSL
         $SRGB_GLSL
         $CLOUD_GLSL
+        ${SkyShaderSources.SAMPLING_FUNCTIONS}
+        ${SkyShaderSources.RELIGHT_FUNCTIONS}
         $CAMERA_DEFAULT_GLSL
         $TONE_GLSL
         ${ColorShaderGlsl.FUNCTIONS}
@@ -329,6 +335,7 @@ internal object ExposureShaderSources {
                 return;
             }
             linear = applySubjectRelight(linear);
+            linear = applySkyRelight(linear, vTexCoord);
             if (uToneActive == 0 && uPassB2Active == 0) {
                 vec3 passthrough = encodeSrgb(linear) + vec3(triDither(gl_FragCoord.xy));
                 gl_FragColor = vec4(clamp(passthrough, 0.0, 1.0), src.a);

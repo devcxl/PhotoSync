@@ -7,6 +7,7 @@ import cn.devcxl.photosync.editor.domain.CurveOps
 import cn.devcxl.photosync.editor.domain.Lut3dSamples
 import cn.devcxl.photosync.editor.domain.PassDEffectsMath
 import cn.devcxl.photosync.editor.domain.SpatialDetailPlanner
+import cn.devcxl.photosync.editor.domain.TileUvTransform
 import cn.devcxl.photosync.editor.domain.WarpDisplacementField
 
 /**
@@ -44,6 +45,7 @@ internal class PreviewPassPipeline {
     private val subjectTexture = SubjectMaskTexture()
     private val subjectWeightTexture = SubjectWeightTexture()
     private val cloudTextures = CloudLayerTextures()
+    private val skyTextures = SkyLayerTextures()
     private val curveLutTexture = CurveLutTexture()
     private var geometryFallbackLogged = false
 
@@ -74,6 +76,7 @@ internal class PreviewPassPipeline {
         subjectTexture.invalidate()
         subjectWeightTexture.invalidate()
         cloudTextures.invalidate()
+        skyTextures.invalidate()
         curveLutTexture.invalidate()
         textures.invalidateContext()
         compareTextures.invalidateContext()
@@ -123,6 +126,17 @@ internal class PreviewPassPipeline {
 
     /** Stages the Post-Pass A cloud layer pixels, or `null` to unbind the layer. */
     fun stageCloudLayer(pixels: CloudLayerPixels?) = cloudTextures.stage(pixels)
+
+    /** Stages the decoded P3 sky layer, or `null` to render the original sky. */
+    fun stageSkyLayer(layer: SkyLayerPixels?) = skyTextures.stage(layer)
+
+    /** Uploaded sky mask texture, or `0` when no sky may be composited. */
+    val skyMaskTextureId: Int
+        get() = if (skyTextures.isActive) skyTextures.maskTextureId else 0
+
+    /** Uploaded replacement sky image, or `0` for a procedural sky. */
+    val skyAssetTextureId: Int
+        get() = if (skyTextures.isActive && skyTextures.hasAsset) skyTextures.assetTextureId else 0
 
     /** Uploaded cloud layer texture, or `0` when no layer may be sampled. */
     val cloudLayerTextureId: Int
@@ -177,6 +191,7 @@ internal class PreviewPassPipeline {
         subjectTexture.uploadIfNeeded()
         subjectWeightTexture.uploadIfNeeded()
         cloudTextures.uploadIfNeeded()
+        skyTextures.uploadIfNeeded()
         curveLutTexture.uploadIfNeeded(preferEs3)
         effectsStage.uploadPending(preferEs3)
         return warpFailed
@@ -205,15 +220,45 @@ internal class PreviewPassPipeline {
         }
         val passCTexture = renderSpatialDetailIfActive(request, frame)
         val subject = subjectDrawParams(request)
-        val effectsActive = (!request.state.effectsParams.isIdentity || subject != null) &&
-            effectsStage.isReady
+        val sky = skyDrawParams(request)
+        val effectsActive = (!request.state.effectsParams.isIdentity ||
+            subject != null ||
+            sky != null) && effectsStage.isReady
         when {
             effectsActive && passCTexture != 0 ->
-                drawPassDFromTexture(request, frame, passCTexture, subject)
-            effectsActive -> drawPassD(request, frame, subject)
+                drawPassDFromTexture(request, frame, passCTexture, subject, sky)
+            effectsActive -> drawPassD(request, frame, subject, sky)
             passCTexture != 0 -> presentPassC(request, frame, passCTexture)
             else -> drawPassB(request, frame)
         }
+    }
+
+    /**
+     * Builds the Pass B/D sky bundle from the staged layer and the current frame state.
+     *
+     * The mask is sampled through the Pass A inverse matrix and the composed warp, so a crop, a
+     * liquify stroke or a body reshape moves the sky boundary together with the pixels.
+     */
+    private fun skyDrawParams(request: PreviewFrameRequest): SkyDrawParams? {
+        val state = request.state
+        val blend = state.skyBlend ?: return null
+        val maskId = skyMaskTextureId
+        if (maskId == 0) return null
+        return SkyDrawParams(
+            maskTextureId = maskId,
+            assetTextureId = skyAssetTextureId,
+            procedural = state.skyProcedural,
+            blend = blend,
+            stats = state.skyStats,
+            relight = state.skyOps.relight,
+            uvMatrix = if (state.geometryActive) state.geometryInverseMatrix else SkyDrawParams.IDENTITY_MATRIX,
+            warpTextureId = if (state.warpActive) warpTexture.textureId else 0,
+            warpScale = warpTexture.decodeScale,
+            warpOffset = warpTexture.decodeOffset,
+            tileUv = TileUvTransform.IDENTITY,
+            pixelScaleX = request.viewportWidth.coerceAtLeast(1).toFloat(),
+            pixelScaleY = request.viewportHeight.coerceAtLeast(1).toFloat()
+        )
     }
 
     private fun subjectDrawParams(request: PreviewFrameRequest): SubjectDrawParams? {
@@ -361,7 +406,8 @@ internal class PreviewPassPipeline {
                 request = request,
                 frame = frame,
                 curveTextureId = curveLutTexture.textureId,
-                ditherAmp = PassDEffectsMath.DITHER_AMPLITUDE
+                ditherAmp = PassDEffectsMath.DITHER_AMPLITUDE,
+                sky = skyDrawParams(request)
             )
         )
     }
@@ -369,13 +415,15 @@ internal class PreviewPassPipeline {
     private fun drawPassD(
         request: PreviewFrameRequest,
         frame: PreviewFrameInput,
-        subject: SubjectDrawParams?
+        subject: SubjectDrawParams?,
+        sky: SkyDrawParams?
     ) {
         val stageRequest = PreviewDrawRequests.effects(
             request,
             frame,
             curveLutTexture.textureId,
-            subject
+            subject,
+            sky
         )
         if (!effectsStage.draw(stageRequest)) {
             drawPassB(request, frame)
@@ -386,11 +434,12 @@ internal class PreviewPassPipeline {
         request: PreviewFrameRequest,
         frame: PreviewFrameInput,
         textureId: Int,
-        subject: SubjectDrawParams?
+        subject: SubjectDrawParams?,
+        sky: SkyDrawParams?
     ) {
         effectsStage.drawFromTexture(
             textureId,
-            PreviewDrawRequests.effects(request, frame, curveLutTexture.textureId, subject)
+            PreviewDrawRequests.effects(request, frame, curveLutTexture.textureId, subject, sky)
         )
     }
 

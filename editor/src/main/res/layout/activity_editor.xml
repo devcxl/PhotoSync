@@ -336,6 +336,10 @@
             android:id="@+id/subjectPanel"
             layout="@layout/editor_subject_panel" />
 
+        <include
+            android:id="@+id/skyPanel"
+            layout="@layout/editor_sky_panel" />
+
         <cn.devcxl.photosync.editor.ui.widgets.InpaintPanelView
             android:id="@+id/inpaintPanelView"
             android:layout_width="match_parent"

@@ -58,7 +58,8 @@ internal object BakeFrameFactory {
             fullResolutionShortEdge = minOf(source.width, source.height),
             maxWarpDisplacementUv = maxWarpDisplacementUv,
             subjectOps = graph.subject,
-            cloudLayerOpacity = cloudLayerOpacity(graph)
+            cloudLayerOpacity = cloudLayerOpacity(graph),
+            skyOps = graph.sky
         )
     }
 

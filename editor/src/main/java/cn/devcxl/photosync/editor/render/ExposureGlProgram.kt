@@ -50,7 +50,9 @@ internal data class ExposureDrawParams(
     /** Effective cloud opacity in `0..1`; `0` keeps the shader branch closed. */
     val cloudOpacity: Float = 0.0f,
     /** Full-frame UV transform for [cloudLayerTextureId]; identity outside a bake band. */
-    val cloudUvTransform: TileUvTransform = TileUvTransform.IDENTITY
+    val cloudUvTransform: TileUvTransform = TileUvTransform.IDENTITY,
+    /** Optional P3 sky relight; `null` or a neutral delta closes the shader branch. */
+    val sky: SkyDrawParams? = null
 ) {
 
     companion object {
@@ -146,6 +148,7 @@ internal class ExposureGlProgram {
         applyColorUniforms(params)
         applySubjectUniforms(params)
         applyCloudUniforms(params)
+        applySkyUniforms(params)
 
         val orientation = if (params.flipVerticalForScreen) {
             QuadOrientation.SCREEN
@@ -191,6 +194,64 @@ internal class ExposureGlProgram {
             GLES20.glActiveTexture(GLES20.GL_TEXTURE5)
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, params.cloudMaskTextureId)
             GLES20.glUniform1i(uniforms.uCloudMaskLoc, CLOUD_MASK_UNIT)
+        }
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+    }
+
+    /**
+     * Binds the Pass B sky relight: mask at unit 6, the shared warp grid at unit 3 and the Pre-pass
+     * OKLab delta as one `vec3` plus the clamped lightness scalar.
+     */
+    private fun applySkyUniforms(params: ExposureDrawParams) {
+        val sky = params.sky
+        val active = sky != null && sky.isRelightActive && !params.compareOriginal
+        GLES20.glUniform1i(uniforms.uSkyRelightActiveLoc, if (active) 1 else 0)
+        if (sky == null) {
+            GLES20.glUniform4f(uniforms.uSkyParamsLoc, 0.0f, 0.0f, 0.0f, 0.0f)
+            GLES20.glUniform4f(uniforms.uSkyRelightParamsLoc, 0.0f, 0.0f, 0.0f, 0.0f)
+            GLES20.glUniform1f(uniforms.uSkyRelightDeltaLLoc, 0.0f)
+            return
+        }
+        GLES20.glUniformMatrix3fv(uniforms.uSkyUvMatrixLoc, 1, false, sky.uvMatrix, 0)
+        GLES20.glUniform4fv(uniforms.uSkyTileUvLoc, 1, sky.tileUv.toVec4(), 0)
+        GLES20.glUniform2f(uniforms.uSkyPixelScaleLoc, sky.pixelScaleX, sky.pixelScaleY)
+        GLES20.glUniform4f(
+            uniforms.uSkyParamsLoc,
+            sky.blend.horizonOffset,
+            sky.blend.featherFraction,
+            sky.blend.edgeShift.toFloat(),
+            0.0f
+        )
+        val delta = cn.devcxl.photosync.editor.domain.SkyRelightMath.deltaRgb(
+            sky.stats.deltaA,
+            sky.stats.deltaB
+        )
+        GLES20.glUniform4f(
+            uniforms.uSkyRelightParamsLoc,
+            delta[0],
+            delta[1],
+            delta[2],
+            sky.relight.coerceIn(0, 100) / 100.0f
+        )
+        GLES20.glUniform1f(
+            uniforms.uSkyRelightDeltaLLoc,
+            sky.stats.deltaL.coerceIn(
+                -cn.devcxl.photosync.editor.domain.SkyRelightMath.MAX_LUMA_DELTA,
+                cn.devcxl.photosync.editor.domain.SkyRelightMath.MAX_LUMA_DELTA
+            )
+        )
+        if (!active) return
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE6)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, sky.maskTextureId)
+        GLES20.glUniform1i(uniforms.uSkyMaskLoc, SKY_MASK_UNIT)
+        val hasWarp = sky.warpTextureId != 0
+        GLES20.glUniform1i(uniforms.uHasSkyWarpLoc, if (hasWarp) 1 else 0)
+        if (hasWarp) {
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE3)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, sky.warpTextureId)
+            GLES20.glUniform1i(uniforms.uSkyWarpLoc, SKY_WARP_UNIT)
+            GLES20.glUniform2f(uniforms.uSkyWarpScaleLoc, sky.warpScale, sky.warpScale)
+            GLES20.glUniform2f(uniforms.uSkyWarpOffsetLoc, sky.warpOffset, sky.warpOffset)
         }
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
     }
@@ -295,5 +356,11 @@ internal class ExposureGlProgram {
 
         /** Texture unit of the optional cloud coverage mask. */
         const val CLOUD_MASK_UNIT = 5
+
+        /** Texture unit of the source-space sky probability mask. */
+        const val SKY_MASK_UNIT = 6
+
+        /** Texture unit of the shared `uWarpTex`; the subject stage may already bind it. */
+        const val SKY_WARP_UNIT = 3
     }
 }

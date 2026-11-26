@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="editor_tool_ai_sky">Sky</string>
+    <string name="editor_tool_ai_sky_modified">Sky •</string>
+    <string name="editor_sky_panel_title">Sky replacement · on-device zero-model segmentation</string>
+    <string name="editor_sky_original">Original sky</string>
+    <string name="editor_sky_clear_blue">Clear blue</string>
+    <string name="editor_sky_sunset_glow">Sunset glow</string>
+    <string name="editor_sky_blue_hour">Blue hour</string>
+    <string name="editor_sky_warm_dusk">Warm dusk</string>
+    <string name="editor_sky_import">+ Import my sky</string>
+    <string name="editor_sky_relight">Foreground relight</string>
+    <string name="editor_sky_horizon_offset">Horizon offset</string>
+    <string name="editor_sky_horizon_feather">Horizon feather</string>
+    <string name="editor_sky_edge_shift">Edge shrink</string>
+    <string name="editor_sky_no_sky_hint">No obvious sky detected (&lt; 3%); the photo was left untouched</string>
+    <string name="editor_sky_hint">Four procedural skies work offline with 0 KB; imported skies are stored by SHA-256 and can be removed with a long press</string>
+    <string name="editor_sky_importing">Importing sky…</string>
+    <string name="editor_sky_import_failed">Sky import failed; choose a JPEG image</string>
+    <string name="editor_sky_imported">Sky imported</string>
+    <string name="editor_sky_delete_title">Delete custom sky</string>
+    <string name="editor_sky_delete_message">Photos that reference it will fall back to their original sky.</string>
+    <string name="editor_sky_delete_confirm">Delete</string>
+    <string name="editor_sky_cancel">Cancel</string>
+    <string name="editor_sky_custom_name">My sky %1$d</string>
+    <string name="editor_sky_custom_description">Custom sky %1$d, long press to delete</string>
+    <string name="editor_sky_segmentation_label">Analysing the sky region…</string>
+    <string name="editor_sky_apply_failed">The sky mask could not be generated; please retry</string>
+    <string name="editor_value_signed_decimal_fmt">%1$+.2f</string>
+</resources>

@@ -126,7 +126,8 @@ internal class OffscreenPreviewChain(
                 curve = graph.color.curve,
                 lut = request.lut,
                 subject = request.subject,
-                cloud = cloud
+                cloud = cloud,
+                sky = request.sky
             )
             if (!staged || !checkpoint(guard)) return null
 

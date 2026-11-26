@@ -25,6 +25,8 @@ import cn.devcxl.photosync.editor.domain.EditorUndoController
 import cn.devcxl.photosync.editor.domain.LiquifyBrushSettings
 import cn.devcxl.photosync.editor.domain.LiquifyMeshStore
 import cn.devcxl.photosync.editor.domain.LiquifySession
+import cn.devcxl.photosync.editor.domain.SkyCustomAsset
+import cn.devcxl.photosync.editor.domain.SkyOps
 import cn.devcxl.photosync.editor.domain.SubjectBackgroundMode
 import cn.devcxl.photosync.editor.lut.CubeLutStore
 import cn.devcxl.photosync.editor.render.EditorGlRenderer
@@ -274,7 +276,10 @@ class EditorActivity : AppCompatActivity(),
         mainHandler.removeCallbacks(settleFullQualityRunnable)
         renderCoordinator.renderCurrentGraph(useProxy = false)
         renderCoordinator.updateHistoryButtons()
-        if (parameterKey == EditParameterKey.PRESET) aiTools.ensureSubjectMaskForPreset(graph)
+        if (parameterKey == EditParameterKey.PRESET) {
+            aiTools.ensureSubjectMaskForPreset(graph)
+            aiTools.ensureSkyMaskForPreset(graph)
+        }
     }
 
     override fun onResetAllRequested(): Boolean = historyCoordinator.requestResetAll()
@@ -301,6 +306,20 @@ class EditorActivity : AppCompatActivity(),
         aiTools.requestSubjectMode(mode)
 
     override fun onSubjectColorRequested(argb: Int) = aiTools.requestSubjectColor(argb)
+
+    override fun onSkySelected(sky: SkyOps) = aiTools.requestSkySelected(sky)
+
+    override fun onSkyAdjusted(sky: SkyOps) = aiTools.requestSkyAdjusted(sky)
+
+    override fun onSkyAdjustmentStopped() = aiTools.endSkyAdjustment()
+
+    override fun onSkyImportRequested() = modelImport.launch(aiTools::importSky)
+
+    override fun onSkyDeleteRequested(sha256: String) = aiTools.requestSkyDelete(sha256)
+
+    override fun skyCustomAssets(): List<SkyCustomAsset> = aiTools.skyCustomAssets()
+
+    override fun skyHasSky(): Boolean = aiTools.skyHasSky()
 
     override fun isCloudToolAvailable(): Boolean = aiTools.isCloudEnabled()
     override fun onPreviewDragStarted() = gestureHost.onDragStarted()
@@ -375,6 +394,7 @@ class EditorActivity : AppCompatActivity(),
             renderCoordinator.renderCurrentGraph(useProxy = false)
             renderCoordinator.updateHistoryButtons()
             aiTools.restoreSubject(loaded.graph)
+            aiTools.restoreSky(loaded.graph)
         }
     }
 

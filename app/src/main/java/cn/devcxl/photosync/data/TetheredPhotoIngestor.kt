@@ -13,7 +13,10 @@ import cn.devcxl.photosync.data.entity.PhotoEntity
 import cn.devcxl.photosync.editor.contract.EditStore
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.EditGraphJsonCodec
+import cn.devcxl.photosync.editor.domain.SkyOps
 import cn.devcxl.photosync.editor.domain.SubjectOps
+import cn.devcxl.photosync.editor.render.TetheredSkyPresetPreparer
+import cn.devcxl.photosync.editor.vision.SkyMask
 import cn.devcxl.photosync.editor.vision.SubjectMask
 import cn.devcxl.photosync.editor.render.TetheredSubjectPresetPreparer
 
@@ -53,6 +56,23 @@ interface TetheredPhotoCommitter {
         graphJson: String?,
         subjectMaskPayload: ByteArray?
     ): Long = commit(photo, stagedPreview, graphJson)
+
+    /**
+     * Same transaction as [commitWithSubject], plus an optional sky-mask payload.
+     *
+     * The production committer moves both masks into the content-addressed store and rewrites
+     * `subject.maskRef` / `sky.maskRef` in one transaction. The default delegates to
+     * [commitWithSubject], which is correct for hosts that cannot store AI assets: the graph keeps
+     * its parameters but the corresponding `maskRef` stays blank, so the effect renders as a no-op
+     * instead of pointing at a file that does not exist.
+     */
+    suspend fun commitWithAi(
+        photo: PhotoEntity,
+        stagedPreview: File?,
+        graphJson: String?,
+        subjectMaskPayload: ByteArray?,
+        skyMaskPayload: ByteArray?
+    ): Long = commitWithSubject(photo, stagedPreview, graphJson, subjectMaskPayload)
 }
 
 /**
@@ -93,6 +113,9 @@ class TetheredPhotoIngestor(
     private val renderPreviewWithSubject:
         (suspend (String, Boolean, EditGraph, SubjectMask, File) -> File?)? = null,
     private val subjectPreparer: TetheredSubjectPresetPreparer? = null,
+    private val skyPreparer: TetheredSkyPresetPreparer? = null,
+    private val renderPreviewWithAi:
+        (suspend (String, Boolean, EditGraph, SubjectMask?, SkyMask?, File) -> File?)? = null,
     private val onIngested: (TetheredIngestResult) -> Unit = {}
 ) {
 
@@ -174,9 +197,10 @@ class TetheredPhotoIngestor(
      * Commits the staged row, falling back to the prepared traditional grade when the mask asset
      * cannot be written.
      *
-     * [RoomTetheredPhotoCommitter] throws [SubjectMaskUnavailableException] from inside the
-     * transaction, so the photo row never lands without its edit. The subject preview is deleted and
-     * a fresh preview of the degraded graph is staged before the retry.
+     * [RoomTetheredPhotoCommitter] throws [SubjectMaskUnavailableException] or
+     * [SkyMaskUnavailableException] from inside the transaction, so the photo row never lands
+     * without its edit. The AI preview is deleted and a fresh preview of the degraded graph is
+     * staged before the retry.
      */
     private suspend fun commitStaged(
         photo: PhotoEntity,
@@ -187,22 +211,34 @@ class TetheredPhotoIngestor(
         jobDir: File
     ): Long? {
         val current = staged ?: return commitSafely(photo, null)
-        if (current.subjectMaskPayload == null) return commitSafely(photo, current)
+        if (current.subjectMaskPayload == null && current.skyMaskPayload == null) {
+            return commitSafely(photo, current)
+        }
         return try {
             commitSafely(photo, current)
         } catch (maskUnavailable: SubjectMaskUnavailableException) {
             Timber.w(maskUnavailable, "LiveTetherPreset mask could not be stored; using the traditional grade")
             current.preview?.delete()
             commitSafely(photo, stageFallbackPreview(file, isRaw, prepared, jobDir))
+        } catch (maskUnavailable: SkyMaskUnavailableException) {
+            Timber.w(maskUnavailable, "LiveTetherPreset sky mask could not be stored; using the traditional grade")
+            current.preview?.delete()
+            commitSafely(photo, stageFallbackPreview(file, isRaw, prepared, jobDir))
         }
     }
 
     private suspend fun commitSafely(photo: PhotoEntity, staged: StagedPreview?): Long? = try {
-        val payload = staged?.subjectMaskPayload
-        if (payload != null) {
-            committer.commitWithSubject(photo, staged?.preview, staged?.graphJson, payload)
-        } else {
-            committer.commit(photo, staged?.preview, staged?.graphJson)
+        val subjectPayload = staged?.subjectMaskPayload
+        val skyPayload = staged?.skyMaskPayload
+        when {
+            subjectPayload != null || skyPayload != null -> committer.commitWithAi(
+                photo,
+                staged?.preview,
+                staged?.graphJson,
+                subjectPayload,
+                skyPayload
+            )
+            else -> committer.commit(photo, staged?.preview, staged?.graphJson)
         }
     } catch (cancelled: CancellationException) {
         throw cancelled
@@ -216,19 +252,22 @@ class TetheredPhotoIngestor(
 
     private data class ActivePreset(val presetId: String, val graphJson: String)
 
-    /** The preset graph plus the optional staged subject mask of the new photo. */
+    /** The preset graph plus the optional staged AI masks of the new photo. */
     private data class PreparedPreset(
         val graphJson: String,
         val fallbackGraphJson: String,
         val subjectMask: SubjectMask?,
-        val subjectMaskPayload: ByteArray?
+        val subjectMaskPayload: ByteArray?,
+        val skyMask: SkyMask?,
+        val skyMaskPayload: ByteArray?
     )
 
-    /** What one staging step produced; all three must describe the same graph. */
+    /** What one staging step produced; every field must describe the same graph. */
     private data class StagedPreview(
         val preview: File?,
         val graphJson: String?,
-        val subjectMaskPayload: ByteArray?
+        val subjectMaskPayload: ByteArray?,
+        val skyMaskPayload: ByteArray?
     )
 
     private suspend fun resolveActivePreset(): ActivePreset? {
@@ -253,11 +292,12 @@ class TetheredPhotoIngestor(
     }
 
     /**
-     * Resolves the graph to render and, when possible, the new photo's own subject mask.
+     * Resolves the graph to render and, when possible, the new photo's own AI masks.
      *
-     * A preparation failure is not an ingest failure: the graph loses its `subject` group and the
-     * traditional grade still applies. That keeps the USB pipeline non-blocking on `<= 4 GiB`
-     * devices and when MODNet is not downloaded.
+     * A preparation failure is not an ingest failure: the affected group is cleared and the
+     * traditional grade still applies. Subject needs MODNet and degrades on `<= 4 GiB` devices or
+     * when the model is missing; the classic sky segmenter needs no download and runs here, while a
+     * `< 3 %` result or a failure clears `sky` instead of publishing a destructive replacement.
      */
     private suspend fun preparePreset(
         file: File,
@@ -266,32 +306,62 @@ class TetheredPhotoIngestor(
     ): PreparedPreset? {
         if (preset == null) return null
         val decoded = EditGraphJsonCodec.decode(preset.graphJson) ?: return null
-        // A preset must never hand its own mask to the new photo, even if a stale row still
-        // references one: the mask describes the source frame's pixels.
-        val graph = decoded.copy(subject = decoded.subject.copy(maskRef = ""))
-        val degraded = degradeSubject(graph)
-        if (!graph.subject.requiresMaskProcessing()) {
-            val cleanJson = EditGraphJsonCodec.encode(graph)
-            return PreparedPreset(cleanJson, cleanJson, null, null)
+        // A preset must never hand its own masks to the new photo, even if a stale row still
+        // references one: both masks describe the source frame's pixels.
+        var graph = decoded.copy(
+            subject = decoded.subject.copy(maskRef = ""),
+            sky = decoded.sky.copy(maskRef = "")
+        )
+        var subjectMask: SubjectMask? = null
+        var subjectPayload: ByteArray? = null
+        if (graph.subject.requiresMaskProcessing()) {
+            val preparation = try {
+                subjectPreparer?.prepare(file.absolutePath, isRaw, graph)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: RuntimeException) {
+                Timber.w(error, "Subject preset preparation threw; applying the traditional grade")
+                null
+            }
+            if (preparation == null) {
+                Timber.i("LiveTetherPreset subject effect degraded to the traditional grade")
+                graph = graph.copy(subject = SubjectOps())
+            } else {
+                subjectMask = preparation.mask
+                subjectPayload = preparation.payload
+            }
         }
-        val preparation = try {
-            subjectPreparer?.prepare(file.absolutePath, isRaw, graph)
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (error: RuntimeException) {
-            Timber.w(error, "Subject preset preparation threw; applying the traditional grade")
-            null
+        if (!graph.sky.isIdentity()) {
+            val preparation = try {
+                skyPreparer?.prepare(file.absolutePath, isRaw, graph)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: RuntimeException) {
+                Timber.w(error, "Sky preset preparation threw; applying the traditional grade")
+                null
+            }
+            if (preparation == null) {
+                Timber.i("LiveTetherPreset sky effect degraded to the traditional grade")
+                graph = graph.copy(sky = SkyOps())
+            } else {
+                return PreparedPreset(
+                    graphJson = EditGraphJsonCodec.encode(graph),
+                    fallbackGraphJson = EditGraphJsonCodec.encode(degradeAi(decoded)),
+                    subjectMask = subjectMask,
+                    subjectMaskPayload = subjectPayload,
+                    skyMask = preparation.mask,
+                    skyMaskPayload = preparation.payload
+                )
+            }
         }
-        if (preparation == null) {
-            Timber.i("LiveTetherPreset subject effect degraded to the traditional grade")
-            val degradedJson = EditGraphJsonCodec.encode(degraded)
-            return PreparedPreset(degradedJson, degradedJson, null, null)
-        }
+        val cleanJson = EditGraphJsonCodec.encode(graph)
         return PreparedPreset(
-            graphJson = EditGraphJsonCodec.encode(graph),
-            fallbackGraphJson = EditGraphJsonCodec.encode(degraded),
-            subjectMask = preparation.mask,
-            subjectMaskPayload = preparation.payload
+            graphJson = cleanJson,
+            fallbackGraphJson = EditGraphJsonCodec.encode(degradeAi(decoded)),
+            subjectMask = subjectMask,
+            subjectMaskPayload = subjectPayload,
+            skyMask = null,
+            skyMaskPayload = null
         )
     }
 
@@ -303,13 +373,41 @@ class TetheredPhotoIngestor(
     ): StagedPreview? {
         if (prepared == null) return null
         val graph = EditGraphJsonCodec.decode(prepared.graphJson) ?: return null
-        val subjectRenderer = renderPreviewWithSubject
-        if (prepared.subjectMask != null && subjectRenderer != null) {
+        val hasSubject = prepared.subjectMask != null
+        val hasSky = prepared.skyMask != null
+        val aiRenderer = renderPreviewWithAi
+        if ((hasSubject || hasSky) && aiRenderer != null) {
             val staged = renderSafely {
-                subjectRenderer(file.absolutePath, isRaw, graph, prepared.subjectMask, outDir)
+                aiRenderer(
+                    file.absolutePath,
+                    isRaw,
+                    graph,
+                    prepared.subjectMask,
+                    prepared.skyMask,
+                    outDir
+                )
             }
             if (staged != null) {
-                return StagedPreview(staged, prepared.graphJson, prepared.subjectMaskPayload)
+                return StagedPreview(
+                    preview = staged,
+                    graphJson = prepared.graphJson,
+                    subjectMaskPayload = prepared.subjectMaskPayload,
+                    skyMaskPayload = prepared.skyMaskPayload
+                )
+            }
+            Timber.w("The AI preview failed; retrying with the traditional grade")
+        } else if (hasSubject && !hasSky && renderPreviewWithSubject != null) {
+            val subjectRenderer = checkNotNull(renderPreviewWithSubject)
+            val staged = renderSafely {
+                subjectRenderer(file.absolutePath, isRaw, graph, checkNotNull(prepared.subjectMask), outDir)
+            }
+            if (staged != null) {
+                return StagedPreview(
+                    preview = staged,
+                    graphJson = prepared.graphJson,
+                    subjectMaskPayload = prepared.subjectMaskPayload,
+                    skyMaskPayload = null
+                )
             }
             Timber.w("The subject preview failed; retrying with the traditional grade")
         }
@@ -332,7 +430,12 @@ class TetheredPhotoIngestor(
             Timber.w("LiveTetherPreset preview could not be staged; importing ungraded")
             return null
         }
-        return StagedPreview(fallback, source.fallbackGraphJson, null)
+        return StagedPreview(
+            preview = fallback,
+            graphJson = source.fallbackGraphJson,
+            subjectMaskPayload = null,
+            skyMaskPayload = null
+        )
     }
 
     private suspend fun renderSafely(render: suspend () -> File?): File? = try {
@@ -350,8 +453,9 @@ class TetheredPhotoIngestor(
         null
     }
 
-    /** Clears the subject group while keeping every traditional grade axis. */
-    private fun degradeSubject(graph: EditGraph): EditGraph = graph.copy(subject = SubjectOps())
+    /** Clears both AI groups while keeping every traditional grade axis. */
+    private fun degradeAi(graph: EditGraph): EditGraph =
+        graph.copy(subject = SubjectOps(), sky = SkyOps())
 
     companion object {
         /** Sub-directory of the app cache used while a preset preview has no photo id yet. */

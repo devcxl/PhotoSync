@@ -18,4 +18,16 @@ object PresetSubjectGate {
      */
     fun needsMask(graph: EditGraph): Boolean =
         !graph.subject.isIdentity() && graph.subject.maskRef.isBlank()
+
+    /**
+     * True when [graph] carries a non-neutral sky group without a bound mask reference.
+     *
+     * The classic segmenter needs no download, so unlike the MODNet gate this can always be satisfied
+     * on the device; the editor still recomputes on demand so a pasted preset never inherits the
+     * source frame's horizon.
+     */
+    fun needsSkyMask(graph: EditGraph): Boolean =
+        graph.sky.assetType != SkyAssetType.NONE &&
+            !graph.sky.isIdentity() &&
+            graph.sky.maskRef.isBlank()
 }

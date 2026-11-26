@@ -62,12 +62,25 @@ internal class ExposureUniformLocations {
     var uCloudOpacityLoc: Int = -1
     var uCloudUvScaleLoc: Int = -1
     var uCloudUvOffsetLoc: Int = -1
+    var uSkyRelightActiveLoc: Int = -1
+    var uSkyMaskLoc: Int = -1
+    var uSkyUvMatrixLoc: Int = -1
+    var uSkyWarpLoc: Int = -1
+    var uHasSkyWarpLoc: Int = -1
+    var uSkyWarpScaleLoc: Int = -1
+    var uSkyWarpOffsetLoc: Int = -1
+    var uSkyTileUvLoc: Int = -1
+    var uSkyPixelScaleLoc: Int = -1
+    var uSkyParamsLoc: Int = -1
+    var uSkyRelightParamsLoc: Int = -1
+    var uSkyRelightDeltaLLoc: Int = -1
 
     /** Resolves every location of [programId]; missing names stay `-1` and are ignored by GL. */
     fun resolve(programId: Int) {
         resolveInputAndTone(programId)
         resolveColor(programId)
         resolveSubjectAndCloud(programId)
+        resolveSky(programId)
     }
 
     private fun resolveInputAndTone(programId: Int) {
@@ -128,5 +141,20 @@ internal class ExposureUniformLocations {
         uCloudOpacityLoc = GLES20.glGetUniformLocation(programId, "uCloudOpacity")
         uCloudUvScaleLoc = GLES20.glGetUniformLocation(programId, "uCloudUvScale")
         uCloudUvOffsetLoc = GLES20.glGetUniformLocation(programId, "uCloudUvOffset")
+    }
+
+    private fun resolveSky(programId: Int) {
+        uSkyRelightActiveLoc = GLES20.glGetUniformLocation(programId, "uSkyRelightActive")
+        uSkyMaskLoc = GLES20.glGetUniformLocation(programId, "uSkyMaskTex")
+        uSkyUvMatrixLoc = GLES20.glGetUniformLocation(programId, "uSkyUvMatrix")
+        uSkyWarpLoc = GLES20.glGetUniformLocation(programId, "uSkyWarpTex")
+        uHasSkyWarpLoc = GLES20.glGetUniformLocation(programId, "uHasSkyWarpTex")
+        uSkyWarpScaleLoc = GLES20.glGetUniformLocation(programId, "uSkyWarpScale")
+        uSkyWarpOffsetLoc = GLES20.glGetUniformLocation(programId, "uSkyWarpOffset")
+        uSkyTileUvLoc = GLES20.glGetUniformLocation(programId, "uSkyTileUv")
+        uSkyPixelScaleLoc = GLES20.glGetUniformLocation(programId, "uSkyPixelScale")
+        uSkyParamsLoc = GLES20.glGetUniformLocation(programId, "uSkyParams")
+        uSkyRelightParamsLoc = GLES20.glGetUniformLocation(programId, "uSkyRelightParams")
+        uSkyRelightDeltaLLoc = GLES20.glGetUniformLocation(programId, "uSkyRelightDeltaL")
     }
 }

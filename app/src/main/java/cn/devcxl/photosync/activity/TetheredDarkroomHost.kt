@@ -23,8 +23,10 @@ import cn.devcxl.photosync.editor.domain.AiAssetKind
 import cn.devcxl.photosync.editor.domain.AiAssetStore
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.EditGraphJsonCodec
+import cn.devcxl.photosync.editor.domain.SkyOps
 import cn.devcxl.photosync.editor.domain.SubjectOps
 import cn.devcxl.photosync.editor.render.BackgroundPreviewRenderer
+import cn.devcxl.photosync.editor.render.TetheredSkyPresetPreparer
 import cn.devcxl.photosync.editor.render.TetheredSubjectPresetPreparer
 import cn.devcxl.photosync.utils.ExtensionUtils
 
@@ -42,7 +44,8 @@ internal class TetheredDarkroomHost(
     private val editedMap: () -> Map<Long, PhotoEditRecord>,
     private val onGraphPersisted: (Long) -> Unit,
     private val onFeedback: (String) -> Unit,
-    private val subjectPresetPreparer: TetheredSubjectPresetPreparer? = null
+    private val subjectPresetPreparer: TetheredSubjectPresetPreparer? = null,
+    private val skyPresetPreparer: TetheredSkyPresetPreparer? = null
 ) {
 
     private val store: EditStore?
@@ -136,7 +139,7 @@ internal class TetheredDarkroomHost(
     ): Boolean = try {
         val entity = withContext(Dispatchers.IO) { dao.getById(photoId) } ?: return false
         val effectiveGraph = withContext(Dispatchers.IO) {
-            ensureSubjectMask(photoId, entity, graph)
+            ensureSkyMask(photoId, entity, ensureSubjectMask(photoId, entity, graph))
         }
         val previewPath = if (effectiveGraph.isIdentity()) {
             null
@@ -207,6 +210,43 @@ internal class TetheredDarkroomHost(
             return degradeSubject(graph)
         }
         return graph.copy(subject = graph.subject.copy(maskRef = reference.relativePath))
+    }
+
+    /**
+     * Ensures the target photo has its own sky mask before a preset that carries `SkyOps` is saved.
+     *
+     * The mask already referenced by the graph is kept. Otherwise the zero-model classic segmenter
+     * runs once on the `1024px` proxy; a `< 3 %` result or a failure clears `sky` and silently keeps
+     * the traditional grade. The payload is stored under [photoId] so the saved `maskRef` is valid
+     * immediately.
+     */
+    private suspend fun ensureSkyMask(
+        photoId: Long,
+        entity: PhotoEntity,
+        graph: EditGraph
+    ): EditGraph {
+        if (graph.sky.isIdentity() || graph.sky.maskRef.isNotBlank()) return graph
+        val preparer = skyPresetPreparer ?: return graph.copy(sky = SkyOps())
+        val isRaw = ExtensionUtils.isRawExtension(ExtensionUtils.fileExtension(entity.path))
+        val preparation = try {
+            preparer.prepare(entity.path, isRaw, graph)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: RuntimeException) {
+            Timber.w(error, "Sky preparation threw; applying the traditional grade")
+            null
+        }
+        if (preparation == null) {
+            Timber.i("Gallery preset sky effect degraded to the traditional grade")
+            return graph.copy(sky = SkyOps())
+        }
+        val reference = AiAssetStore(context.filesDir)
+            .write(photoId, AiAssetKind.SKY_MASK, preparation.payload)
+        if (reference == null) {
+            Timber.w("Gallery preset sky mask could not be stored; applying the traditional grade")
+            return graph.copy(sky = SkyOps())
+        }
+        return graph.copy(sky = graph.sky.copy(maskRef = reference.relativePath))
     }
 
     private fun degradeSubject(graph: EditGraph): EditGraph = graph.copy(subject = SubjectOps())

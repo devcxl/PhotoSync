@@ -13,6 +13,9 @@ import cn.devcxl.photosync.editor.domain.LiquifyMesh
 import cn.devcxl.photosync.editor.domain.Lut3dSamples
 import cn.devcxl.photosync.editor.domain.PassDEffectsParams
 import cn.devcxl.photosync.editor.domain.PortraitWarpComposer
+import cn.devcxl.photosync.editor.domain.ProceduralSky
+import cn.devcxl.photosync.editor.domain.SkyBlendParams
+import cn.devcxl.photosync.editor.domain.SkyRelightStats
 import cn.devcxl.photosync.editor.domain.SpatialDetailParams
 import cn.devcxl.photosync.editor.domain.SubjectOps
 import cn.devcxl.photosync.editor.domain.ToneShaderParams
@@ -64,6 +67,9 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
 
     @Volatile
     var frameState: RenderFrameState = RenderFrameState()
+
+    @Volatile
+    private var skyStats: SkyRelightStats = SkyRelightStats.NEUTRAL
 
     @Volatile
     var canvasTransform: CanvasViewportTransform = CanvasViewportTransform()
@@ -207,6 +213,23 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
         prepassRevision++
     }
 
+    /**
+     * Stages the decoded P3 sky layer, or `null` to render the original sky.
+     *
+     * The caller verifies the mask digest, decodes the replacement image and computes the Pre-pass
+     * OKLab delta off the GL thread; this only publishes the mask/asset pixels and the shared stats.
+     */
+    fun setSkyLayer(layer: SkyLayerPixels?) {
+        synchronized(stateLock) {
+            skyStats = layer?.stats ?: SkyRelightStats.NEUTRAL
+            // The graph state may already be published while the layer was still decoding; the
+            // uniform snapshot must pick up the Pre-pass delta or the relight would stay neutral.
+            frameState = frameState.copy(skyStats = skyStats)
+        }
+        pipeline.stageSkyLayer(layer)
+        prepassRevision++
+    }
+
     private fun publishWarpLocked() {
         val composed = PortraitWarpComposer.compose(portraitFaceWarp, portraitBodyWarp, liquifyMesh)
         frameState = frameState.copy(warpActive = pipeline.stageWarpField(composed))
@@ -259,7 +282,11 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
                 subjectUvMatrix = if (geometryActive) inverseMatrix else RenderFrameState.IDENTITY_MATRIX,
                 subjectWarpActive = pipeline.isSubjectCompositeAvailable && warpActive,
                 subjectOps = graph.subject,
-                cloudLayerOpacity = EditorRenderStateMath.cloudLayerOpacity(graph)
+                cloudLayerOpacity = EditorRenderStateMath.cloudLayerOpacity(graph),
+                skyOps = graph.sky,
+                skyStats = skyStats,
+                skyBlend = SkyBlendParams.from(graph),
+                skyProcedural = ProceduralSky.of(graph)
             )
             isPassCActive = !useFastProxy && !spatialParams.isZeroDrawCallShortCircuit
             val prepassSig = EditorRenderStateMath.prepassSignature(

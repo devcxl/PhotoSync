@@ -30,6 +30,8 @@ internal object LinearRawPreviewRenderer {
      *   foreground/background grade and the terminal Pass C bokeh.
      * @param cloud Optional Post-Pass A cloud layer in scene-linear encoding; it is fused between
      *   `BaseLook` and Pass B, so every later stage grades it together with the camera frame.
+     * @param sky Optional Pass D sky composite, applied after Pass C and before the 3D LUT / grain /
+     *   vignette stack so the whole frame shares one final grade.
      */
     fun renderArgb(
         source: LinearRawBuffer,
@@ -40,7 +42,8 @@ internal object LinearRawPreviewRenderer {
         beforeEffects: ((pixels: IntArray, width: Int, height: Int) -> Unit)? = null,
         afterEffects: ((pixels: IntArray, width: Int, height: Int) -> Unit)? = null,
         subjectWeight: FloatArray? = null,
-        cloud: LinearCloudLayer? = null
+        cloud: LinearCloudLayer? = null,
+        sky: SkyCpuLayer? = null
     ): IntArray {
         val toneParams = ToneShaderParams.from(graph)
         val colorParams = ColorGradingParams.from(graph)
@@ -60,13 +63,13 @@ internal object LinearRawPreviewRenderer {
             renderWithDefringe(
                 source, gain, graph.baseLook, lookLut,
                 toneParams, colorParams, curveLut, width, height, argb, PassBColorMath.Scratch(),
-                subject, subjectWeight, frameCloud
+                subject, subjectWeight, frameCloud, sky
             )
         } else {
             renderStraight(
                 source, gain, graph.baseLook, lookLut,
                 toneParams, colorParams, curveLut, pixelCount, argb, PassBColorMath.Scratch(),
-                subject, subjectWeight, frameCloud
+                subject, subjectWeight, frameCloud, sky
             )
         }
         val detailed = PreviewDetailPass.apply(
@@ -78,6 +81,7 @@ internal object LinearRawPreviewRenderer {
             skinMask = skinMask,
             subjectWeight = subjectWeight
         )
+        SkyCpuComposer.apply(detailed, width, height, sky)
         beforeEffects?.invoke(detailed, width, height)
         val graded = applyPassDEffects(detailed, width, height, graph, lut)
         afterEffects?.invoke(graded, width, height)
@@ -97,7 +101,8 @@ internal object LinearRawPreviewRenderer {
         scratch: PassBColorMath.Scratch,
         subject: SubjectOps?,
         subjectWeight: FloatArray?,
-        cloud: LinearCloudLayer?
+        cloud: LinearCloudLayer?,
+        sky: SkyCpuLayer?
     ) {
         val sample = FloatArray(CHANNELS)
         val display = FloatArray(CHANNELS_RGB)
@@ -106,6 +111,7 @@ internal object LinearRawPreviewRenderer {
             source.readPixel(index, sample)
             computeBaseLookLinear(sample, gain, baseLook, lookLut, linear, display)
             cloud?.blendInto(index, linear)
+            applySkyRelight(sky, index, linear)
             val weight = subjectWeight?.getOrNull(index) ?: 0.0f
             if (toneParams.isIdentity && colorParams.isIdentity && subject == null) {
                 argb[index] = packLinearAsSrgb(linear)
@@ -143,7 +149,8 @@ internal object LinearRawPreviewRenderer {
         scratch: PassBColorMath.Scratch,
         subject: SubjectOps?,
         subjectWeight: FloatArray?,
-        cloud: LinearCloudLayer?
+        cloud: LinearCloudLayer?,
+        sky: SkyCpuLayer?
     ): IntArray {
         val pixelCount = width * height
         // Cache base-looked linear RGB once so defringe never decodes the LinearRawBuffer twice.
@@ -171,6 +178,7 @@ internal object LinearRawPreviewRenderer {
             linear[1] = cachedLinear[base + 1]
             linear[2] = cachedLinear[base + 2]
             cloud?.blendInto(i, linear)
+            applySkyRelight(sky, i, linear)
             val grad = Srgb8Packer.neighborGradient(lumaMap, width, height, i)
             val weight = subjectWeight?.getOrNull(i) ?: 0.0f
             PassBColorMath.apply(
@@ -179,6 +187,18 @@ internal object LinearRawPreviewRenderer {
             argb[i] = Srgb8Packer.packRgb(display[0], display[1], display[2])
         }
         return argb
+    }
+
+    /**
+     * Applies the Pass B sky relight to one linear sample using the frame-aligned CPU coverage.
+     *
+     * The mask and the shared OKLab delta live in [SkyCpuLayer], so the CPU preview and the shader
+     * use exactly the same `(ΔL, Δa, Δb)` numbers.
+     */
+    private fun applySkyRelight(sky: SkyCpuLayer?, index: Int, linear: FloatArray) {
+        if (sky == null || sky.relight <= 0 || sky.stats.isIdentity()) return
+        val coverage = sky.coverage.getOrNull(index) ?: return
+        SkyRelightMath.apply(sky.stats, sky.relight, coverage, linear, sky.relightDeltaRgb)
     }
 
     private fun packLinearAsSrgb(linear: FloatArray): Int = Srgb8Packer.packRgb(

@@ -15,6 +15,9 @@ import cn.devcxl.photosync.editor.domain.GeometryMath
 import cn.devcxl.photosync.editor.domain.LinearCloudLayer
 import cn.devcxl.photosync.editor.domain.LinearRawPreviewRenderer
 import cn.devcxl.photosync.editor.domain.SkinMaskMath
+import cn.devcxl.photosync.editor.domain.SkyCpuComposer
+import cn.devcxl.photosync.editor.domain.SkyCpuLayer
+import cn.devcxl.photosync.editor.domain.SkyRelightMath
 import cn.devcxl.photosync.editor.domain.WarpDisplacementField
 import cn.devcxl.photosync.editor.domain.Lut3dSamples
 import cn.devcxl.photosync.editor.domain.Mat3
@@ -59,10 +62,11 @@ internal object PreviewCacheWriter {
         skinMask: FloatArray? = null,
         subject: SubjectComposite? = null,
         inpaint: InpaintOverlay? = null,
-        cloudAssets: AiAssetStore? = null
+        cloudAssets: AiAssetStore? = null,
+        sky: SkyLayerPixels? = null
     ): String? {
         val rendered =
-            renderBitmapFrame(source, graph, warpField, lut, skinMask, subject, inpaint, cloudAssets)
+            renderBitmapFrame(source, graph, warpField, lut, skinMask, subject, inpaint, cloudAssets, sky)
             ?: return null
         return compressAndWrite(rendered, cacheDir, photoId)
     }
@@ -78,10 +82,11 @@ internal object PreviewCacheWriter {
         skinMask: FloatArray? = null,
         subject: SubjectComposite? = null,
         inpaint: InpaintOverlay? = null,
-        cloudAssets: AiAssetStore? = null
+        cloudAssets: AiAssetStore? = null,
+        sky: SkyLayerPixels? = null
     ): String? {
         val rendered =
-            renderLinearFrame(source, graph, warpField, lut, skinMask, subject, inpaint, cloudAssets)
+            renderLinearFrame(source, graph, warpField, lut, skinMask, subject, inpaint, cloudAssets, sky)
             ?: return null
         return compressAndWrite(rendered, cacheDir, photoId)
     }
@@ -101,10 +106,11 @@ internal object PreviewCacheWriter {
         skinMask: FloatArray? = null,
         subject: SubjectComposite? = null,
         inpaint: InpaintOverlay? = null,
-        cloudAssets: AiAssetStore? = null
+        cloudAssets: AiAssetStore? = null,
+        sky: SkyLayerPixels? = null
     ): String? {
         val rendered =
-            renderBitmapFrame(source, graph, warpField, lut, skinMask, subject, inpaint, cloudAssets)
+            renderBitmapFrame(source, graph, warpField, lut, skinMask, subject, inpaint, cloudAssets, sky)
             ?: return null
         return compressAndWriteTo(rendered, outDir)
     }
@@ -119,10 +125,11 @@ internal object PreviewCacheWriter {
         skinMask: FloatArray? = null,
         subject: SubjectComposite? = null,
         inpaint: InpaintOverlay? = null,
-        cloudAssets: AiAssetStore? = null
+        cloudAssets: AiAssetStore? = null,
+        sky: SkyLayerPixels? = null
     ): String? {
         val rendered =
-            renderLinearFrame(source, graph, warpField, lut, skinMask, subject, inpaint, cloudAssets)
+            renderLinearFrame(source, graph, warpField, lut, skinMask, subject, inpaint, cloudAssets, sky)
             ?: return null
         return compressAndWriteTo(rendered, outDir)
     }
@@ -135,12 +142,13 @@ internal object PreviewCacheWriter {
         skinMask: FloatArray?,
         subject: SubjectComposite?,
         inpaint: InpaintOverlay?,
-        cloudAssets: AiAssetStore?
+        cloudAssets: AiAssetStore?,
+        sky: SkyLayerPixels?
     ): Bitmap? {
         // A composed half-float copy is JVM-owned, so dropping the reference after this frame is the
         // whole cleanup; the caller's buffer is never mutated.
         val frame = inpaint?.applyToLinearCopy(source) ?: source
-        return renderLinearFrameSource(frame, graph, warpField, lut, skinMask, subject, cloudAssets)
+        return renderLinearFrameSource(frame, graph, warpField, lut, skinMask, subject, cloudAssets, sky)
     }
 
     private fun renderLinearFrameSource(
@@ -150,7 +158,8 @@ internal object PreviewCacheWriter {
         lut: Lut3dSamples?,
         skinMask: FloatArray?,
         subject: SubjectComposite?,
-        cloudAssets: AiAssetStore?
+        cloudAssets: AiAssetStore?,
+        sky: SkyLayerPixels?
     ): Bitmap? {
         val sourceAspect = source.width.toFloat() / source.height.toFloat()
         val outputAspect = GeometryMath.outputAspect(graph.geometry, sourceAspect)
@@ -200,7 +209,14 @@ internal object PreviewCacheWriter {
                 linearFrame.height,
                 warpField
             ),
-            cloud = cloudPreviewLayer(cloudAssets, graph, linearFrame.width, linearFrame.height)
+            cloud = cloudPreviewLayer(cloudAssets, graph, linearFrame.width, linearFrame.height),
+            sky = SkyPreparer.cpuLayer(
+                layer = sky,
+                inverseMatrix = GeometryMath.buildPassAInverseMatrix(graph.geometry, sourceAspect),
+                warpField = warpField,
+                width = linearFrame.width,
+                height = linearFrame.height
+            )
         )
         return Bitmap.createBitmap(
             pixels,
@@ -218,12 +234,13 @@ internal object PreviewCacheWriter {
         skinMask: FloatArray?,
         subject: SubjectComposite?,
         inpaint: InpaintOverlay?,
-        cloudAssets: AiAssetStore?
+        cloudAssets: AiAssetStore?,
+        sky: SkyLayerPixels?
     ): Bitmap? {
         val composed = inpaint?.applyToBitmapCopy(source)
         val frame = composed ?: source
         return try {
-            renderBitmapFrameSource(frame, graph, warpField, lut, skinMask, subject, cloudAssets)
+            renderBitmapFrameSource(frame, graph, warpField, lut, skinMask, subject, cloudAssets, sky)
         } finally {
             // The composed copy is private to this frame; the caller keeps its immutable source.
             if (composed != null) composed.recycle()
@@ -237,7 +254,8 @@ internal object PreviewCacheWriter {
         lut: Lut3dSamples?,
         skinMask: FloatArray?,
         subject: SubjectComposite?,
-        cloudAssets: AiAssetStore?
+        cloudAssets: AiAssetStore?,
+        sky: SkyLayerPixels?
     ): Bitmap {
         val sourceAspect = source.width.toFloat() / source.height.toFloat()
         val outputAspect = GeometryMath.outputAspect(graph.geometry, sourceAspect)
@@ -267,7 +285,8 @@ internal object PreviewCacheWriter {
             subject = subject,
             inverseMatrix = geometry,
             warpField = warpField,
-            subjectWeight = resolveSubjectWeight(subject, graph, width, height, warpField, geometry)
+            subjectWeight = resolveSubjectWeight(subject, graph, width, height, warpField, geometry),
+            sky = SkyPreparer.cpuLayer(sky, geometry, warpField, width, height)
         )
         return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).apply {
             setPixels(graded, 0, width, 0, 0, width, height)
@@ -290,9 +309,10 @@ internal object PreviewCacheWriter {
         inverseMatrix: Mat3 =
             Mat3.identity(),
         warpField: WarpDisplacementField? = null,
-        subjectWeight: FloatArray? = null
+        subjectWeight: FloatArray? = null,
+        sky: SkyCpuLayer? = null
     ): IntArray {
-        applyPassBToPixels(pixels, width, height, graph, subjectWeight)
+        applyPassBToPixels(pixels, width, height, graph, subjectWeight, sky)
         val afterPassC = applyPassCToPixels(
             pixels = pixels,
             width = width,
@@ -302,6 +322,7 @@ internal object PreviewCacheWriter {
             skinMask = skinMask,
             subjectWeight = subjectWeight
         )
+        SkyCpuComposer.apply(afterPassC, width, height, sky)
         val afterSubject = SubjectCpuComposer.applyForeground(
             pixels = afterPassC,
             width = width,
@@ -367,7 +388,8 @@ internal object PreviewCacheWriter {
         width: Int,
         height: Int,
         graph: EditGraph,
-        subjectWeight: FloatArray?
+        subjectWeight: FloatArray?,
+        sky: SkyCpuLayer?
     ) {
         val toneParams = ToneShaderParams.from(graph)
         val colorParams = ColorGradingParams.from(graph)
@@ -385,6 +407,15 @@ internal object PreviewCacheWriter {
             linear[2] = ExposureShaderMath.decodeSrgb((pixel and 0xFF) / 255.0f)
             val grad = lumaMap?.let { Srgb8Packer.neighborGradient(it, width, height, index) } ?: 0.0f
             val weight = subjectWeight?.getOrNull(index) ?: 0.0f
+            if (sky != null && sky.relight > 0 && !sky.stats.isIdentity()) {
+                SkyRelightMath.apply(
+                    stats = sky.stats,
+                    relight = sky.relight,
+                    skyCoverage = sky.coverage.getOrNull(index) ?: 0.0f,
+                    linear = linear,
+                    cachedDeltaRgb = sky.relightDeltaRgb
+                )
+            }
             PassBColorMath.apply(
                 toneParams, colorParams, curveLut, linear, display, grad, scratch, subject, weight
             )
@@ -460,7 +491,7 @@ internal object PreviewCacheWriter {
         return SubjectWeightPlane.compute(subject, width, height, matrix, warpField)
     }
 
-    private fun previewSize(outputAspect: Float): Pair<Int, Int> {
+    internal fun previewSize(outputAspect: Float): Pair<Int, Int> {
         val aspect = outputAspect.takeIf { it.isFinite() && it > 0.0f } ?: 1.0f
         return if (aspect >= 1.0f) {
             PREVIEW_MAX_EDGE_PX to (PREVIEW_MAX_EDGE_PX / aspect).roundToInt().coerceAtLeast(1)

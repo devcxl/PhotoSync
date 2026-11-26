@@ -121,7 +121,7 @@ class CopyMaskSubjectTest {
         val mask = CopyMask.fromCheckboxState(booleanArrayOf(true, true, true, true, true, true))
 
         assertTrue(mask.includeAiSubject)
-        assertEquals(10, CopyMask.AXIS_COUNT)
+        assertEquals(11, CopyMask.AXIS_COUNT)
     }
 
     @Test
@@ -130,8 +130,20 @@ class CopyMaskSubjectTest {
 
         assertTrue(CopyMask.fromCheckboxState(checked).includeAiSubject)
 
-        checked[CopyMask.AXIS_COUNT - 1] = false
+        checked[CopyMask.AXIS_COUNT - 2] = false
         assertFalse(CopyMask.fromCheckboxState(checked).includeAiSubject)
+        assertTrue(CopyMask.fromCheckboxState(checked).includeAiSky)
+    }
+
+    @Test
+    fun shouldReadTheSkyAxisFromTheLastCheckbox() {
+        val checked = BooleanArray(CopyMask.AXIS_COUNT) { true }
+
+        assertTrue(CopyMask.fromCheckboxState(checked).includeAiSky)
+
+        checked[CopyMask.AXIS_COUNT - 1] = false
+        assertFalse(CopyMask.fromCheckboxState(checked).includeAiSky)
+        assertTrue(CopyMask.fromCheckboxState(checked).includeAiSubject)
     }
 
     @Test

@@ -213,7 +213,8 @@ class MainActivity : AppCompatActivity() {
             decodeOriginal = ::decodeOriginalPreview,
             onEditPersisted = ::onEditPersisted,
             onFeedback = { message -> showInlineFeedback(message) },
-            subjectPresetPreparer = (application as? App)?.tetheredSubjectPreparer
+            subjectPresetPreparer = (application as? App)?.tetheredSubjectPreparer,
+            skyPresetPreparer = (application as? App)?.tetheredSkyPreparer
         ).also { it.bind() }
         darkroom.observeTransferState()
     }

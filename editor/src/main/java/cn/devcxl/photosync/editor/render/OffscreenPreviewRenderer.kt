@@ -47,7 +47,9 @@ internal data class OffscreenPreviewRequest(
     /** Repair patches of `graph.inpaint`; blended before the source is uploaded. */
     val inpaint: InpaintOverlay? = null,
     /** Asset store the Post-Pass A cloud layer is read from; `null` disables the cloud stage. */
-    val cloudAssets: AiAssetStore? = null
+    val cloudAssets: AiAssetStore? = null,
+    /** Decoded P3 sky layer, or `null` to render the original sky. */
+    val sky: SkyLayerPixels? = null
 )
 
 /**

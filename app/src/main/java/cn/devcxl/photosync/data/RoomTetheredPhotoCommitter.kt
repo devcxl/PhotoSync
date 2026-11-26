@@ -23,6 +23,10 @@ import cn.devcxl.photosync.editor.domain.EditGraphJsonCodec
 internal class SubjectMaskUnavailableException :
     Exception("The subject mask asset could not be stored")
 
+/** Signals that a staged `SkyMask` payload could not be persisted; the transaction rolls back. */
+internal class SkyMaskUnavailableException :
+    Exception("The sky mask asset could not be stored")
+
 /**
  * Room-backed [TetheredPhotoCommitter]: one transaction inserts the photo, publishes the staged
  * `LiveTetherPreset` preview under `cacheDir/edits/<photoId>/`, moves the staged subject mask into
@@ -41,13 +45,21 @@ class RoomTetheredPhotoCommitter(
 ) : TetheredPhotoCommitter {
 
     override suspend fun commit(photo: PhotoEntity, stagedPreview: File?, graphJson: String?): Long =
-        commitWithSubject(photo, stagedPreview, graphJson, subjectMaskPayload = null)
+        commitWithAi(photo, stagedPreview, graphJson, subjectMaskPayload = null, skyMaskPayload = null)
 
     override suspend fun commitWithSubject(
         photo: PhotoEntity,
         stagedPreview: File?,
         graphJson: String?,
         subjectMaskPayload: ByteArray?
+    ): Long = commitWithAi(photo, stagedPreview, graphJson, subjectMaskPayload, skyMaskPayload = null)
+
+    override suspend fun commitWithAi(
+        photo: PhotoEntity,
+        stagedPreview: File?,
+        graphJson: String?,
+        subjectMaskPayload: ByteArray?,
+        skyMaskPayload: ByteArray?
     ): Long {
         var publishedFile: File? = null
         return try {
@@ -57,7 +69,7 @@ class RoomTetheredPhotoCommitter(
                     photoId
                 } else {
                     val boundGraphJson = if (stagedPreview != null && stagedPreview.isFile) {
-                        bindSubjectMask(photoId, graphJson, subjectMaskPayload)
+                        bindAiMasks(photoId, graphJson, subjectMaskPayload, skyMaskPayload)
                     } else {
                         null
                     }
@@ -78,25 +90,32 @@ class RoomTetheredPhotoCommitter(
     }
 
     /**
-     * Persists [subjectMaskPayload] under the new photo id and rewrites `subject.maskRef`.
+     * Persists every staged mask under the new photo id and rewrites the matching `maskRef`s.
      *
      * @return The final graph JSON, or `null` when [graphJson] is absent or undecodable.
-     * @throws SubjectMaskUnavailableException when the payload exists but its asset write failed;
-     *   the transaction then rolls back and the ingest degrades to the traditional grade.
+     * @throws SubjectMaskUnavailableException or [SkyMaskUnavailableException] when a payload exists
+     *   but its asset write failed; the transaction then rolls back and the ingest degrades.
      */
-    private fun bindSubjectMask(
+    private fun bindAiMasks(
         photoId: Long,
         graphJson: String?,
-        subjectMaskPayload: ByteArray?
+        subjectMaskPayload: ByteArray?,
+        skyMaskPayload: ByteArray?
     ): String? {
         if (graphJson == null) return null
-        val graph = EditGraphJsonCodec.decode(graphJson) ?: return graphJson
-        if (subjectMaskPayload == null) return graphJson
-        val reference = AiAssetStore(filesDir).write(photoId, AiAssetKind.SUBJECT_MASK, subjectMaskPayload)
-            ?: throw SubjectMaskUnavailableException()
-        return EditGraphJsonCodec.encode(
-            graph.copy(subject = graph.subject.copy(maskRef = reference.relativePath))
-        )
+        var graph = EditGraphJsonCodec.decode(graphJson) ?: return graphJson
+        val store = AiAssetStore(filesDir)
+        if (subjectMaskPayload != null) {
+            val reference = store.write(photoId, AiAssetKind.SUBJECT_MASK, subjectMaskPayload)
+                ?: throw SubjectMaskUnavailableException()
+            graph = graph.copy(subject = graph.subject.copy(maskRef = reference.relativePath))
+        }
+        if (skyMaskPayload != null) {
+            val reference = store.write(photoId, AiAssetKind.SKY_MASK, skyMaskPayload)
+                ?: throw SkyMaskUnavailableException()
+            graph = graph.copy(sky = graph.sky.copy(maskRef = reference.relativePath))
+        }
+        return EditGraphJsonCodec.encode(graph)
     }
 
     private suspend fun insertEditRow(photoId: Long, previewPath: String, graphJson: String) {

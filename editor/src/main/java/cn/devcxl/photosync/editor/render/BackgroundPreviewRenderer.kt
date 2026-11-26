@@ -25,6 +25,7 @@ import cn.devcxl.photosync.editor.export.BakeConcurrencyGate
 import cn.devcxl.photosync.editor.export.BakePortraitSupport
 import cn.devcxl.photosync.editor.lut.CubeLutStore
 import cn.devcxl.photosync.editor.vision.PortraitPreviewCache
+import cn.devcxl.photosync.editor.vision.SkyMask
 import cn.devcxl.photosync.editor.vision.SubjectMask
 
 /**
@@ -115,7 +116,8 @@ object BackgroundPreviewRenderer {
         sourcePath: String,
         isRaw: Boolean,
         graph: EditGraph,
-        subjectMaskOverride: SubjectMask? = null
+        subjectMaskOverride: SubjectMask? = null,
+        skyMaskOverride: SkyMask? = null
     ): File? {
         if (sourcePath.isBlank() || graph.isIdentity()) return null
         if (!outDir.isDirectory && !outDir.mkdirs()) {
@@ -129,7 +131,8 @@ object BackgroundPreviewRenderer {
         return try {
             withContext(Dispatchers.IO) {
                 val rendered = renderInDir(
-                    context, filesDir, outDir, sourcePath, isRaw, graph, subjectMaskOverride
+                    context, filesDir, outDir, sourcePath, isRaw, graph,
+                    subjectMaskOverride, skyMaskOverride
                 )
                 produced.set(rendered)
                 rendered
@@ -147,7 +150,8 @@ object BackgroundPreviewRenderer {
         sourcePath: String,
         isRaw: Boolean,
         graph: EditGraph,
-        subjectMaskOverride: SubjectMask?
+        subjectMaskOverride: SubjectMask?,
+        skyMaskOverride: SkyMask?
     ): File? {
         val startedAt = SystemClock.elapsedRealtime()
         var acquireMs = 0L
@@ -180,7 +184,8 @@ object BackgroundPreviewRenderer {
             val prepStartedAt = SystemClock.elapsedRealtime()
             val request = PreviewFailurePolicy.prepareOrRelease(lease) {
                 buildRequest(
-                    context, filesDir, outDir, sourcePath, isRaw, graph, lease.source, subjectMaskOverride
+                    context, filesDir, outDir, sourcePath, isRaw, graph, lease.source,
+                    subjectMaskOverride, skyMaskOverride
                 )
             }
             prepareMs = SystemClock.elapsedRealtime() - prepStartedAt
@@ -368,12 +373,26 @@ object BackgroundPreviewRenderer {
         isRaw: Boolean,
         graph: EditGraph,
         source: EditorSource,
-        subjectMaskOverride: SubjectMask?
+        subjectMaskOverride: SubjectMask?,
+        skyMaskOverride: SkyMask?
     ): OffscreenPreviewRequest {
         val portrait = resolvePortrait(context, filesDir, sourcePath, isRaw, graph, source)
         val inpaint = InpaintOverlay.of(filesDir, graph)
         val subject = subjectMaskOverride?.let { SubjectCompositeLoader.fromSource(source, it) }
             ?: SubjectCompositeLoader.resolve(graph, source, filesDir, inpaint)
+        val (outWidth, outHeight) = OffscreenPreviewFrames.outputSize(graph, source.width, source.height)
+        val sky = if (graph.sky.isIdentity()) {
+            null
+        } else {
+            SkyPreparer.prepare(
+                source = source,
+                graph = graph,
+                filesDir = filesDir,
+                outputWidth = outWidth,
+                outputHeight = outHeight,
+                maskOverride = skyMaskOverride
+            )
+        }
         return OffscreenPreviewRequest(
             source = source,
             graph = graph,
@@ -383,7 +402,8 @@ object BackgroundPreviewRenderer {
             outDir = outDir,
             subject = subject,
             inpaint = inpaint,
-            cloudAssets = AiAssetStore(filesDir)
+            cloudAssets = AiAssetStore(filesDir),
+            sky = sky
         )
     }
 
@@ -403,7 +423,8 @@ object BackgroundPreviewRenderer {
                 skinMask = request.skinMask,
                 subject = request.subject,
                 inpaint = request.inpaint,
-                cloudAssets = request.cloudAssets
+                cloudAssets = request.cloudAssets,
+                sky = request.sky
             )
             is EditorSource.BitmapSource -> PreviewCacheWriter.writeBitmapPreviewTo(
                 source = source.full,
@@ -414,7 +435,8 @@ object BackgroundPreviewRenderer {
                 skinMask = request.skinMask,
                 subject = request.subject,
                 inpaint = request.inpaint,
-                cloudAssets = request.cloudAssets
+                cloudAssets = request.cloudAssets,
+                sky = request.sky
             )
         }
         written?.let(::File)

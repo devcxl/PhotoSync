@@ -38,8 +38,11 @@ import cn.devcxl.photosync.editor.domain.EditGraphJsonCodec
 import cn.devcxl.photosync.editor.render.BackgroundPreviewRenderer
 import cn.devcxl.photosync.editor.render.RecentEditorSourceCache
 import cn.devcxl.photosync.editor.vision.DeviceMemoryTier
+import cn.devcxl.photosync.editor.render.ClassicTetheredSkyPresetPreparer
 import cn.devcxl.photosync.editor.render.ModnetTetheredSubjectPresetPreparer
+import cn.devcxl.photosync.editor.render.TetheredSkyPresetPreparer
 import cn.devcxl.photosync.editor.vision.OrtSessionManager
+import cn.devcxl.photosync.editor.vision.SkyMask
 import cn.devcxl.photosync.editor.vision.SubjectMask
 import cn.devcxl.photosync.editor.render.TetheredSubjectPresetPreparer
 import cn.devcxl.photosync.export.MediaStoreGallerySink
@@ -123,6 +126,16 @@ class App : Application() {
             filesDir = filesDir,
             sessions = ortSessionManager
         )
+    }
+
+    /**
+     * Computes a new photo's own sky mask for a `LiveTetherPreset` that carries `SkyOps`.
+     *
+     * The classic segmenter is the zero-model P3 implementation: no download and no ORT session, so
+     * it can run inside the serialized ingest queue even on a `<= 4 GiB` device.
+     */
+    val tetheredSkyPreparer: TetheredSkyPresetPreparer by lazy {
+        ClassicTetheredSkyPresetPreparer()
     }
 
     /** Photo ids that arrived from the camera while the app was already running. */
@@ -273,12 +286,16 @@ class App : Application() {
             ),
             stagingDir = cacheDir,
             renderPreview = { sourcePath, isRaw, graph, outDir ->
-                renderTetheredPreview(sourcePath, isRaw, graph, outDir, subjectMask = null)
+                renderTetheredPreview(sourcePath, isRaw, graph, outDir)
             },
             renderPreviewWithSubject = { sourcePath, isRaw, graph, subjectMask, outDir ->
                 renderTetheredPreview(sourcePath, isRaw, graph, outDir, subjectMask)
             },
-            subjectPreparer = tetheredSubjectPreparer
+            subjectPreparer = tetheredSubjectPreparer,
+            skyPreparer = tetheredSkyPreparer,
+            renderPreviewWithAi = { sourcePath, isRaw, graph, subjectMask, skyMask, outDir ->
+                renderTetheredPreview(sourcePath, isRaw, graph, outDir, subjectMask, skyMask)
+            }
         )
 
     private suspend fun renderTetheredPreview(
@@ -286,7 +303,8 @@ class App : Application() {
         isRaw: Boolean,
         graph: EditGraph,
         outDir: File,
-        subjectMask: SubjectMask?
+        subjectMask: SubjectMask? = null,
+        skyMask: SkyMask? = null
     ): File? = BackgroundPreviewRenderer.renderToDir(
         context = this,
         filesDir = filesDir,
@@ -294,7 +312,8 @@ class App : Application() {
         sourcePath = sourcePath,
         isRaw = isRaw,
         graph = graph,
-        subjectMaskOverride = subjectMask
+        subjectMaskOverride = subjectMask,
+        skyMaskOverride = skyMask
     )
 
     private suspend fun seedPresets(editStore: RoomEditStore) {

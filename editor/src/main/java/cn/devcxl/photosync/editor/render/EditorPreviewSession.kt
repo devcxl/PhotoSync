@@ -46,6 +46,7 @@ internal class EditorPreviewSession(
     private var originalSource: EditorSource? = null
     private var composedSource: EditorSource? = null
     private var appliedInpaint: List<InpaintPatchRef> = emptyList()
+    private var stagedSky: SkyLayerPixels? = null
 
     /**
      * True when the staged source is a 16-bit linear RAW buffer, i.e. the `BaseLook` toggle can
@@ -153,6 +154,35 @@ internal class EditorPreviewSession(
         renderer.setCloudLayer(pixels)
     }
 
+    /** The sky layer currently staged on the canvas, or `null` when the original sky renders. */
+    fun currentSkyLayer(): SkyLayerPixels? = stagedSky
+
+    /** Stages a decoded P3 sky layer for the next canvas frame, or unbinds it. */
+    fun applySkyLayer(layer: SkyLayerPixels?) {
+        stagedSky = layer
+        renderer.setSkyLayer(layer)
+    }
+
+    /**
+     * Builds the graph's sky layer for the canvas. Blocking: call from an IO dispatcher.
+     *
+     * The asset is cropped to the graph's output aspect and the Pre-pass delta is computed from the
+     * `1024px` source proxy, so the canvas and the eventual preview cache share the same numbers.
+     */
+    fun prepareSkyLayer(graph: EditGraph): SkyLayerPixels? {
+        val current = source ?: return null
+        if (graph.sky.isIdentity() || graph.sky.maskRef.isBlank()) return null
+        val sourceAspect = current.width.toFloat() / current.height.toFloat()
+        val aspect = GeometryMath.outputAspect(graph.geometry, sourceAspect)
+            .takeIf { it.isFinite() && it > 0.0f } ?: 1.0f
+        val (width, height) = if (aspect >= 1.0f) {
+            SKY_PREVIEW_MAX_EDGE_PX to (SKY_PREVIEW_MAX_EDGE_PX / aspect).roundToInt().coerceAtLeast(1)
+        } else {
+            (SKY_PREVIEW_MAX_EDGE_PX * aspect).roundToInt().coerceAtLeast(1) to SKY_PREVIEW_MAX_EDGE_PX
+        }
+        return SkyPreparer.prepare(current, graph, filesDir, width, height)
+    }
+
     /**
      * Decodes the Post-Pass A cloud layer of [graph] at a canvas-sized resolution.
      *
@@ -236,6 +266,7 @@ internal class EditorPreviewSession(
         originalSource = null
         source = null
         appliedInpaint = emptyList()
+        stagedSky = null
         renderer.setCompareSource(null)
         renderer.releaseSource()
     }
@@ -246,5 +277,8 @@ internal class EditorPreviewSession(
     private companion object {
         /** Long edge of the canvas cloud texture; any resolution samples correctly in Pass B. */
         const val CLOUD_PREVIEW_MAX_EDGE_PX = 2048
+
+        /** Long edge of the canvas sky crop; the mask keeps its own `1024px` resolution. */
+        const val SKY_PREVIEW_MAX_EDGE_PX = 1024
     }
 }
