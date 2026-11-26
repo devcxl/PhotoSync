@@ -33,12 +33,14 @@ import cn.devcxl.photosync.editor.contract.EditorHostRegistry
 import cn.devcxl.photosync.editor.domain.ActivePhotoEditRegistry
 import cn.devcxl.photosync.editor.domain.AiAssetStore
 import cn.devcxl.photosync.editor.domain.BuiltinPresets
+import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.EditGraphJsonCodec
 import cn.devcxl.photosync.editor.render.BackgroundPreviewRenderer
 import cn.devcxl.photosync.editor.render.RecentEditorSourceCache
 import cn.devcxl.photosync.editor.vision.DeviceMemoryTier
 import cn.devcxl.photosync.editor.render.ModnetTetheredSubjectPresetPreparer
 import cn.devcxl.photosync.editor.vision.OrtSessionManager
+import cn.devcxl.photosync.editor.vision.SubjectMask
 import cn.devcxl.photosync.editor.render.TetheredSubjectPresetPreparer
 import cn.devcxl.photosync.export.MediaStoreGallerySink
 import cn.devcxl.photosync.ptp.manager.UsbPtpConnectionController
@@ -134,9 +136,7 @@ class App : Application() {
         /** Preferences file the editor's `LiveTetherPreset` lives in. */
         const val EDITOR_PREFS_NAME = "photosync_editor_prefs"
 
-        fun get(): App {
-            return instance!!
-        }
+        fun get(): App = checkNotNull(instance) { "App.get() was called before Application.onCreate" }
     }
 
     override fun onCreate() {
@@ -273,28 +273,29 @@ class App : Application() {
             ),
             stagingDir = cacheDir,
             renderPreview = { sourcePath, isRaw, graph, outDir ->
-                BackgroundPreviewRenderer.renderToDir(
-                    context = this,
-                    filesDir = filesDir,
-                    outDir = outDir,
-                    sourcePath = sourcePath,
-                    isRaw = isRaw,
-                    graph = graph
-                )
+                renderTetheredPreview(sourcePath, isRaw, graph, outDir, subjectMask = null)
             },
             renderPreviewWithSubject = { sourcePath, isRaw, graph, subjectMask, outDir ->
-                BackgroundPreviewRenderer.renderToDir(
-                    context = this,
-                    filesDir = filesDir,
-                    outDir = outDir,
-                    sourcePath = sourcePath,
-                    isRaw = isRaw,
-                    graph = graph,
-                    subjectMaskOverride = subjectMask
-                )
+                renderTetheredPreview(sourcePath, isRaw, graph, outDir, subjectMask)
             },
             subjectPreparer = tetheredSubjectPreparer
         )
+
+    private suspend fun renderTetheredPreview(
+        sourcePath: String,
+        isRaw: Boolean,
+        graph: EditGraph,
+        outDir: File,
+        subjectMask: SubjectMask?
+    ): File? = BackgroundPreviewRenderer.renderToDir(
+        context = this,
+        filesDir = filesDir,
+        outDir = outDir,
+        sourcePath = sourcePath,
+        isRaw = isRaw,
+        graph = graph,
+        subjectMaskOverride = subjectMask
+    )
 
     private suspend fun seedPresets(editStore: RoomEditStore) {
         try {

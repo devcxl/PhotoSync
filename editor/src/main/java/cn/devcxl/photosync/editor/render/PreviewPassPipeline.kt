@@ -7,7 +7,6 @@ import cn.devcxl.photosync.editor.domain.CurveOps
 import cn.devcxl.photosync.editor.domain.Lut3dSamples
 import cn.devcxl.photosync.editor.domain.PassDEffectsMath
 import cn.devcxl.photosync.editor.domain.SpatialDetailPlanner
-import cn.devcxl.photosync.editor.domain.SubjectBokehMath
 import cn.devcxl.photosync.editor.domain.WarpDisplacementField
 
 /**
@@ -120,7 +119,7 @@ internal class PreviewPassPipeline {
 
     /** Uploaded refined subject alpha, or `0` when the subject stage has no mask. */
     val subjectWeightTextureId: Int
-        get() = subjectWeightTexture.textureId
+        get() = subjectWeightTexture.activeTextureId
 
     /** Stages the Post-Pass A cloud layer pixels, or `null` to unbind the layer. */
     fun stageCloudLayer(pixels: CloudLayerPixels?) = cloudTextures.stage(pixels)
@@ -321,7 +320,7 @@ internal class PreviewPassPipeline {
     }
 
     private fun subjectMaskTextureAvailable(): Boolean =
-        subjectWeightTexture.isActive && subjectWeightTexture.textureId != 0
+        subjectWeightTexture.isActive && subjectWeightTexture.activeTextureId != 0
 
     private fun subjectBokehParams(
         request: PreviewFrameRequest,
@@ -330,16 +329,13 @@ internal class PreviewPassPipeline {
     ): SubjectBokehDrawParams? {
         val state = request.state
         if (!state.subjectOps.hasBackgroundBlur() || !subjectMaskTextureAvailable()) return null
-        val radius = SubjectBokehMath.radiusPixels(
+        return SubjectBokehPlanner.params(
             blur = state.subjectOps.blur,
-            shortEdge = minOf(targetWidth, targetHeight)
-        )
-        if (radius <= 0) return null
-        return SubjectBokehDrawParams(
-            maskTextureId = subjectWeightTexture.textureId,
-            radiusPx = radius.toFloat(),
+            shortEdge = minOf(targetWidth, targetHeight),
+            maskTextureId = subjectWeightTexture.activeTextureId,
             localSpace = false,
             uvMatrix = state.subjectUvMatrix,
+            fullShortEdge = request.fullResolutionShortEdge,
             warpTextureId = if (state.subjectWarpActive) warpTexture.textureId else 0,
             warpScale = warpTexture.decodeScale,
             warpOffset = warpTexture.decodeOffset

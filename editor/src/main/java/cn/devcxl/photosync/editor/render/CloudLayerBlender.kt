@@ -8,113 +8,7 @@ import timber.log.Timber
 import cn.devcxl.photosync.editor.cloud.CloudGeometryDigest
 import cn.devcxl.photosync.editor.domain.AiAssetStore
 import cn.devcxl.photosync.editor.domain.CloudEditLayerRef
-import cn.devcxl.photosync.editor.domain.ExposureShaderMath
 import cn.devcxl.photosync.editor.domain.GeometryOps
-import cn.devcxl.photosync.editor.domain.LinearCloudLayer
-
-/** Why a [CloudEditLayerRef] was or was not blended into a frame. */
-enum class CloudBlendStatus {
-
-    /** Pixels were fused with the requested opacity and optional feathered mask. */
-    APPLIED,
-
-    /** The graph has no cloud layer. */
-    NO_LAYER,
-
-    /** The layer belongs to a different Pass A framing and must not be pasted. */
-    GEOMETRY_MISMATCH,
-
-    /** The layer exists but its opacity is zero, so the frame is already correct. */
-    OPACITY_ZERO,
-
-    /** The layer or its mask file is missing, truncated or fails its SHA-256 check. */
-    ASSET_INVALID
-}
-
-/**
- * Result of one cloud blend.
- *
- * @property status What happened.
- * @property blendedPixels Pixels whose coverage was greater than zero.
- */
-data class CloudBlendResult(
-    val status: CloudBlendStatus,
-    val blendedPixels: Long = 0L
-) {
-    /** True when the frame now contains the cloud layer. */
-    val isApplied: Boolean
-        get() = status == CloudBlendStatus.APPLIED
-
-    /** True when the geometry guard blocked the blend. */
-    val isGeometryMismatch: Boolean
-        get() = status == CloudBlendStatus.GEOMETRY_MISMATCH
-}
-
-/**
- * Decoded, frame-sized pixels of one cloud layer, ready for CPU blending or a GL upload.
- *
- * @property width Frame width the pixels were resampled to.
- * @property height Frame height the pixels were resampled to.
- * @property argb Straight `ARGB_8888` cloud pixels in row-major order.
- * @property coverage Optional blend coverage (`0..1`, row-major); `null` means the whole frame.
- * @property opacity Effective opacity in `0..1` after the `0..100` graph value was normalised.
- */
-class CloudLayerPixels(
-    val width: Int,
-    val height: Int,
-    val argb: IntArray,
-    val coverage: FloatArray?,
-    val opacity: Float
-) {
-
-    /**
-     * Converts these display-referred pixels into the scene-linear layer the 16-bit path grades.
-     *
-     * The PNG is sRGB, so every channel is decoded with the same transfer function the GL Pass B
-     * applies to a linear input; blending encoded values into a linear frame would darken the layer.
-     */
-    fun toLinear(): LinearCloudLayer {
-        val count = width * height
-        val rgb = FloatArray(count * LINEAR_CHANNELS)
-        for (index in 0 until count) {
-            val source = argb[index]
-            val target = index * LINEAR_CHANNELS
-            rgb[target] = ExposureShaderMath.decodeSrgb(Color.red(source) / RGB_MAX)
-            rgb[target + 1] = ExposureShaderMath.decodeSrgb(Color.green(source) / RGB_MAX)
-            rgb[target + 2] = ExposureShaderMath.decodeSrgb(Color.blue(source) / RGB_MAX)
-        }
-        return LinearCloudLayer(
-            width = width,
-            height = height,
-            linearRgb = rgb,
-            coverage = coverage,
-            opacity = opacity
-        )
-    }
-
-    private companion object {
-        const val LINEAR_CHANNELS = 3
-        const val RGB_MAX = 255.0f
-    }
-}
-
-/** Outcome of [CloudLayerBlender.prepare]. */
-sealed interface CloudLayerLoad {
-
-    /**
-     * Decoded pixels ready for blending or texture staging.
-     *
-     * @property pixels Frame-sized cloud pixels and their coverage.
-     */
-    class Ready(val pixels: CloudLayerPixels) : CloudLayerLoad
-
-    /**
-     * Nothing to apply; [status] explains why.
-     *
-     * @property status Why the layer was skipped.
-     */
-    class NotApplied(val status: CloudBlendStatus) : CloudLayerLoad
-}
 
 /**
  * CPU fusion of a `CloudEditLayer` into the Post-Pass A / Pre-Pass B frame.
@@ -128,11 +22,6 @@ sealed interface CloudLayerLoad {
  * Each call verifies the layer digest through [AiAssetStore] and the `geometryDigest` binding
  * through [CloudGeometryDigest]. A mismatch returns [CloudBlendStatus.GEOMETRY_MISMATCH] and leaves
  * the destination untouched, so a layer generated for one crop can never be pasted onto another.
- *
- * ## Formats
- * - [blendBitmap] and [blendArgb] work on display-referred `ARGB_8888` pixels.
- * - [blendRgbaFloat] works on straight RGBA floats in the same encoding as the destination, which
- *   the 16-bit preview paths use.
  *
  * All methods read files and decode bitmaps; call them off the main thread.
  */
@@ -180,42 +69,6 @@ class CloudLayerBlender(private val assetStore: AiAssetStore) {
     }
 
     /**
-     * Merges the layer into a straight `RGBA` float buffer in place.
-     *
-     * @param pixels `width * height * 4` floats. Only RGB is blended; alpha is left to the frame.
-     */
-    fun blendRgbaFloat(
-        pixels: FloatArray,
-        width: Int,
-        height: Int,
-        layer: CloudEditLayerRef?,
-        geometry: GeometryOps
-    ): CloudBlendResult {
-        require(width > 0 && height > 0) { "Frame dimensions must be positive" }
-        require(pixels.size == width * height * RGBA_CHANNELS) {
-            "Frame buffer does not match its size"
-        }
-        val loaded = prepare(layer, geometry, width, height)
-        if (loaded is CloudLayerLoad.NotApplied) return CloudBlendResult(loaded.status)
-        val cloud = (loaded as CloudLayerLoad.Ready).pixels
-        var blended = 0L
-        for (index in 0 until width * height) {
-            val factor = coverageAt(cloud, index)
-            if (factor <= 0.0f) continue
-            val target = index * RGBA_CHANNELS
-            val source = cloud.argb[index]
-            val inverse = 1.0f - factor
-            pixels[target] = pixels[target] * inverse + Color.red(source) / BYTE_MAX * factor
-            pixels[target + 1] =
-                pixels[target + 1] * inverse + Color.green(source) / BYTE_MAX * factor
-            pixels[target + 2] =
-                pixels[target + 2] * inverse + Color.blue(source) / BYTE_MAX * factor
-            blended++
-        }
-        return CloudBlendResult(CloudBlendStatus.APPLIED, blended)
-    }
-
-    /**
      * Decodes and resamples the layer for [width] x [height] without touching a destination frame.
      *
      * This is the texture-preparation seam: [CloudLayerTextures.stage] consumes the result.
@@ -250,15 +103,6 @@ class CloudLayerBlender(private val assetStore: AiAssetStore) {
             if (!bitmap.isRecycled) bitmap.recycle()
         }
     }
-
-    /**
-     * Converts prepared [pixels] into the scene-linear layer the CPU Pass B consumes.
-     *
-     * The PNG is display-referred sRGB, so every channel is decoded with the same transfer function
-     * the GL Pass B uses for a linear input; blending the encoded values directly into a linear frame
-     * would darken the layer by roughly two stops.
-     */
-    fun toLinear(pixels: CloudLayerPixels): LinearCloudLayer = pixels.toLinear()
 
     /**
      * Merges already prepared [pixels] into a packed `ARGB_8888` buffer in place.
@@ -371,8 +215,6 @@ class CloudLayerBlender(private val assetStore: AiAssetStore) {
         value.length == SHA256_HEX_LENGTH && value.all { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' }
 
     private companion object {
-        const val RGBA_CHANNELS = 4
-        const val LINEAR_CHANNELS = 3
         const val BYTE_MAX = 255.0f
         const val BYTE_MAX_INT = 255
         const val PERCENT_MAX = 100.0f

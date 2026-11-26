@@ -164,6 +164,31 @@ class SubjectBokehAndRelightTest {
     }
 
     @Test
+    fun shouldMatchTheBakeRadiusFraction_whenA60MegapixelPhotoIsPreviewed() {
+        val fullShortEdge = 6336
+        val previewShortEdge = 1024
+        val bakeRadius = SubjectBokehMath.effectiveRadiusPixels(
+            blur = 100,
+            fullShortEdge = fullShortEdge,
+            renderShortEdge = fullShortEdge
+        )
+        val previewRadius = SubjectBokehMath.effectiveRadiusPixels(
+            blur = 100,
+            fullShortEdge = fullShortEdge,
+            renderShortEdge = previewShortEdge
+        )
+
+        assertEquals(SubjectBokehMath.BAND_HALO_RADIUS_CAP_PX, bakeRadius)
+        val bakeFraction = bakeRadius.toFloat() / fullShortEdge
+        val previewFraction = previewRadius.toFloat() / previewShortEdge
+        assertTrue(
+            "preview and bake must use the same blur fraction",
+            kotlin.math.abs(bakeFraction - previewFraction) < 0.001f
+        )
+        assertTrue("the preview radius must stay inside the halo cap", previewRadius < bakeRadius)
+    }
+
+    @Test
     fun shouldAppendTheBokehStageLast_whenAMaskIsAvailable() {
         val params = SpatialDetailParams(subjectBlur = 0.4f)
 

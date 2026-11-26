@@ -6,7 +6,6 @@ import javax.microedition.khronos.opengles.GL10
 import android.opengl.GLES20
 import android.opengl.GLSurfaceView
 
-import cn.devcxl.photosync.editor.cloud.CloudGeometryDigest
 import cn.devcxl.photosync.editor.domain.ColorGradingParams
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.GeometryMath
@@ -260,49 +259,25 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
                 subjectUvMatrix = if (geometryActive) inverseMatrix else RenderFrameState.IDENTITY_MATRIX,
                 subjectWarpActive = pipeline.isSubjectCompositeAvailable && warpActive,
                 subjectOps = graph.subject,
-                cloudLayerOpacity = cloudLayerOpacity(graph)
+                cloudLayerOpacity = EditorRenderStateMath.cloudLayerOpacity(graph)
             )
             isPassCActive = !useFastProxy && !spatialParams.isZeroDrawCallShortCircuit
-            val prepassSig = prepassSignature(graph, warpActive, portraitFaceWarp, portraitBodyWarp)
+            val prepassSig = EditorRenderStateMath.prepassSignature(
+                graph,
+                warpActive,
+                portraitFaceWarp,
+                portraitBodyWarp
+            )
             if (prepassSig != lastPrepassInputSignature) {
                 lastPrepassInputSignature = prepassSig
                 pipeline.invalidatePrepass()
                 prepassRevision++
-            }        }
+            }
+        }
     }
 
-    private fun prepassSignature(
-        graph: EditGraph,
-        warpActive: Boolean,
-        faceWarp: FloatArray?,
-        bodyWarp: FloatArray?
-    ): Int {
-        var hash = graph.baseLook.hashCode()
-        hash = 31 * hash + graph.geometry.hashCode()
-        hash = 31 * hash + graph.tone.hashCode()
-        hash = 31 * hash + graph.color.copy(lut = null).hashCode()
-        hash = 31 * hash + graph.effects.ca.hashCode()
-        hash = 31 * hash + graph.subject.hashCode()
-        hash = 31 * hash + warpActive.hashCode()
-        hash = 31 * hash + (faceWarp?.contentHashCode() ?: 0)
-        hash = 31 * hash + (bodyWarp?.contentHashCode() ?: 0)
-        return hash
-    }
-
-    /**
-     * Effective opacity of the Post-Pass A cloud layer for [graph].
-     *
-     * Returns `0` whenever the layer may not be sampled: no layer, a `geometryDigest` that no longer
-     * matches the current framing (the user changed crop/rotate/perspective/liquify), or a fully
-     * transparent slider. A zero value closes the shader branch and the texture is never sampled.
-     */
-    private fun cloudLayerOpacity(graph: EditGraph): Float {
-        val layer = graph.cloudLayer ?: return 0.0f
-        if (!CloudGeometryDigest.matches(layer, graph.geometry)) return 0.0f
-        return layer.opacity.coerceIn(0, 100) / 100.0f
-    }
-
-    private fun applySourceMetadata(source: EditorSource?) {        if (source == null) return
+    private fun applySourceMetadata(source: EditorSource?) {
+        if (source == null) return
         imageWidth = source.width.coerceAtLeast(1)
         imageHeight = source.height.coerceAtLeast(1)
         linearInput = source.isLinear

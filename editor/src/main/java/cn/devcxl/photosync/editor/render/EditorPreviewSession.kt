@@ -8,7 +8,6 @@ import timber.log.Timber
 
 import kotlin.math.roundToInt
 
-import cn.devcxl.photosync.editor.contract.EditorCachePaths
 import cn.devcxl.photosync.editor.domain.AiAssetStore
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.GeometryMath
@@ -43,6 +42,7 @@ internal class EditorPreviewSession(
     var source: EditorSource? = null
         private set
 
+    private val cacheRenderer = PreviewCacheRenderer(cacheDir, photoId, lutStore, filesDir)
     private var originalSource: EditorSource? = null
     private var composedSource: EditorSource? = null
     private var appliedInpaint: List<InpaintPatchRef> = emptyList()
@@ -207,65 +207,7 @@ internal class EditorPreviewSession(
         skinMask: FloatArray? = null
     ): String? {
         val base = originalSource ?: return null
-        return renderPreview(base, graph, warpField, skinMask)
-    }
-
-    private fun renderPreview(
-        current: EditorSource,
-        graph: EditGraph,
-        warpField: WarpDisplacementField?,
-        skinMask: FloatArray?
-    ): String? {
-        val lut = loadLutFor(graph)
-        if (!PreviewGraphAssets.isComplete(graph, lut)) {
-            // Publishing without the LUT would commit a preview that shows a different look.
-            Timber.e("The referenced 3D LUT is unavailable; keeping the previous preview")
-            return null
-        }
-        // The cache renders from the untouched decode; both renderers compose the patches into a
-        // private copy, so a repeated save can never stack the same patch twice.
-        val inpaint = InpaintOverlay.of(filesDir, graph)
-        val subject = SubjectCompositeLoader.resolve(graph, current, filesDir, inpaint)
-        val accelerated = OffscreenPreviewRenderer.renderNow(
-            OffscreenPreviewRequest(
-                source = current,
-                graph = graph,
-                warpField = warpField,
-                skinMask = skinMask,
-                lut = lut,
-                outDir = File(cacheDir, EditorCachePaths.photoEditDirName(photoId)),
-                subject = subject,
-                inpaint = inpaint,
-                cloudAssets = AiAssetStore(filesDir)
-            )
-        )
-        if (accelerated != null) return accelerated.absolutePath
-        return when (current) {
-            is EditorSource.LinearRawSource -> PreviewCacheWriter.writePreviewCache(
-                source = current.full,
-                graph = graph,
-                cacheDir = cacheDir,
-                photoId = photoId,
-                warpField = warpField,
-                lut = lut,
-                skinMask = skinMask,
-                subject = subject,
-                inpaint = inpaint,
-                cloudAssets = AiAssetStore(filesDir)
-            )
-            is EditorSource.BitmapSource -> PreviewCacheWriter.writePreviewCache(
-                source = current.full,
-                graph = graph,
-                cacheDir = cacheDir,
-                photoId = photoId,
-                warpField = warpField,
-                lut = lut,
-                skinMask = skinMask,
-                subject = subject,
-                inpaint = inpaint,
-                cloudAssets = AiAssetStore(filesDir)
-            )
-        }
+        return cacheRenderer.render(base, graph, warpField, skinMask)
     }
 
     /**
@@ -300,11 +242,6 @@ internal class EditorPreviewSession(
 
     private fun resolveCachedLut(graph: EditGraph): Lut3dSamples? =
         graph.color.lut?.let { lutStore.cachedSamplesIf(it.id) }
-
-    private fun loadLutFor(graph: EditGraph): Lut3dSamples? {
-        val reference = graph.color.lut ?: return null
-        return lutStore.loadSamples(reference.id).getOrNull()
-    }
 
     private companion object {
         /** Long edge of the canvas cloud texture; any resolution samples correctly in Pass B. */

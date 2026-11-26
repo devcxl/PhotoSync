@@ -13,6 +13,8 @@
     <string name="editor_cloud_provider_hint">支持 OpenAI / Gemini / 自建 ComfyUI，结果落为可继续调色的中置图层。</string>
     <string name="editor_cloud_opacity_label">图层不透明</string>
     <string name="editor_cloud_opacity_value">%1$d%%</string>
+    <string name="editor_cloud_feather_label">蒙版羽化</string>
+    <string name="editor_cloud_feather_value">%1$d px</string>
     <string name="editor_cloud_remove_layer">移除云端层</string>
 
     <!-- First-run privacy and cost disclosure -->

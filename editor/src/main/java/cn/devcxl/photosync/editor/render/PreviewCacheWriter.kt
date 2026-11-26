@@ -442,7 +442,8 @@ internal object PreviewCacheWriter {
     /**
      * Builds the frame-aligned subject alpha when the graph needs it, or `null` for the neutral
      * zero-cost path.
-     */    private fun resolveSubjectWeight(
+     */
+    private fun resolveSubjectWeight(
         subject: SubjectComposite?,
         graph: EditGraph,
         width: Int,

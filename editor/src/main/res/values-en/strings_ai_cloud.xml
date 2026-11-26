@@ -13,6 +13,8 @@
     <string name="editor_cloud_provider_hint">Works with OpenAI / Gemini / self-hosted ComfyUI; results become a mid-pipeline layer you can keep colour grading.</string>
     <string name="editor_cloud_opacity_label">Layer opacity</string>
     <string name="editor_cloud_opacity_value">%1$d%%</string>
+    <string name="editor_cloud_feather_label">Mask feather</string>
+    <string name="editor_cloud_feather_value">%1$d px</string>
     <string name="editor_cloud_remove_layer">Remove cloud layer</string>
 
     <!-- First-run privacy and cost disclosure -->

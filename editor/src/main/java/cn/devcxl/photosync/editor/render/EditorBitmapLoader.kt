@@ -11,6 +11,7 @@ import android.graphics.Matrix
 import androidx.exifinterface.media.ExifInterface
 import timber.log.Timber
 
+import cn.devcxl.photosync.editor.cloud.UploadBitmapGeometry
 import cn.devcxl.photosync.editor.domain.GeometryMath
 import cn.devcxl.photosync.wrapper.RawWrapper
 
@@ -78,11 +79,11 @@ internal object EditorBitmapLoader {
         BitmapFactory.decodeFile(sourcePath, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
 
-        var sampleSize = 1
-        val maxDim = maxOf(bounds.outWidth, bounds.outHeight)
-        while (maxDim / (sampleSize * 2) >= EDITOR_PREVIEW_MAX_EDGE_PX) {
-            sampleSize *= 2
-        }
+        val sampleSize = UploadBitmapGeometry.previewSampleSize(
+            bounds.outWidth,
+            bounds.outHeight,
+            EDITOR_PREVIEW_MAX_EDGE_PX
+        )
         val opts = BitmapFactory.Options().apply {
             inSampleSize = sampleSize
             inPreferredConfig = Bitmap.Config.ARGB_8888

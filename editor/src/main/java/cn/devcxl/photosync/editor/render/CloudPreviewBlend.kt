@@ -74,8 +74,8 @@ internal object CloudPreviewBlend {
         width: Int,
         height: Int
     ): Boolean {
-        val prepared = prepare(assets, graph, width, height) ?: return false
-        val result = CloudLayerBlender(assets ?: return false).blendPrepared(pixels, width, height, prepared)
-        return result.isApplied
+        val store = assets ?: return false
+        val prepared = prepare(store, graph, width, height) ?: return false
+        return CloudLayerBlender(store).blendPrepared(pixels, width, height, prepared).isApplied
     }
 }

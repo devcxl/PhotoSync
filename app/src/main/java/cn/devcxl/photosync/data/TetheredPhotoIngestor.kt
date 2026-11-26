@@ -5,6 +5,8 @@ import java.io.IOException
 import java.util.UUID
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
 
 import cn.devcxl.photosync.data.entity.PhotoEntity
@@ -37,9 +39,10 @@ interface TetheredPhotoCommitter {
      * `edits/<photoId>/` path once Room has assigned the id.
      *
      * The implementation must move the mask into the content-addressed store, rewrite
-     * `subject.maskRef` in [graphJson] and insert that rewritten row in the same transaction. A
-     * failed mask write degrades to the traditional grade (the `subject` group is cleared) instead
-     * of dropping the photo.
+     * `subject.maskRef` in [graphJson] and insert that rewritten row in the same transaction. When
+     * the mask cannot be written the transaction must fail with [SubjectMaskUnavailableException]
+     * (the photo row rolls back) so the ingestor can retry with its traditional-grade preview
+     * instead of publishing an ungraded photo or a row it cannot reproduce.
      *
      * The default delegates to [commit], which is the correct behaviour for hosts without AI assets
      * (and for JVM test fakes that only record the graph).
@@ -94,6 +97,15 @@ class TetheredPhotoIngestor(
 ) {
 
     /**
+     * Serializes the whole `stage -> commit` pipeline.
+     *
+     * The listener fires from the USB reader thread and may overlap with the previous file's
+     * preview render. One ingest at a time keeps a second 45-60 MP decode, MODNet mask and OpenGL
+     * preview from stacking their peak memory next to a running one on a 4 GiB phone.
+     */
+    private val ingestMutex = Mutex()
+
+    /**
      * Handles one completed download.
      *
      * @param file The file the camera wrote into the download directory.
@@ -109,6 +121,14 @@ class TetheredPhotoIngestor(
         isJpeg: Boolean
     ): TetheredIngestResult {
         if (!isRaw && !isJpeg) return TetheredIngestResult.Ignored
+        return ingestMutex.withLock { ingest(file, objectHandle, isRaw) }
+    }
+
+    private suspend fun ingest(
+        file: File,
+        objectHandle: Int?,
+        isRaw: Boolean
+    ): TetheredIngestResult {
         val preset = resolveActivePreset()
         val prepared = preparePreset(file, isRaw, preset)
         val jobDir = File(stagingDir, "$STAGING_DIR_NAME/${UUID.randomUUID()}")
@@ -120,26 +140,60 @@ class TetheredPhotoIngestor(
                 uriString = null,
                 objectHandle = objectHandle
             )
-            val photoId = commitSafely(photo, staged)
-            if (photoId == null) {
-                staged?.preview?.delete()
-                return TetheredIngestResult.Ignored
-            }
-            if (photoId <= 0L) {
-                staged?.preview?.delete()
-                TetheredIngestResult.Duplicate
-            } else {
-                val hasEdit = staged?.graphJson != null
-                val result = TetheredIngestResult.Ingested(
-                    photoId = photoId,
-                    presetId = if (hasEdit) preset?.presetId else null,
-                    hasEdit = hasEdit
-                )
-                onIngested(result)
-                result
-            }
+            val photoId = commitStaged(photo, staged, file, isRaw, prepared, jobDir)
+            finishIngest(photoId, staged, preset)
         } finally {
             jobDir.deleteRecursively()
+        }
+    }
+
+    private fun finishIngest(
+        photoId: Long?,
+        staged: StagedPreview?,
+        preset: ActivePreset?
+    ): TetheredIngestResult {
+        if (photoId == null) {
+            staged?.preview?.delete()
+            return TetheredIngestResult.Ignored
+        }
+        if (photoId <= 0L) {
+            staged?.preview?.delete()
+            return TetheredIngestResult.Duplicate
+        }
+        val hasEdit = staged?.graphJson != null
+        val result = TetheredIngestResult.Ingested(
+            photoId = photoId,
+            presetId = if (hasEdit) preset?.presetId else null,
+            hasEdit = hasEdit
+        )
+        onIngested(result)
+        return result
+    }
+
+    /**
+     * Commits the staged row, falling back to the prepared traditional grade when the mask asset
+     * cannot be written.
+     *
+     * [RoomTetheredPhotoCommitter] throws [SubjectMaskUnavailableException] from inside the
+     * transaction, so the photo row never lands without its edit. The subject preview is deleted and
+     * a fresh preview of the degraded graph is staged before the retry.
+     */
+    private suspend fun commitStaged(
+        photo: PhotoEntity,
+        staged: StagedPreview?,
+        file: File,
+        isRaw: Boolean,
+        prepared: PreparedPreset?,
+        jobDir: File
+    ): Long? {
+        val current = staged ?: return commitSafely(photo, null)
+        if (current.subjectMaskPayload == null) return commitSafely(photo, current)
+        return try {
+            commitSafely(photo, current)
+        } catch (maskUnavailable: SubjectMaskUnavailableException) {
+            Timber.w(maskUnavailable, "LiveTetherPreset mask could not be stored; using the traditional grade")
+            current.preview?.delete()
+            commitSafely(photo, stageFallbackPreview(file, isRaw, prepared, jobDir))
         }
     }
 
@@ -259,7 +313,18 @@ class TetheredPhotoIngestor(
             }
             Timber.w("The subject preview failed; retrying with the traditional grade")
         }
-        val fallbackGraph = EditGraphJsonCodec.decode(prepared.fallbackGraphJson) ?: return null
+        return stageFallbackPreview(file, isRaw, prepared, outDir)
+    }
+
+    /** Renders the traditional-grade preview of [prepared] into [outDir]. */
+    private suspend fun stageFallbackPreview(
+        file: File,
+        isRaw: Boolean,
+        prepared: PreparedPreset?,
+        outDir: File
+    ): StagedPreview? {
+        val source = prepared ?: return null
+        val fallbackGraph = EditGraphJsonCodec.decode(source.fallbackGraphJson) ?: return null
         val fallback = renderSafely {
             renderPreview(file.absolutePath, isRaw, fallbackGraph, outDir)
         }
@@ -267,7 +332,7 @@ class TetheredPhotoIngestor(
             Timber.w("LiveTetherPreset preview could not be staged; importing ungraded")
             return null
         }
-        return StagedPreview(fallback, prepared.fallbackGraphJson, null)
+        return StagedPreview(fallback, source.fallbackGraphJson, null)
     }
 
     private suspend fun renderSafely(render: suspend () -> File?): File? = try {

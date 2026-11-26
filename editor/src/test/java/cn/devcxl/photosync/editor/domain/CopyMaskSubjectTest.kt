@@ -85,6 +85,17 @@ class CopyMaskSubjectTest {
     }
 
     @Test
+    fun shouldKeepTheSavedPresetJsonFreeOfTheSourceMaskRef() {
+        val json = EditGraphJsonCodec.encode(
+            PresetGraphMerger.extractPreset(EditGraph(subject = sourceSubject()))
+        )
+
+        assertTrue("the preset must persist a blank maskRef", json.contains("\"maskRef\":\"\""))
+        assertFalse("the source mask path must never reach the preset library", json.contains(sourceDigest))
+        assertEquals("", EditGraphJsonCodec.decode(json)?.subject?.maskRef)
+    }
+
+    @Test
     fun shouldApplyPresetParametersWithoutAMask_whenTheTargetIsPlain() {
         val preset = PresetGraphMerger.extractPreset(EditGraph(subject = sourceSubject()))
 

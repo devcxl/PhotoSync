@@ -5,6 +5,7 @@ import java.nio.ByteOrder
 
 import android.opengl.GLES20
 import android.opengl.GLES30
+import androidx.annotation.VisibleForTesting
 import timber.log.Timber
 
 /**
@@ -36,6 +37,15 @@ internal class SubjectWeightTexture {
     /** True when a mask is uploaded and should be sampled by the next Pass B/C draw. */
     val isActive: Boolean
         get() = textureId != 0 && width > 0 && height > 0
+
+    /**
+     * GL texture name a Pass B/C draw may sample, or `0` when the binding was cleared.
+     *
+     * A cleared binding keeps the GL name for reuse, so every consumer must use this value instead
+     * of [textureId] to make sure a stale alpha is never sampled after the mask was removed.
+     */
+    val activeTextureId: Int
+        get() = if (isActive) textureId else 0
 
     @Volatile
     private var stagedAlpha: FloatArray? = null
@@ -109,6 +119,19 @@ internal class SubjectWeightTexture {
     private fun clearBinding() {
         width = 0
         height = 0
+    }
+
+    /**
+     * Records an uploaded GL name without a context.
+     *
+     * Only unit tests use this: the JVM has no EGL context, but unbinding after a staged `null`
+     * must still be provable.
+     */
+    @VisibleForTesting
+    internal fun bindForTest(textureName: Int, texelWidth: Int, texelHeight: Int) {
+        textureId = textureName
+        width = texelWidth
+        height = texelHeight
     }
 
     private fun upload(alpha: FloatArray, texelWidth: Int, texelHeight: Int): Boolean {

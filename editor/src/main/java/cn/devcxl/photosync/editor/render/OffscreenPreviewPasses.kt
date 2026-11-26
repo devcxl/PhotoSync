@@ -291,7 +291,13 @@ internal class OffscreenPreviewPasses : AutoCloseable {
             skinMaskTextureId = if (skinMaskTexture.isActive) skinMaskTexture.textureId else 0,
             atmosphericLight = atmosphericLight,
             guideTransform = TileUvTransform.IDENTITY,
-            subjectBokeh = subjectBokehParams(graph, width, height, subjectUvMatrix)
+            subjectBokeh = subjectBokehParams(
+                graph = graph,
+                width = width,
+                height = height,
+                fullResolutionShortEdge = fullResolutionShortEdge,
+                subjectUvMatrix = subjectUvMatrix
+            )
         )
         // The chain returns its input when nothing ran and an *intermediate* texture when a later
         // ping-pong target failed, so comparing against the input is not enough. Counting the draws
@@ -423,11 +429,7 @@ internal class OffscreenPreviewPasses : AutoCloseable {
                 ditherAmp = if (target.isHalfFloatTarget) 0.0f else PassDEffectsMath.DITHER_AMPLITUDE,
                 flipVerticalForScreen = false,
                 subject = graph.subject,
-                subjectWeightTextureId = if (subjectWeightTexture.isActive) {
-                    subjectWeightTexture.textureId
-                } else {
-                    0
-                },
+                subjectWeightTextureId = subjectWeightTexture.activeTextureId,
                 subjectLocalSpace = false,
                 subjectUvMatrix = subjectUvMatrix,
                 subjectWarpTextureId = if (warpTexture.isWarpActive) warpTexture.textureId else 0,
@@ -446,13 +448,15 @@ internal class OffscreenPreviewPasses : AutoCloseable {
         graph: EditGraph,
         width: Int,
         height: Int,
+        fullResolutionShortEdge: Int,
         subjectUvMatrix: FloatArray
     ): SubjectBokehDrawParams? = SubjectBokehPlanner.params(
         blur = graph.subject.blur,
         shortEdge = minOf(width, height),
-        maskTextureId = if (subjectWeightTexture.isActive) subjectWeightTexture.textureId else 0,
+        maskTextureId = subjectWeightTexture.activeTextureId,
         localSpace = false,
         uvMatrix = subjectUvMatrix,
+        fullShortEdge = fullResolutionShortEdge,
         warpTextureId = if (warpTexture.isWarpActive) warpTexture.textureId else 0,
         warpScale = warpTexture.decodeScale,
         warpOffset = warpTexture.decodeOffset

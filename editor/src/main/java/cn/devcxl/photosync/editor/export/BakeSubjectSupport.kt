@@ -157,7 +157,8 @@ internal class BakeSubjectSupport(
         }
     }
 
-    private fun mapBandAlpha(width: Int, height: Int, band: ColumnBand): FloatArray {        val alpha = FloatArray(width * height)
+    private fun mapBandAlpha(width: Int, height: Int, band: ColumnBand): FloatArray {
+        val alpha = FloatArray(width * height)
         for (row in 0 until height) {
             val localV = (row + 0.5f) / height
             val globalV = band.tileUv.mapV(localV)

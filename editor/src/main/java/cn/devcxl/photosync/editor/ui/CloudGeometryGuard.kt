@@ -43,7 +43,9 @@ internal class CloudGeometryGuard(
         val current = undoController.currentGraph
         val layer = current.cloudLayer ?: return true
         if (target.geometry == current.geometry) return true
-        if (CloudGeometryDigest.matches(layer, target.geometry)) return true
+        // The dial may have moved away and back again within one sheet: compare the new framing's
+        // digest with the layer binding so returning to the original crop never re-opens the guard.
+        if (!CloudGeometryDigest.isMismatch(layer, target.geometry)) return true
         // A continuous dial drag fires one write per step; the sheet must open exactly once.
         if (pending) {
             // A further stroke or dial step while the sheet is open: remember its framing so the
@@ -57,9 +59,21 @@ internal class CloudGeometryGuard(
         pendingKey = parameterKey
         host().showGeometryConflictDialog(
             onRemoveLayer = { resolve() },
-            onCancel = { clearPending() }
+            onCancel = { cancel() }
         )
         return false
+    }
+
+    /**
+     * Abandons the pending framing change and repaints the editor from the unchanged graph.
+     *
+     * The slider already produced a transient canvas preview, so the host must be told to restore
+     * the panel and canvas to [EditorUndoController.currentGraph]; the next geometry write then
+     * opens the sheet again instead of silently bypassing the guard.
+     */
+    private fun cancel() {
+        clearPending()
+        host().onGeometryChangeDiscarded(undoController.currentGraph)
     }
 
     private fun resolve() {

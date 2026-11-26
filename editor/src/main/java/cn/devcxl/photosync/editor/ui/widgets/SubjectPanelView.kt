@@ -146,77 +146,56 @@ internal class SubjectPanelView @JvmOverloads constructor(
     }
 
     private fun buildDials() {
-        addDial(
+        dialSpecs().forEach { spec -> addDial(spec) }
+    }
+
+    /** The seven effect dials; a table keeps each slider's wiring identical and reviewable. */
+    private fun dialSpecs(): List<DialSpec> = listOf(
+        DialSpec(
             labelRes = R.string.editor_subject_blur,
-            min = 0.0f,
-            max = 100.0f,
-            signed = false,
+            unsigned = true,
             read = { it.blur },
             write = { subject, value -> subject.copy(blur = value) }
-        )
-        addDial(
+        ),
+        DialSpec(
             labelRes = R.string.editor_subject_fg_exposure,
-            min = -100.0f,
-            max = 100.0f,
-            signed = true,
             read = { it.fgExposure },
             write = { subject, value -> subject.copy(fgExposure = value) }
-        )
-        addDial(
+        ),
+        DialSpec(
             labelRes = R.string.editor_subject_fg_temp,
-            min = -100.0f,
-            max = 100.0f,
-            signed = true,
             read = { it.fgTemp },
             write = { subject, value -> subject.copy(fgTemp = value) }
-        )
-        addDial(
+        ),
+        DialSpec(
             labelRes = R.string.editor_subject_fg_sat,
-            min = -100.0f,
-            max = 100.0f,
-            signed = true,
             read = { it.fgSat },
             write = { subject, value -> subject.copy(fgSat = value) }
-        )
-        addDial(
+        ),
+        DialSpec(
             labelRes = R.string.editor_subject_bg_exposure,
-            min = -100.0f,
-            max = 100.0f,
-            signed = true,
             read = { it.bgExposure },
             write = { subject, value -> subject.copy(bgExposure = value) }
-        )
-        addDial(
+        ),
+        DialSpec(
             labelRes = R.string.editor_subject_bg_temp,
-            min = -100.0f,
-            max = 100.0f,
-            signed = true,
             read = { it.bgTemp },
             write = { subject, value -> subject.copy(bgTemp = value) }
-        )
-        addDial(
+        ),
+        DialSpec(
             labelRes = R.string.editor_subject_bg_sat,
-            min = -100.0f,
-            max = 100.0f,
-            signed = true,
             read = { it.bgSat },
             write = { subject, value -> subject.copy(bgSat = value) }
         )
-    }
+    )
 
-    private fun addDial(
-        labelRes: Int,
-        min: Float,
-        max: Float,
-        signed: Boolean,
-        read: (SubjectOps) -> Int,
-        write: (SubjectOps, Int) -> SubjectOps
-    ) {
+    private fun addDial(spec: DialSpec) {
+        val signed = !spec.unsigned
         val row = LabeledDialRow.create(
             context = context,
-            labelRes = labelRes,
-            min = min,
-            max = max,
+            labelRes = spec.labelRes,
+            min = if (signed) -100.0f else 0.0f,
+            max = 100.0f,
             zeroSnap = if (signed) ZERO_SNAP else 0.0f,
             formatRes = if (signed) {
                 R.string.editor_value_signed_fmt
@@ -224,12 +203,12 @@ internal class SubjectPanelView @JvmOverloads constructor(
                 R.string.editor_value_unsigned_fmt
             },
             onChanged = { value ->
-                selectedSubject = write(selectedSubject, value)
+                selectedSubject = spec.write(selectedSubject, value)
                 gradingListener?.onSubjectAdjusted(selectedSubject)
             },
             onStopTracking = { gradingListener?.onSubjectAdjustmentStopped() }
         )
-        dials += DialBinding(row, read)
+        dials += DialBinding(row, spec.read)
         dialContainer.addView(row.rowView)
     }
 
@@ -253,6 +232,14 @@ internal class SubjectPanelView @JvmOverloads constructor(
             )
         }
     }
+
+    /** One dial row: its label, whether it is signed, and how it reads/writes [SubjectOps]. */
+    private data class DialSpec(
+        val labelRes: Int,
+        val unsigned: Boolean = false,
+        val read: (SubjectOps) -> Int,
+        val write: (SubjectOps, Int) -> SubjectOps
+    )
 
     private data class DialBinding(
         val row: LabeledDialRow,

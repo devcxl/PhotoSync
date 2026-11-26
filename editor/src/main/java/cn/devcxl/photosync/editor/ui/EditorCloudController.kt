@@ -17,12 +17,9 @@ import cn.devcxl.photosync.editor.cloud.CloudEditExecutor
 import cn.devcxl.photosync.editor.cloud.CloudEditInputIssue
 import cn.devcxl.photosync.editor.cloud.CloudEditMode
 import cn.devcxl.photosync.editor.cloud.CloudEditOutcome
-import cn.devcxl.photosync.editor.cloud.CloudEditProvider
 import cn.devcxl.photosync.editor.cloud.CloudGeometryDigest
 import cn.devcxl.photosync.editor.cloud.CloudJobStage
 import cn.devcxl.photosync.editor.cloud.CloudMaskMode
-import cn.devcxl.photosync.editor.cloud.CloudProviderKind
-import cn.devcxl.photosync.editor.cloud.CloudProviderProfile
 import cn.devcxl.photosync.editor.cloud.CloudProviderSource
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.EditParameterKey
@@ -65,11 +62,17 @@ internal class EditorCloudController(
 
     private var mode = CloudEditMode.WHOLE_IMAGE
     private var prompt = ""
+    private var featherPx = CloudEditCommand.DEFAULT_FEATHER_PX.toInt()
     private var job: Job? = null
     private val geometryGuard = CloudGeometryGuard(
         undoController = undoController,
         host = { host },
         commit = ::commit
+    )
+    private val commandFactory = CloudEditCommandFactory(
+        host = host,
+        graphProvider = { undoController.currentGraph },
+        providers = providers
     )
 
     /** Installs the non-destructive Pass A geometry guard on [controller]. */
@@ -111,7 +114,7 @@ internal class EditorCloudController(
             refresh()
             return
         }
-        if (mode != CloudEditMode.WHOLE_IMAGE && activeMaskMode() == CloudMaskMode.NONE) {
+        if (mode != CloudEditMode.WHOLE_IMAGE && commandFactory.maskMode() == CloudMaskMode.NONE) {
             host.showToast(R.string.editor_cloud_mask_unsupported)
             return
         }
@@ -121,6 +124,11 @@ internal class EditorCloudController(
 
     override fun onCloudPromptChanged(text: String) {
         prompt = text
+    }
+
+    override fun onCloudFeatherChanged(featherPx: Int) {
+        this.featherPx = featherPx.coerceIn(0, MAX_FEATHER_PX)
+        refresh()
     }
 
     override fun onCloudGenerateClicked() {
@@ -165,7 +173,9 @@ internal class EditorCloudController(
             host.showProgress(R.string.editor_cloud_progress_preparing, 0)
             // The Post-Pass A frame is decoded and rasterized here, off the UI thread; building the
             // command must never block the drawer.
-            val command = withContext(frameDispatcher) { buildCommand() }
+            val command = withContext(frameDispatcher) {
+                commandFactory.build(mode, prompt, featherPx.toFloat())
+            }
             if (command == null) {
                 host.hideProgress()
                 return@launch
@@ -185,59 +195,6 @@ internal class EditorCloudController(
                 host.hideProgress()
             }
             handleOutcome(outcome)
-        }
-    }
-
-    private fun buildCommand(): CloudEditCommand? {
-        val source = host.currentPostPassABitmap()?.takeIf { !it.isRecycled }
-        if (source == null || source.width <= 0 || source.height <= 0) {
-            host.showToast(R.string.editor_cloud_source_unavailable)
-            return null
-        }
-        val graph = undoController.currentGraph
-        return when (mode) {
-            CloudEditMode.WHOLE_IMAGE -> CloudEditCommand(
-                mode = mode,
-                prompt = prompt,
-                geometry = graph.geometry,
-                source = source
-            )
-            CloudEditMode.PAINTED_MASK -> {
-                if (activeMaskMode() == CloudMaskMode.NONE) {
-                    host.showToast(R.string.editor_cloud_mask_unsupported)
-                    return null
-                }
-                val mask = host.paintedMaskBitmap()?.takeIf { !it.isRecycled }
-                if (mask == null) {
-                    host.showToast(R.string.editor_cloud_painted_mask_missing)
-                    return null
-                }
-                CloudEditCommand(
-                    mode = mode,
-                    prompt = prompt,
-                    geometry = graph.geometry,
-                    source = source,
-                    paintedMask = mask
-                )
-            }
-            CloudEditMode.SUBJECT_BACKGROUND -> {
-                if (activeMaskMode() == CloudMaskMode.NONE) {
-                    host.showToast(R.string.editor_cloud_mask_unsupported)
-                    return null
-                }
-                val subject = host.subjectMask()
-                if (subject == null) {
-                    host.showToast(R.string.editor_cloud_subject_mask_missing)
-                    return null
-                }
-                CloudEditCommand(
-                    mode = mode,
-                    prompt = prompt,
-                    geometry = graph.geometry,
-                    source = source,
-                    subjectMask = subject
-                )
-            }
         }
     }
 
@@ -282,24 +239,12 @@ internal class EditorCloudController(
             prompt = prompt,
             hasLayer = layer != null,
             opacity = layer?.opacity ?: 100,
+            featherPx = featherPx,
+            supportsMask = mode != CloudEditMode.WHOLE_IMAGE &&
+                commandFactory.maskMode() != CloudMaskMode.NONE,
             softMaskWarning = mode != CloudEditMode.WHOLE_IMAGE &&
-                activeMaskMode() == CloudMaskMode.SOFT
+                commandFactory.maskMode() == CloudMaskMode.SOFT
         )
-    }
-
-    /**
-     * Advisory mask capability of the selected profile, used for chip availability and the Gemini
-     * warning. The authoritative contract remains [CloudEditProvider.capabilities] inside the service.
-     */
-    private fun activeMaskMode(): CloudMaskMode {
-        val profile: CloudProviderProfile = providers.activeProfile() ?: return CloudMaskMode.NONE
-        return when (profile.kind) {
-            CloudProviderKind.GEMINI -> CloudMaskMode.SOFT
-            CloudProviderKind.OPENAI_COMPATIBLE -> CloudMaskMode.HARD
-            CloudProviderKind.COMFY_UI -> {
-                if (profile.maskNodeId.isNotBlank()) CloudMaskMode.HARD else CloudMaskMode.NONE
-            }
-        }
     }
 
     private fun labelFor(stage: CloudJobStage): Int = when (stage) {
@@ -321,5 +266,10 @@ internal class EditorCloudController(
         CloudEditInputIssue.MISSING_SUBJECT_MASK -> R.string.editor_cloud_subject_mask_missing
         CloudEditInputIssue.BLANK_PROMPT -> R.string.editor_cloud_prompt_required
         CloudEditInputIssue.MASK_NOT_SUPPORTED -> R.string.editor_cloud_mask_unsupported
+    }
+
+    private companion object {
+        /** UI bound of the local blend-mask feather, in upload pixels. */
+        const val MAX_FEATHER_PX = 32
     }
 }

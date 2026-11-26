@@ -136,19 +136,7 @@ class CloudEditService internal constructor(
             } else {
                 command.featherPx.takeIf { it.isFinite() && it > 0.0f } ?: 0.0f
             }
-            mask = when (command.mode) {
-                CloudEditMode.WHOLE_IMAGE -> null
-                CloudEditMode.PAINTED_MASK -> writeEditableMask(
-                    command.paintedMask ?: throw CloudSanitizationException("Missing painted mask"),
-                    image.width,
-                    image.height
-                )
-                CloudEditMode.SUBJECT_BACKGROUND -> writeSubjectMask(
-                    command.subjectMask ?: throw CloudSanitizationException("Missing subject mask"),
-                    image.width,
-                    image.height
-                )
-            }
+            mask = createProviderMask(command, image.width, image.height)
             val blendMask = buildBlendMask(command, image.width, image.height, featherPx)
             if (mask != null && blendMask == null) {
                 throw CloudSanitizationException("Blend mask encoding failed")
@@ -175,6 +163,24 @@ class CloudEditService internal constructor(
         }
     }
 
+    private fun createProviderMask(
+        command: CloudEditCommand,
+        width: Int,
+        height: Int
+    ): CloudUploadHandle? = when (command.mode) {
+        CloudEditMode.WHOLE_IMAGE -> null
+        CloudEditMode.PAINTED_MASK -> writeEditableMask(
+            command.paintedMask ?: throw CloudSanitizationException("Missing painted mask"),
+            width,
+            height
+        )
+        CloudEditMode.SUBJECT_BACKGROUND -> writeSubjectMask(
+            command.subjectMask ?: throw CloudSanitizationException("Missing subject mask"),
+            width,
+            height
+        )
+    }
+
     private fun buildBlendMask(
         command: CloudEditCommand,
         width: Int,
@@ -196,7 +202,7 @@ class CloudEditService internal constructor(
 
     private fun writeEditableMask(mask: Bitmap, width: Int, height: Int): CloudUploadHandle {
         val file = File(maskDirectory, "cloud_mask_${UUID.randomUUID()}.png")
-        uploads.writeEditableMaskPng(mask, width, height, file)
+        CloudMaskPngEncoder.writePng(mask, width, height, file)
         return CloudUploadHandle(file, width, height)
     }
 

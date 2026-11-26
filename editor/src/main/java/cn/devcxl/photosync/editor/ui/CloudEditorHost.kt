@@ -53,6 +53,15 @@ internal interface EditorCloudHost {
     /** The graph changed and preview/cache/bake consumers must refresh. */
     fun onGraphCommitted(graph: EditGraph)
 
+    /**
+     * Restores panel and canvas to [graph] after a rejected transient geometry change.
+     *
+     * The geometry guard rejected the write, so no undo step exists; the host only has to repaint
+     * whatever transient value the dial pushed before the sheet opened. Hosts without a canvas
+     * keep the default no-op.
+     */
+    fun onGeometryChangeDiscarded(graph: EditGraph) = Unit
+
     /** Live layer preview that must not create an undo step yet. */
     fun onCloudLayerPreviewChanged(layer: CloudEditLayerRef?)
 }

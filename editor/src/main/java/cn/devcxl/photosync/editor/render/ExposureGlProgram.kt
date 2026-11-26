@@ -70,59 +70,8 @@ internal class ExposureGlProgram {
     private var programId: Int = 0
     private var aPositionLoc: Int = -1
     private var aTexCoordLoc: Int = -1
-    private var uTextureLoc: Int = -1
-    private var uCompareOriginalLoc: Int = -1
-    private var uScaleLoc: Int = -1
-    private var uOffsetLoc: Int = -1
-    private var uIsLinearInputLoc: Int = -1
-    private var uBaseLookLoc: Int = -1
-    private var uAutoBrightGainLoc: Int = -1
-    private var uToneActiveLoc: Int = -1
-    private var uHasWbLoc: Int = -1
-    private var uWbLoc: Int = -1
-    private var uExposureEvLoc: Int = -1
-    private var uBrightnessLoc: Int = -1
-    private var uContrastLoc: Int = -1
-    private var uGlowLoc: Int = -1
-    private var uHighlightsLoc: Int = -1
-    private var uShadowsLoc: Int = -1
-    private var uWhitesLoc: Int = -1
-    private var uBlacksLoc: Int = -1
 
-    private var uCurveLutLoc: Int = -1
-    private var uTexelSizeLoc: Int = -1
-    private var uPassB2ActiveLoc: Int = -1
-    private var uColorActiveLoc: Int = -1
-    private var uCurveActiveLoc: Int = -1
-    private var uSaturationLoc: Int = -1
-    private var uVibranceLoc: Int = -1
-    private var uFadeLoc: Int = -1
-    private var uDefringeLoc: Int = -1
-    private var uHslActiveLoc: Int = -1
-    private var uHslBandsLoc: Int = -1
-    private var uSplitActiveLoc: Int = -1
-    private var uSplitHiAbLoc: Int = -1
-    private var uSplitShAbLoc: Int = -1
-    private var uSplitBalanceLoc: Int = -1
-    private var uDitherAmpLoc: Int = -1
-    private var uSubjectMaskLoc: Int = -1
-    private var uSubjectGradeActiveLoc: Int = -1
-    private var uSubjectLocalLoc: Int = -1
-    private var uSubjectWarpLoc: Int = -1
-    private var uHasSubjectWarpLoc: Int = -1
-    private var uSubjectUvMatrixLoc: Int = -1
-    private var uSubjectWarpScaleLoc: Int = -1
-    private var uSubjectWarpOffsetLoc: Int = -1
-    private var uSubjectFgGradeLoc: Int = -1
-    private var uSubjectBgGradeLoc: Int = -1
-    private var uCloudLayerLoc: Int = -1
-    private var uCloudMaskLoc: Int = -1
-    private var uCloudActiveLoc: Int = -1
-    private var uCloudHasMaskLoc: Int = -1
-    private var uCloudOpacityLoc: Int = -1
-    private var uCloudUvScaleLoc: Int = -1
-    private var uCloudUvOffsetLoc: Int = -1
-
+    private val uniforms = ExposureUniformLocations()
     private val quad = QuadMesh()
 
     /**
@@ -173,8 +122,7 @@ internal class ExposureGlProgram {
             Timber.e("Failed to compile even Tier 3 minimal fallback shader")
             return
         }
-        resolveBaseAndToneLocations()
-        resolveColorLocations()
+        uniforms.resolve(programId)
     }
 
     fun draw(params: ExposureDrawParams) {
@@ -183,17 +131,17 @@ internal class ExposureGlProgram {
 
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, params.textureId)
-        GLES20.glUniform1i(uTextureLoc, 0)
-        GLES20.glUniform1i(uCompareOriginalLoc, if (params.compareOriginal) 1 else 0)
-        GLES20.glUniform2f(uScaleLoc, params.scaleX, params.scaleY)
-        GLES20.glUniform2f(uOffsetLoc, params.offsetX, params.offsetY)
-        GLES20.glUniform1i(uIsLinearInputLoc, if (params.isLinearInput) 1 else 0)
+        GLES20.glUniform1i(uniforms.uTextureLoc, 0)
+        GLES20.glUniform1i(uniforms.uCompareOriginalLoc, if (params.compareOriginal) 1 else 0)
+        GLES20.glUniform2f(uniforms.uScaleLoc, params.scaleX, params.scaleY)
+        GLES20.glUniform2f(uniforms.uOffsetLoc, params.offsetX, params.offsetY)
+        GLES20.glUniform1i(uniforms.uIsLinearInputLoc, if (params.isLinearInput) 1 else 0)
         GLES20.glUniform1i(
-            uBaseLookLoc,
+            uniforms.uBaseLookLoc,
             if (params.baseLook == BaseLook.CAMERA_DEFAULT) 1 else 0
         )
-        GLES20.glUniform1f(uAutoBrightGainLoc, params.autoBrightGain)
-        GLES20.glUniform1f(uDitherAmpLoc, params.ditherAmp)
+        GLES20.glUniform1f(uniforms.uAutoBrightGainLoc, params.autoBrightGain)
+        GLES20.glUniform1f(uniforms.uDitherAmpLoc, params.ditherAmp)
         applyToneUniforms(params)
         applyColorUniforms(params)
         applySubjectUniforms(params)
@@ -215,65 +163,6 @@ internal class ExposureGlProgram {
         }
     }
 
-    private fun resolveBaseAndToneLocations() {
-        aPositionLoc = GLES20.glGetAttribLocation(programId, "aPosition")
-        aTexCoordLoc = GLES20.glGetAttribLocation(programId, "aTexCoord")
-        uTextureLoc = GLES20.glGetUniformLocation(programId, "uTex0")
-        uCompareOriginalLoc = GLES20.glGetUniformLocation(programId, "uCompareOriginal")
-        uScaleLoc = GLES20.glGetUniformLocation(programId, "uScale")
-        uOffsetLoc = GLES20.glGetUniformLocation(programId, "uOffset")
-        uIsLinearInputLoc = GLES20.glGetUniformLocation(programId, "uIsLinearInput")
-        uBaseLookLoc = GLES20.glGetUniformLocation(programId, "uBaseLook")
-        uAutoBrightGainLoc = GLES20.glGetUniformLocation(programId, "uAutoBrightGain")
-        uToneActiveLoc = GLES20.glGetUniformLocation(programId, "uToneActive")
-        uHasWbLoc = GLES20.glGetUniformLocation(programId, "uHasWb")
-        uWbLoc = GLES20.glGetUniformLocation(programId, "uWb")
-        uExposureEvLoc = GLES20.glGetUniformLocation(programId, "uExposureEv")
-        uBrightnessLoc = GLES20.glGetUniformLocation(programId, "uBrightness")
-        uContrastLoc = GLES20.glGetUniformLocation(programId, "uContrast")
-        uGlowLoc = GLES20.glGetUniformLocation(programId, "uGlow")
-        uHighlightsLoc = GLES20.glGetUniformLocation(programId, "uHighlights")
-        uShadowsLoc = GLES20.glGetUniformLocation(programId, "uShadows")
-        uWhitesLoc = GLES20.glGetUniformLocation(programId, "uWhites")
-        uBlacksLoc = GLES20.glGetUniformLocation(programId, "uBlacks")
-        uDitherAmpLoc = GLES20.glGetUniformLocation(programId, "uDitherAmp")
-    }
-
-    private fun resolveColorLocations() {
-        uCurveLutLoc = GLES20.glGetUniformLocation(programId, "uCurveLut")
-        uTexelSizeLoc = GLES20.glGetUniformLocation(programId, "uTexelSize")
-        uPassB2ActiveLoc = GLES20.glGetUniformLocation(programId, "uPassB2Active")
-        uColorActiveLoc = GLES20.glGetUniformLocation(programId, "uColorActive")
-        uCurveActiveLoc = GLES20.glGetUniformLocation(programId, "uCurveActive")
-        uSaturationLoc = GLES20.glGetUniformLocation(programId, "uSaturation")
-        uVibranceLoc = GLES20.glGetUniformLocation(programId, "uVibrance")
-        uFadeLoc = GLES20.glGetUniformLocation(programId, "uFade")
-        uDefringeLoc = GLES20.glGetUniformLocation(programId, "uDefringe")
-        uHslActiveLoc = GLES20.glGetUniformLocation(programId, "uHslActive")
-        uHslBandsLoc = GLES20.glGetUniformLocation(programId, "uHslBands")
-        uSplitActiveLoc = GLES20.glGetUniformLocation(programId, "uSplitActive")
-        uSplitHiAbLoc = GLES20.glGetUniformLocation(programId, "uSplitHiAb")
-        uSplitShAbLoc = GLES20.glGetUniformLocation(programId, "uSplitShAb")
-        uSplitBalanceLoc = GLES20.glGetUniformLocation(programId, "uSplitBalance")
-        uSubjectMaskLoc = GLES20.glGetUniformLocation(programId, "uSubjectMaskTex")
-        uSubjectGradeActiveLoc = GLES20.glGetUniformLocation(programId, "uSubjectGradeActive")
-        uSubjectLocalLoc = GLES20.glGetUniformLocation(programId, "uSubjectLocal")
-        uSubjectWarpLoc = GLES20.glGetUniformLocation(programId, "uSubjectWarpTex")
-        uHasSubjectWarpLoc = GLES20.glGetUniformLocation(programId, "uHasSubjectWarpTex")
-        uSubjectUvMatrixLoc = GLES20.glGetUniformLocation(programId, "uSubjectUvMatrix")
-        uSubjectWarpScaleLoc = GLES20.glGetUniformLocation(programId, "uSubjectWarpScale")
-        uSubjectWarpOffsetLoc = GLES20.glGetUniformLocation(programId, "uSubjectWarpOffset")
-        uSubjectFgGradeLoc = GLES20.glGetUniformLocation(programId, "uSubjectFgGrade")
-        uSubjectBgGradeLoc = GLES20.glGetUniformLocation(programId, "uSubjectBgGrade")
-        uCloudLayerLoc = GLES20.glGetUniformLocation(programId, "uCloudLayerTex")
-        uCloudMaskLoc = GLES20.glGetUniformLocation(programId, "uCloudMaskTex")
-        uCloudActiveLoc = GLES20.glGetUniformLocation(programId, "uCloudActive")
-        uCloudHasMaskLoc = GLES20.glGetUniformLocation(programId, "uCloudHasMask")
-        uCloudOpacityLoc = GLES20.glGetUniformLocation(programId, "uCloudOpacity")
-        uCloudUvScaleLoc = GLES20.glGetUniformLocation(programId, "uCloudUvScale")
-        uCloudUvOffsetLoc = GLES20.glGetUniformLocation(programId, "uCloudUvOffset")
-    }
-
     /**
      * Binds the Post-Pass A cloud layer, or closes the shader branch completely.
      *
@@ -284,24 +173,24 @@ internal class ExposureGlProgram {
         val active = params.cloudLayerTextureId != 0 &&
             params.cloudOpacity > 0.0f &&
             !params.compareOriginal
-        GLES20.glUniform1i(uCloudActiveLoc, if (active) 1 else 0)
-        GLES20.glUniform1f(uCloudOpacityLoc, params.cloudOpacity.coerceIn(0.0f, 1.0f))
-        GLES20.glUniform2f(uCloudUvScaleLoc, params.cloudUvTransform.scaleX, params.cloudUvTransform.scaleY)
+        GLES20.glUniform1i(uniforms.uCloudActiveLoc, if (active) 1 else 0)
+        GLES20.glUniform1f(uniforms.uCloudOpacityLoc, params.cloudOpacity.coerceIn(0.0f, 1.0f))
+        GLES20.glUniform2f(uniforms.uCloudUvScaleLoc, params.cloudUvTransform.scaleX, params.cloudUvTransform.scaleY)
         GLES20.glUniform2f(
-            uCloudUvOffsetLoc,
+            uniforms.uCloudUvOffsetLoc,
             params.cloudUvTransform.offsetX,
             params.cloudUvTransform.offsetY
         )
         val hasMask = active && params.cloudMaskTextureId != 0
-        GLES20.glUniform1i(uCloudHasMaskLoc, if (hasMask) 1 else 0)
+        GLES20.glUniform1i(uniforms.uCloudHasMaskLoc, if (hasMask) 1 else 0)
         if (!active) return
         GLES20.glActiveTexture(GLES20.GL_TEXTURE4)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, params.cloudLayerTextureId)
-        GLES20.glUniform1i(uCloudLayerLoc, CLOUD_LAYER_UNIT)
+        GLES20.glUniform1i(uniforms.uCloudLayerLoc, CLOUD_LAYER_UNIT)
         if (hasMask) {
             GLES20.glActiveTexture(GLES20.GL_TEXTURE5)
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, params.cloudMaskTextureId)
-            GLES20.glUniform1i(uCloudMaskLoc, CLOUD_MASK_UNIT)
+            GLES20.glUniform1i(uniforms.uCloudMaskLoc, CLOUD_MASK_UNIT)
         }
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
     }
@@ -312,38 +201,38 @@ internal class ExposureGlProgram {
             subject.hasGradingAdjustments() &&
             params.subjectWeightTextureId != 0 &&
             !params.compareOriginal
-        GLES20.glUniform1i(uSubjectGradeActiveLoc, if (active) 1 else 0)
-        GLES20.glUniform1i(uSubjectLocalLoc, if (params.subjectLocalSpace) 1 else 0)
+        GLES20.glUniform1i(uniforms.uSubjectGradeActiveLoc, if (active) 1 else 0)
+        GLES20.glUniform1i(uniforms.uSubjectLocalLoc, if (params.subjectLocalSpace) 1 else 0)
         if (active && subject != null) {
             GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, params.subjectWeightTextureId)
-            GLES20.glUniform1i(uSubjectMaskLoc, 2)
+            GLES20.glUniform1i(uniforms.uSubjectMaskLoc, 2)
             GLES20.glActiveTexture(GLES20.GL_TEXTURE3)
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, params.subjectWarpTextureId)
-            GLES20.glUniform1i(uSubjectWarpLoc, 3)
+            GLES20.glUniform1i(uniforms.uSubjectWarpLoc, 3)
             GLES20.glUniform1i(
-                uHasSubjectWarpLoc,
+                uniforms.uHasSubjectWarpLoc,
                 if (params.subjectWarpTextureId != 0) 1 else 0
             )
-            GLES20.glUniformMatrix3fv(uSubjectUvMatrixLoc, 1, false, params.subjectUvMatrix, 0)
+            GLES20.glUniformMatrix3fv(uniforms.uSubjectUvMatrixLoc, 1, false, params.subjectUvMatrix, 0)
             GLES20.glUniform2f(
-                uSubjectWarpScaleLoc,
+                uniforms.uSubjectWarpScaleLoc,
                 params.subjectWarpScale,
                 params.subjectWarpScale
             )
             GLES20.glUniform2f(
-                uSubjectWarpOffsetLoc,
+                uniforms.uSubjectWarpOffsetLoc,
                 params.subjectWarpOffset,
                 params.subjectWarpOffset
             )
             GLES20.glUniform3f(
-                uSubjectFgGradeLoc,
+                uniforms.uSubjectFgGradeLoc,
                 subject.fgExposure.toGrade(),
                 subject.fgTemp.toGrade(),
                 subject.fgSat.toGrade()
             )
             GLES20.glUniform3f(
-                uSubjectBgGradeLoc,
+                uniforms.uSubjectBgGradeLoc,
                 subject.bgExposure.toGrade(),
                 subject.bgTemp.toGrade(),
                 subject.bgSat.toGrade()
@@ -357,47 +246,47 @@ internal class ExposureGlProgram {
     private fun applyToneUniforms(params: ExposureDrawParams) {
         val tone = params.toneParams
         val active = !params.compareOriginal && !tone.isIdentity
-        GLES20.glUniform1i(uToneActiveLoc, if (active) 1 else 0)
-        GLES20.glUniform1f(uExposureEvLoc, tone.exposureEv)
-        GLES20.glUniform1f(uBrightnessLoc, tone.brightness)
-        GLES20.glUniform1f(uContrastLoc, tone.contrast)
-        GLES20.glUniform1f(uGlowLoc, tone.glow)
-        GLES20.glUniform1f(uHighlightsLoc, tone.highlights)
-        GLES20.glUniform1f(uShadowsLoc, tone.shadows)
-        GLES20.glUniform1f(uWhitesLoc, tone.whites)
-        GLES20.glUniform1f(uBlacksLoc, tone.blacks)
-        GLES20.glUniform1i(uHasWbLoc, if (tone.hasWhiteBalance) 1 else 0)
-        GLES20.glUniformMatrix3fv(uWbLoc, 1, false, tone.wbMatrix, 0)
+        GLES20.glUniform1i(uniforms.uToneActiveLoc, if (active) 1 else 0)
+        GLES20.glUniform1f(uniforms.uExposureEvLoc, tone.exposureEv)
+        GLES20.glUniform1f(uniforms.uBrightnessLoc, tone.brightness)
+        GLES20.glUniform1f(uniforms.uContrastLoc, tone.contrast)
+        GLES20.glUniform1f(uniforms.uGlowLoc, tone.glow)
+        GLES20.glUniform1f(uniforms.uHighlightsLoc, tone.highlights)
+        GLES20.glUniform1f(uniforms.uShadowsLoc, tone.shadows)
+        GLES20.glUniform1f(uniforms.uWhitesLoc, tone.whites)
+        GLES20.glUniform1f(uniforms.uBlacksLoc, tone.blacks)
+        GLES20.glUniform1i(uniforms.uHasWbLoc, if (tone.hasWhiteBalance) 1 else 0)
+        GLES20.glUniformMatrix3fv(uniforms.uWbLoc, 1, false, tone.wbMatrix, 0)
     }
 
     private fun applyColorUniforms(params: ExposureDrawParams) {
         val color = params.colorParams
         val active = !params.compareOriginal && !color.isIdentity
-        GLES20.glUniform1i(uPassB2ActiveLoc, if (active) 1 else 0)
+        GLES20.glUniform1i(uniforms.uPassB2ActiveLoc, if (active) 1 else 0)
         val curveActive = active && color.hasCurve && params.curveTextureId != 0
-        GLES20.glUniform1i(uCurveActiveLoc, if (curveActive) 1 else 0)
+        GLES20.glUniform1i(uniforms.uCurveActiveLoc, if (curveActive) 1 else 0)
         if (curveActive) {
             GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, params.curveTextureId)
-            GLES20.glUniform1i(uCurveLutLoc, 1)
+            GLES20.glUniform1i(uniforms.uCurveLutLoc, 1)
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         }
-        GLES20.glUniform1i(uColorActiveLoc, if (active && color.needsOklabStage) 1 else 0)
+        GLES20.glUniform1i(uniforms.uColorActiveLoc, if (active && color.needsOklabStage) 1 else 0)
         GLES20.glUniform2f(
-            uTexelSizeLoc,
+            uniforms.uTexelSizeLoc,
             1.0f / params.texelWidth.coerceAtLeast(1).toFloat(),
             1.0f / params.texelHeight.coerceAtLeast(1).toFloat()
         )
-        GLES20.glUniform1f(uSaturationLoc, color.saturation)
-        GLES20.glUniform1f(uVibranceLoc, color.vibrance)
-        GLES20.glUniform1f(uFadeLoc, color.fade)
-        GLES20.glUniform1f(uDefringeLoc, color.defringe)
-        GLES20.glUniform1i(uHslActiveLoc, if (color.hasHsl) 1 else 0)
-        GLES20.glUniform3fv(uHslBandsLoc, ColorGradingParams.HSL_BAND_COUNT, color.hslBandsCopy(), 0)
-        GLES20.glUniform1i(uSplitActiveLoc, if (color.hasSplit) 1 else 0)
-        GLES20.glUniform2f(uSplitHiAbLoc, color.splitHiA, color.splitHiB)
-        GLES20.glUniform2f(uSplitShAbLoc, color.splitShA, color.splitShB)
-        GLES20.glUniform1f(uSplitBalanceLoc, color.splitBalance)
+        GLES20.glUniform1f(uniforms.uSaturationLoc, color.saturation)
+        GLES20.glUniform1f(uniforms.uVibranceLoc, color.vibrance)
+        GLES20.glUniform1f(uniforms.uFadeLoc, color.fade)
+        GLES20.glUniform1f(uniforms.uDefringeLoc, color.defringe)
+        GLES20.glUniform1i(uniforms.uHslActiveLoc, if (color.hasHsl) 1 else 0)
+        GLES20.glUniform3fv(uniforms.uHslBandsLoc, ColorGradingParams.HSL_BAND_COUNT, color.hslBandsCopy(), 0)
+        GLES20.glUniform1i(uniforms.uSplitActiveLoc, if (color.hasSplit) 1 else 0)
+        GLES20.glUniform2f(uniforms.uSplitHiAbLoc, color.splitHiA, color.splitHiB)
+        GLES20.glUniform2f(uniforms.uSplitShAbLoc, color.splitShA, color.splitShB)
+        GLES20.glUniform1f(uniforms.uSplitBalanceLoc, color.splitBalance)
     }
 
     private companion object {

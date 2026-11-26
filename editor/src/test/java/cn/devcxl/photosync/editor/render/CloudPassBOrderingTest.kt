@@ -174,10 +174,11 @@ class CloudPassBOrderingTest {
             bitmap.recycle()
             stream.toByteArray()
         }
-        val ref = assets.write(PHOTO_ID, AiAssetKind.CLOUD_LAYER, bytes)
-        assertNotNull(ref)
+        val ref = requireNotNull(assets.write(PHOTO_ID, AiAssetKind.CLOUD_LAYER, bytes)) {
+            "the cloud layer fixture could not be stored"
+        }
         return CloudEditLayerRef(
-            imageRelPath = ref!!.relativePath,
+            imageRelPath = ref.relativePath,
             sha256 = ref.sha256,
             opacity = 100,
             geometryDigest = CloudGeometryDigest.digest(geometry)

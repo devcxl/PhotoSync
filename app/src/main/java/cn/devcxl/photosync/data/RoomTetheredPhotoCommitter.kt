@@ -15,14 +15,24 @@ import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.EditGraphJsonCodec
 
 /**
+ * Signals that a staged `SubjectMask` payload could not be persisted.
+ *
+ * Thrown inside the commit transaction so the photo row rolls back and [TetheredPhotoIngestor] can
+ * re-stage the traditional-grade preview before retrying the commit.
+ */
+internal class SubjectMaskUnavailableException :
+    Exception("The subject mask asset could not be stored")
+
+/**
  * Room-backed [TetheredPhotoCommitter]: one transaction inserts the photo, publishes the staged
  * `LiveTetherPreset` preview under `cacheDir/edits/<photoId>/`, moves the staged subject mask into
  * `filesDir/edits/<photoId>/` and inserts the edit row whose `maskRef` points at it.
  *
  * The staging directory lives under [cacheDir] on the same filesystem, so `renameTo` is an O(1)
  * rename; if the Room transaction rolls back after the rename, the moved preview file is deleted in
- * the catch block so no orphaned preview remains. A mask that cannot be written is not fatal: the
- * row degrades to the traditional grade (the `subject` group is cleared) instead of losing the photo.
+ * the catch block so no orphaned preview remains. A mask that cannot be written aborts the
+ * transaction with [SubjectMaskUnavailableException], so the caller can fall back to the traditional
+ * grade instead of publishing a row whose pixels it cannot reproduce.
  */
 class RoomTetheredPhotoCommitter(
     private val database: AppDatabase,
@@ -70,8 +80,9 @@ class RoomTetheredPhotoCommitter(
     /**
      * Persists [subjectMaskPayload] under the new photo id and rewrites `subject.maskRef`.
      *
-     * @return The final graph JSON, or `null` when [graphJson] is absent, undecodable, or the
-     *   staged mask could not be persisted (the caller then omits the edit row entirely).
+     * @return The final graph JSON, or `null` when [graphJson] is absent or undecodable.
+     * @throws SubjectMaskUnavailableException when the payload exists but its asset write failed;
+     *   the transaction then rolls back and the ingest degrades to the traditional grade.
      */
     private fun bindSubjectMask(
         photoId: Long,
@@ -82,13 +93,7 @@ class RoomTetheredPhotoCommitter(
         val graph = EditGraphJsonCodec.decode(graphJson) ?: return graphJson
         if (subjectMaskPayload == null) return graphJson
         val reference = AiAssetStore(filesDir).write(photoId, AiAssetKind.SUBJECT_MASK, subjectMaskPayload)
-        if (reference == null) {
-            // The staged preview already shows the subject effect; storing a graph that cannot
-            // reproduce it would publish a wrong row. Skip the edit and let the ingest report an
-            // ungraded import instead.
-            Timber.w("LiveTetherPreset subject mask could not be stored; skipping the preset edit")
-            return null
-        }
+            ?: throw SubjectMaskUnavailableException()
         return EditGraphJsonCodec.encode(
             graph.copy(subject = graph.subject.copy(maskRef = reference.relativePath))
         )

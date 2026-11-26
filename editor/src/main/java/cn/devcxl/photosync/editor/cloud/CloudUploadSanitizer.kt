@@ -5,12 +5,10 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.util.UUID
-import kotlin.math.roundToInt
 
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.Matrix
 
 import androidx.exifinterface.media.ExifInterface
 import timber.log.Timber
@@ -76,10 +74,14 @@ class CloudUploadSanitizer(
         }
 
         val orientation = readOrientation(sourcePath)
-        val sampleSize = calculateInSampleSize(bounds.outWidth, bounds.outHeight, maxLongEdgePx)
+        val sampleSize = UploadBitmapGeometry.previewSampleSize(
+            bounds.outWidth,
+            bounds.outHeight,
+            maxLongEdgePx
+        )
         val decoded = decodeSampled(sourcePath, sampleSize)
-        var upright = applyOrientation(decoded, orientation)
-        upright = scaleToLongEdge(upright, maxLongEdgePx)
+        var upright = UploadBitmapGeometry.applyOrientation(decoded, orientation)
+        upright = UploadBitmapGeometry.scaleToLongEdge(upright, maxLongEdgePx)
 
         ensureUploadDir()
         val token = UUID.randomUUID().toString()
@@ -117,7 +119,7 @@ class CloudUploadSanitizer(
         if (source.isRecycled || source.width <= 0 || source.height <= 0) {
             throw CloudSanitizationException("Source image could not be decoded")
         }
-        val upright = scaledCopy(source, maxLongEdgePx)
+        val upright = UploadBitmapGeometry.scaledCopy(source, maxLongEdgePx)
         ensureUploadDir()
         val token = UUID.randomUUID().toString()
         val partFile = File(uploadDir, "$token.part")
@@ -152,33 +154,6 @@ class CloudUploadSanitizer(
             handle.close()
         }
     }
-
-    /**
-     * Converts a painted mask into an editable mask bitmap at the upload resolution.
-     *
-     * Painted strokes become fully transparent (`alpha = 0`, editable); untouched pixels become
-     * opaque (`alpha = 255`, preserved). The conversion itself lives in [CloudMaskPngEncoder] so the
-     * encoder and its pure pixel math stay in one testable place.
-     *
-     * @param mask Painted overlay in any resolution. Its alpha channel is folded into coverage so
-     *   anti-aliased strokes keep their soft edges.
-     * @param width Target width, normally the sanitized upload width.
-     * @param height Target height, normally the sanitized upload height.
-     * @return A new `ARGB_8888` bitmap owned by the caller.
-     */
-    fun createEditableMaskBitmap(mask: Bitmap, width: Int, height: Int): Bitmap =
-        CloudMaskPngEncoder.createEditableMaskBitmap(mask, width, height)
-
-    /**
-     * Writes [mask] as an editable PNG at [width] x [height].
-     *
-     * The output is a plain PNG with only alpha data added by [createEditableMaskBitmap], so no
-     * source metadata or PNG text chunks can travel with it.
-     *
-     * @return [outputFile] after a successful encode.
-     */
-    fun writeEditableMaskPng(mask: Bitmap, width: Int, height: Int, outputFile: File): File =
-        CloudMaskPngEncoder.writePng(mask, width, height, outputFile)
 
     private fun readOrientation(sourcePath: String): Int = try {
         ExifInterface(sourcePath).getAttributeInt(
@@ -309,70 +284,5 @@ class CloudUploadSanitizer(
             ExifInterface.TAG_USER_COMMENT,
             ExifInterface.TAG_SOFTWARE
         )
-
-        /**
-         * Smallest power-of-two sample size whose decoded long edge is still at least
-         * [maxLongEdge]. Exact scaling happens after decode, so the sample never undershoots.
-         */
-        internal fun calculateInSampleSize(width: Int, height: Int, maxLongEdge: Int): Int {
-            val longEdge = maxOf(width, height)
-            var sampleSize = 1
-            while (sampleSize * 2 <= longEdge / maxLongEdge) {
-                sampleSize *= 2
-            }
-            return sampleSize
-        }
-
-        private fun applyOrientation(source: Bitmap, orientation: Int): Bitmap {
-            val matrix = Matrix()
-            when (orientation) {
-                ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.setScale(-1f, 1f)
-                ExifInterface.ORIENTATION_ROTATE_180 -> matrix.setRotate(180f)
-                ExifInterface.ORIENTATION_FLIP_VERTICAL -> {
-                    matrix.setRotate(180f)
-                    matrix.postScale(-1f, 1f)
-                }
-                ExifInterface.ORIENTATION_TRANSPOSE -> {
-                    matrix.setRotate(90f)
-                    matrix.postScale(-1f, 1f)
-                }
-                ExifInterface.ORIENTATION_ROTATE_90 -> matrix.setRotate(90f)
-                ExifInterface.ORIENTATION_TRANSVERSE -> {
-                    matrix.setRotate(-90f)
-                    matrix.postScale(-1f, 1f)
-                }
-                ExifInterface.ORIENTATION_ROTATE_270 -> matrix.setRotate(-90f)
-                else -> return source
-            }
-            val oriented = Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true)
-            if (oriented !== source) source.recycle()
-            return oriented
-        }
-
-        private fun scaleToLongEdge(source: Bitmap, maxLongEdge: Int): Bitmap {
-            val longEdge = maxOf(source.width, source.height)
-            if (longEdge <= maxLongEdge) return source
-            val scale = maxLongEdge.toDouble() / longEdge
-            val targetWidth = (source.width * scale).roundToInt().coerceIn(1, maxLongEdge)
-            val targetHeight = (source.height * scale).roundToInt().coerceIn(1, maxLongEdge)
-            val scaled = Bitmap.createScaledBitmap(source, targetWidth, targetHeight, true)
-            if (scaled !== source) source.recycle()
-            return scaled
-        }
-
-        /**
-         * Scales a caller-owned bitmap without ever recycling it.
-         *
-         * [scaleToLongEdge] recycles its input because the file path owns the decoded bitmap; an
-         * in-memory frame handed in by the editor is still in use after the upload is staged.
-         */
-        private fun scaledCopy(source: Bitmap, maxLongEdge: Int): Bitmap {
-            val longEdge = maxOf(source.width, source.height)
-            if (longEdge <= maxLongEdge) return source
-            val scale = maxLongEdge.toDouble() / longEdge
-            val targetWidth = (source.width * scale).roundToInt().coerceIn(1, maxLongEdge)
-            val targetHeight = (source.height * scale).roundToInt().coerceIn(1, maxLongEdge)
-            return Bitmap.createScaledBitmap(source, targetWidth, targetHeight, true)
-        }
     }
 }

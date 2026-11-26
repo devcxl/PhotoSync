@@ -103,7 +103,7 @@ class EditorCloudControllerTest {
 
         assertTrue(panel.cloudPanelVisible)
         assertEquals(CloudEditMode.WHOLE_IMAGE, panel.state?.mode)
-        assertFalse(panel.state!!.hasLayer)
+        assertFalse(state().hasLayer)
     }
 
     @Test
@@ -167,13 +167,13 @@ class EditorCloudControllerTest {
         controller.refresh()
 
         controller.onCloudModeSelected(CloudEditMode.PAINTED_MASK)
-        assertTrue(panel.state!!.softMaskWarning)
+        assertTrue(state().softMaskWarning)
 
         controller.onCloudModeSelected(CloudEditMode.SUBJECT_BACKGROUND)
-        assertTrue(panel.state!!.softMaskWarning)
+        assertTrue(state().softMaskWarning)
 
         controller.onCloudModeSelected(CloudEditMode.WHOLE_IMAGE)
-        assertFalse(panel.state!!.softMaskWarning)
+        assertFalse(state().softMaskWarning)
     }
 
     @Test
@@ -184,7 +184,7 @@ class EditorCloudControllerTest {
 
         controller.onCloudModeSelected(CloudEditMode.PAINTED_MASK)
 
-        assertEquals(CloudEditMode.WHOLE_IMAGE, panel.state!!.mode)
+        assertEquals(CloudEditMode.WHOLE_IMAGE, state().mode)
         assertTrue(host.toasts.contains(R.string.editor_cloud_mask_unsupported))
     }
 
@@ -244,6 +244,8 @@ class EditorCloudControllerTest {
         assertEquals(layer, undoController.currentGraph.cloudLayer)
         assertEquals(0, undoController.undoDepth)
         assertTrue(host.committedGraphs.isEmpty())
+        assertEquals(1, host.discardedGraphs.size)
+        assertEquals(oldGeometry, host.discardedGraphs.single().geometry)
         // A later attempt must be able to open the sheet again.
         undoController.onParameterDrag(
             undoController.currentGraph.copy(geometry = newGeometry),
@@ -292,6 +294,22 @@ class EditorCloudControllerTest {
     }
 
     @Test
+    fun shouldSendTheFeather_whenALocalMaskModeIsGenerated() {
+        consent.accept()
+        val controller = controller()
+        controller.refresh()
+        controller.onCloudModeSelected(CloudEditMode.PAINTED_MASK)
+        controller.onCloudFeatherChanged(24)
+        controller.onCloudPromptChanged("repaint the jacket")
+
+        assertEquals(24, state().featherPx)
+        assertTrue(state().supportsMask)
+        controller.onCloudGenerateClicked()
+
+        assertEquals(24.0f, executor.commands.single().featherPx, 0.0f)
+    }
+
+    @Test
     fun shouldRemoveTheLayer_whenTheRemoveButtonIsTapped() {
         undoController.resetTo(EditGraph(cloudLayer = layer(GeometryOps())))
         val controller = controller()
@@ -313,6 +331,10 @@ class EditorCloudControllerTest {
         assertEquals(100, undoController.currentGraph.cloudLayer?.opacity)
         assertEquals(70, host.previewLayer?.opacity)
         assertEquals(0, undoController.undoDepth)
+    }
+
+    private fun state(): CloudPanelState = checkNotNull(panel.state) {
+        "the cloud panel was never rendered"
     }
 
     private fun installedController(): EditorCloudController {
@@ -414,8 +436,14 @@ class EditorCloudControllerTest {
             conflictCancels += onCancel
         }
 
+        val discardedGraphs = mutableListOf<EditGraph>()
+
         override fun onGraphCommitted(graph: EditGraph) {
             committedGraphs += graph
+        }
+
+        override fun onGeometryChangeDiscarded(graph: EditGraph) {
+            discardedGraphs += graph
         }
 
         override fun onCloudLayerPreviewChanged(layer: CloudEditLayerRef?) {

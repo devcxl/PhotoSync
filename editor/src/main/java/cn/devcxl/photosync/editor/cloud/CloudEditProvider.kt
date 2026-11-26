@@ -119,7 +119,7 @@ class CloudEditRequest(
  * A staged upload owned by a [CloudEditRequest] rather than by [CloudUploadSanitizer].
  *
  * This is the seam the editor's cloud-edit panel will use to hand an editable mask PNG (written by
- * [CloudUploadSanitizer.writeEditableMaskPng]) to a request, so the mask shares the photo's
+ * [CloudMaskPngEncoder.writePng]) to a request, so the mask shares the photo's
  * delete-on-close lifecycle. The settings-only slice does not construct it yet; the provider tests
  * already reuse the same class so their fixtures cannot drift from the future integration.
  */

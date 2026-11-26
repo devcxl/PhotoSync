@@ -77,12 +77,12 @@ class CloudUploadSanitizerTest {
 
     @Test
     fun shouldChoosePowerOfTwoSamples_whenDecodedLongEdgeMustStayAboveLimit() {
-        assertEquals(1, CloudUploadSanitizer.calculateInSampleSize(1000, 800, 2048))
-        assertEquals(1, CloudUploadSanitizer.calculateInSampleSize(2048, 1365, 2048))
-        assertEquals(1, CloudUploadSanitizer.calculateInSampleSize(2049, 1366, 2048))
-        assertEquals(2, CloudUploadSanitizer.calculateInSampleSize(4096, 2730, 2048))
-        assertEquals(2, CloudUploadSanitizer.calculateInSampleSize(6000, 4000, 2048))
-        assertEquals(4, CloudUploadSanitizer.calculateInSampleSize(11648, 8736, 2048))
+        assertEquals(1, UploadBitmapGeometry.previewSampleSize(1000, 800, 2048))
+        assertEquals(1, UploadBitmapGeometry.previewSampleSize(2048, 1365, 2048))
+        assertEquals(1, UploadBitmapGeometry.previewSampleSize(2049, 1366, 2048))
+        assertEquals(2, UploadBitmapGeometry.previewSampleSize(4096, 2730, 2048))
+        assertEquals(2, UploadBitmapGeometry.previewSampleSize(6000, 4000, 2048))
+        assertEquals(4, UploadBitmapGeometry.previewSampleSize(11648, 8736, 2048))
     }
 
     @Test
@@ -149,9 +149,8 @@ class CloudUploadSanitizerTest {
             mask.eraseColor(Color.BLACK)
             mask.setPixel(1, 1, Color.WHITE)
             mask.setPixel(2, 1, Color.WHITE)
-            val sanitizer = CloudUploadSanitizer(uploadDir())
 
-            val editable = sanitizer.createEditableMaskBitmap(mask, width = 4, height = 4)
+            val editable = CloudMaskPngEncoder.createEditableMaskBitmap(mask, width = 4, height = 4)
             try {
                 assertEquals(0, Color.alpha(editable.getPixel(1, 1)))
                 assertEquals(0, Color.alpha(editable.getPixel(2, 1)))
@@ -174,9 +173,8 @@ class CloudUploadSanitizerTest {
         val output = File(tempFolder.root, "mask.png")
         try {
             mask.eraseColor(Color.WHITE)
-            val sanitizer = CloudUploadSanitizer(uploadDir())
 
-            sanitizer.writeEditableMaskPng(mask, width = 32, height = 20, outputFile = output)
+            CloudMaskPngEncoder.writePng(mask, width = 32, height = 20, outputFile = output)
 
             val decoded = BitmapFactory.decodeFile(output.absolutePath)
             assertNotNull(decoded)

@@ -1,10 +1,15 @@
 package cn.devcxl.photosync.data
 
 import java.io.File
+import java.util.concurrent.atomic.AtomicInteger
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -116,6 +121,48 @@ class TetheredPhotoIngestorTest {
         val file = File(temporaryFolder.root, name)
         file.createNewFile()
         return file
+    }
+
+    @Test
+    fun shouldSerializeTheStageAndCommitPipeline_whenTwoDownloadsArriveTogether() = runBlocking {
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val active = AtomicInteger(0)
+        val peak = AtomicInteger(0)
+        val presetStore = FakeEditStore(
+            presets = mapOf("gated" to preset("gated", gradedGraph(contrast = 10))),
+            activePresetId = "gated"
+        )
+        val gated = TetheredPhotoIngestor(
+            editStore = presetStore,
+            committer = RecordingCommitter(),
+            stagingDir = temporaryFolder.root,
+            renderPreview = { _, _, _, _ ->
+                peak.set(maxOf(peak.get(), active.incrementAndGet()))
+                entered.complete(Unit)
+                release.await()
+                active.decrementAndGet()
+                null
+            }
+        )
+        val firstFile = sourceFile("first.ARW")
+        val secondFile = sourceFile("second.ARW")
+
+        val first = launch(Dispatchers.Default) {
+            gated.onFileDownloaded(firstFile, 1, isRaw = true, isJpeg = false)
+        }
+        entered.await()
+        val second = launch(Dispatchers.Default) {
+            gated.onFileDownloaded(secondFile, 2, isRaw = true, isJpeg = false)
+        }
+        delay(50)
+        assertEquals("the second ingest must wait for the first", 1, active.get())
+
+        release.complete(Unit)
+        first.join()
+        second.join()
+
+        assertEquals("two previews must never render at the same time", 1, peak.get())
     }
 
     @Test

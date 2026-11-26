@@ -25,6 +25,14 @@ object SubjectBokehMath {
     /** Number of disc taps, excluding the centre sample. */
     const val TAP_COUNT = 12
 
+    /**
+     * Largest radius a column-band bake may use.
+     *
+     * `ColumnBandTiling` keeps a `64 px` halo; two pixels stay reserved so the final guided resample
+     * never reads past the FBO edge.
+     */
+    const val BAND_HALO_RADIUS_CAP_PX = 62
+
     private const val GOLDEN_ANGLE_RAD = 2.3999632f
     private const val CHANNELS = 3
 
@@ -43,6 +51,38 @@ object SubjectBokehMath {
         if (blurFraction <= 0.0f || shortEdge <= 0) return 0
         val fraction = blurFraction.coerceIn(0.0f, 1.0f) * MAX_RADIUS_FRACTION
         return (shortEdge * fraction).roundToInt().coerceIn(1, maxRadiusPx.coerceAtLeast(1))
+    }
+
+    /**
+     * Radius in pixels of a render grid whose frame is [fullShortEdge] pixels tall.
+     *
+     * A `45-60 MP` bake cannot spend more than [BAND_HALO_RADIUS_CAP_PX] pixels of radius: the
+     * column-band halo is `64 px` and two pixels stay reserved for the guided resample. The cap is
+     * therefore applied in **full-resolution** pixels and the preview radius follows the same
+     * fraction, so the canvas and the exported file show the same amount of blur.
+     *
+     * @param blur Graph blur amount in `0..100`.
+     * @param fullShortEdge Short edge of the original photo.
+     * @param renderShortEdge Short edge of the frame being drawn (the canvas or a bake band).
+     * @param maxRadiusPx Hard cap of the caller's grid, or [Int.MAX_VALUE] for a full frame.
+     */
+    fun effectiveRadiusPixels(
+        blur: Int,
+        fullShortEdge: Int,
+        renderShortEdge: Int,
+        maxRadiusPx: Int = Int.MAX_VALUE
+    ): Int {
+        if (blur <= 0 || fullShortEdge <= 0 || renderShortEdge <= 0) return 0
+        val cap = maxRadiusPx.coerceAtLeast(1)
+        val fullRadius = radiusPixels(
+            blur = blur,
+            shortEdge = fullShortEdge,
+            maxRadiusPx = minOf(cap, BAND_HALO_RADIUS_CAP_PX)
+        )
+        if (fullRadius <= 0) return 0
+        if (renderShortEdge == fullShortEdge) return fullRadius
+        val scaled = (fullRadius.toFloat() * renderShortEdge / fullShortEdge).roundToInt()
+        return scaled.coerceIn(1, cap)
     }
 
     /**

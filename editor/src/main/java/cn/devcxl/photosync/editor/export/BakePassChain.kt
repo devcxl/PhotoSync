@@ -192,11 +192,7 @@ internal class BakePassChain {
             passBParams(
                 frame, geometryTarget.textureId, width, height, linearPassBInput, ditherPassB,
                 subject = frame.subjectOps,
-                subjectWeightTextureId = if (subjectWeightTexture.isActive) {
-                    subjectWeightTexture.textureId
-                } else {
-                    0
-                },
+                subjectWeightTextureId = subjectWeightTexture.activeTextureId,
                 subjectLocalSpace = true
             )
         )
@@ -410,9 +406,10 @@ internal class BakePassChain {
         SubjectBokehPlanner.params(
             blur = frame.subjectOps.blur,
             shortEdge = minOf(frame.cropWidth, frame.cropHeight),
-            maskTextureId = if (subjectWeightTexture.isActive) subjectWeightTexture.textureId else 0,
+            maskTextureId = subjectWeightTexture.activeTextureId,
             localSpace = true,
             uvMatrix = IDENTITY_MATRIX,
+            fullShortEdge = minOf(frame.cropWidth, frame.cropHeight),
             maxRadiusPx = if (frame.band.halo > 0) frame.band.halo - 2 else Int.MAX_VALUE
         )
 

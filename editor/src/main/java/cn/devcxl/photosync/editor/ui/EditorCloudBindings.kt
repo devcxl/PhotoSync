@@ -97,6 +97,8 @@ internal class EditorCloudHostBridge(
 
     override fun onGraphCommitted(graph: EditGraph) = onGraphChanged(graph)
 
+    override fun onGeometryChangeDiscarded(graph: EditGraph) = onGraphChanged(graph)
+
     override fun onCloudLayerPreviewChanged(layer: CloudEditLayerRef?) = onCloudLayerPreview(layer)
 }
 

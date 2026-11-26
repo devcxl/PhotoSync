@@ -52,8 +52,14 @@ data class CopyMask(
 
     /**
      * Extracts the masked axes of [source] as a standalone look, i.e. `apply(source, EditGraph())`.
+     *
+     * The result never carries a pixel-level asset reference: `subject.maskRef` is forced blank so a
+     * saved preset describes parameters only and can never point at one frame's mask file.
      */
-    fun extract(source: EditGraph): EditGraph = apply(source, EditGraph())
+    fun extract(source: EditGraph): EditGraph {
+        val extracted = apply(source, EditGraph())
+        return extracted.copy(subject = extracted.subject.copy(maskRef = ""))
+    }
 
     private fun mergeGeometry(source: GeometryOps, target: GeometryOps): GeometryOps = when {
         includeGeometryCropRotate && includeLiquify -> source
@@ -135,8 +141,11 @@ object PresetGraphMerger {
     fun applyPreset(preset: EditGraph, target: EditGraph): EditGraph =
         PRESET_MASK.apply(preset, target)
 
-    /** Extracts the axes a preset stores from [graph]: the appearance, never the geometry. */
-    fun extractPreset(graph: EditGraph): EditGraph = PRESET_MASK.extract(graph)
+    /** Extracts the axes a preset stores from [graph]: the appearance, never the geometry or a mask. */
+    fun extractPreset(graph: EditGraph): EditGraph {
+        val preset = PRESET_MASK.extract(graph)
+        return preset.copy(subject = preset.subject.copy(maskRef = ""))
+    }
 
     /**
      * Returns [target] with every axis — grade, portrait, frame geometry and the AI groups — back at

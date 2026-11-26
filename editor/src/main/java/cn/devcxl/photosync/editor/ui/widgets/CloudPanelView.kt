@@ -23,6 +23,8 @@ import cn.devcxl.photosync.editor.ui.panels.PanelChipFactory
  * @property prompt Current prompt text, restored when the panel is rebound.
  * @property hasLayer True when the graph already contains a `CloudEditLayer`.
  * @property opacity Current layer opacity in `0..100`.
+ * @property featherPx Blend-mask feather in `0..32` upload pixels for the next local request.
+ * @property supportsMask True when the selected request shape carries a local mask.
  * @property softMaskWarning True when the selected provider only supports advisory masks.
  */
 internal data class CloudPanelState(
@@ -30,6 +32,8 @@ internal data class CloudPanelState(
     val prompt: String,
     val hasLayer: Boolean,
     val opacity: Int,
+    val featherPx: Int,
+    val supportsMask: Boolean,
     val softMaskWarning: Boolean
 )
 
@@ -50,6 +54,9 @@ internal interface CloudPanelListener {
 
     /** The user released the opacity slider; this is the undoable commit. */
     fun onCloudOpacityCommitted(opacity: Int)
+
+    /** The local-mask feather changed; the next generation request carries the new radius. */
+    fun onCloudFeatherChanged(featherPx: Int)
 
     /** The user asked to remove the current cloud layer. */
     fun onCloudRemoveLayerClicked()
@@ -81,6 +88,9 @@ internal class CloudPanelView @JvmOverloads constructor(
     private val layerControls: LinearLayout
     private val opacitySeek: SeekBar
     private val opacityValue: TextView
+    private val featherRow: LinearLayout
+    private val featherSeek: SeekBar
+    private val featherValue: TextView
     private val removeLayerButton: TextView
     private var binding = false
 
@@ -96,6 +106,9 @@ internal class CloudPanelView @JvmOverloads constructor(
         layerControls = findViewById(R.id.cloudLayerControls)
         opacitySeek = findViewById(R.id.cloudOpacitySeek)
         opacityValue = findViewById(R.id.cloudOpacityValue)
+        featherRow = findViewById(R.id.cloudFeatherRow)
+        featherSeek = findViewById(R.id.cloudFeatherSeek)
+        featherValue = findViewById(R.id.cloudFeatherValue)
         removeLayerButton = findViewById(R.id.cloudRemoveLayerButton)
         buildModeChips()
         bindActions()
@@ -119,8 +132,11 @@ internal class CloudPanelView @JvmOverloads constructor(
         softMaskWarning.visibility = if (state.softMaskWarning) View.VISIBLE else View.GONE
         providerHint.visibility = if (state.hasLayer) View.GONE else View.VISIBLE
         layerControls.visibility = if (state.hasLayer) View.VISIBLE else View.GONE
+        featherRow.visibility = if (state.supportsMask) View.VISIBLE else View.GONE
         opacitySeek.progress = state.opacity.coerceIn(0, 100)
         opacityValue.text = context.getString(R.string.editor_cloud_opacity_value, state.opacity)
+        featherSeek.progress = state.featherPx.coerceIn(0, MAX_FEATHER_PX)
+        featherValue.text = context.getString(R.string.editor_cloud_feather_value, state.featherPx)
         binding = false
     }
 
@@ -170,5 +186,21 @@ internal class CloudPanelView @JvmOverloads constructor(
                 listener?.onCloudOpacityCommitted(seekBar.progress)
             }
         })
+        featherSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                if (!fromUser || binding) return
+                featherValue.text = context.getString(R.string.editor_cloud_feather_value, progress)
+                listener?.onCloudFeatherChanged(progress)
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar) = Unit
+
+            override fun onStopTrackingTouch(seekBar: SeekBar) = Unit
+        })
+    }
+
+    private companion object {
+        /** Upper bound of the persisted blend-mask feather in upload pixels. */
+        const val MAX_FEATHER_PX = 32
     }
 }

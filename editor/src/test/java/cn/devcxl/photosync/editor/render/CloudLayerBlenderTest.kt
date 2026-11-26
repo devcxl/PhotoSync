@@ -161,20 +161,6 @@ class CloudLayerBlenderTest {
     }
 
     @Test
-    fun shouldBlendRgbaFloatFrames_whenThePreviewUsesFloatPixels() {
-        val layer = writeLayer(solidBitmap(2, 2, Color.WHITE), opacity = 50)
-        val frame = FloatArray(2 * 2 * 4)
-
-        val result = blender.blendRgbaFloat(frame, 2, 2, layer, GeometryOps())
-
-        assertEquals(CloudBlendStatus.APPLIED, result.status)
-        assertEquals(0.5f, frame[0], 0.01f)
-        assertEquals(0.5f, frame[1], 0.01f)
-        assertEquals(0.5f, frame[2], 0.01f)
-        assertEquals(0.0f, frame[3], 0.0f)
-    }
-
-    @Test
     fun shouldReportNoLayer_whenTheGraphHasNoCloudLayer() {
         val frame = IntArray(4) { Color.BLUE }
 

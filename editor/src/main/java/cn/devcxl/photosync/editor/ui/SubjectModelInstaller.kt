@@ -4,6 +4,7 @@ import java.io.File
 import java.io.InputStream
 
 import android.content.Context
+import android.widget.Toast
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -49,6 +50,15 @@ internal class SubjectModelInstaller(
 
     /** True when a download, import or its hand-over is still running. */
     fun isBusy(): Boolean = job?.isActive == true
+
+    /** Shows the localized "model unavailable" message after a failed download or import. */
+    fun showUnavailable() {
+        Toast.makeText(
+            context,
+            R.string.editor_subject_model_unavailable,
+            Toast.LENGTH_LONG
+        ).show()
+    }
 
     /** Shows the shared download/SAF-import sheet. */
     fun showPrompt(onDownload: () -> Unit, onDismiss: () -> Unit = {}) {

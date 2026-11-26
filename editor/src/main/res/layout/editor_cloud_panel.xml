@@ -80,6 +80,41 @@
     </LinearLayout>
 
     <LinearLayout
+        android:id="@+id/cloudFeatherRow"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:visibility="gone"
+        tools:visibility="visible">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/editor_cloud_feather_label"
+            android:textColor="@color/editor_text_secondary"
+            android:textSize="11sp" />
+
+        <SeekBar
+            android:id="@+id/cloudFeatherSeek"
+            android:layout_width="0dp"
+            android:layout_height="36dp"
+            android:layout_weight="1"
+            android:max="32"
+            android:progress="16" />
+
+        <TextView
+            android:id="@+id/cloudFeatherValue"
+            android:layout_width="52dp"
+            android:layout_height="wrap_content"
+            android:gravity="end"
+            android:textColor="@color/editor_text_primary"
+            android:textSize="11sp"
+            tools:text="16 px" />
+    </LinearLayout>
+
+    <LinearLayout
         android:id="@+id/cloudLayerControls"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

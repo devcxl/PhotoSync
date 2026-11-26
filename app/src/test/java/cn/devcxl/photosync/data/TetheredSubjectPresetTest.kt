@@ -126,6 +126,32 @@ class TetheredSubjectPresetTest {
         }
     }
 
+    private class MaskFailingCommitter : TetheredPhotoCommitter {
+        var subjectAttempts = 0
+        var plainCommits = 0
+        var graphJson: String? = null
+
+        override suspend fun commit(
+            photo: PhotoEntity,
+            stagedPreview: File?,
+            graphJson: String?
+        ): Long {
+            plainCommits++
+            this.graphJson = graphJson
+            return 9L
+        }
+
+        override suspend fun commitWithSubject(
+            photo: PhotoEntity,
+            stagedPreview: File?,
+            graphJson: String?,
+            subjectMaskPayload: ByteArray?
+        ): Long {
+            subjectAttempts++
+            throw SubjectMaskUnavailableException()
+        }
+    }
+
     private fun mask(): SubjectMask = SubjectMask(2, 2, FloatArray(4) { 1.0f })
 
     private fun ingestor(
@@ -321,6 +347,52 @@ class TetheredSubjectPresetTest {
         assertTrue(result is TetheredIngestResult.Ingested)
         val committed = checkNotNull(EditGraphJsonCodec.decode(committer.graphJson ?: ""))
         assertEquals(SubjectOps(), committed.subject)
+    }
+
+    @Test
+    fun shouldFallBackToTheTraditionalGrade_whenTheSubjectMaskCannotBeStored() = runBlocking {
+        val store = FakeEditStore(
+            presets = mapOf("subject" to preset("subject", subjectGraph())),
+            activePresetId = "subject"
+        )
+        val committer = MaskFailingCommitter()
+        val subjectPreview = File(temporaryFolder.root, "preview_subject.jpg").apply { createNewFile() }
+        val fallbackPreview = File(temporaryFolder.root, "preview_fallback_mask.jpg").apply { createNewFile() }
+        var subjectRenders = 0
+        var fallbackRenders = 0
+        val ingestor = ingestor(
+            store = store,
+            committer = committer,
+            preparer = object : TetheredSubjectPresetPreparer {
+                override suspend fun prepare(
+                    sourcePath: String,
+                    isRaw: Boolean,
+                    graph: EditGraph
+                ): TetheredSubjectPreparation = TetheredSubjectPreparation(mask(), byteArrayOf(3))
+            },
+            renderPreview = { _, _, _, _ ->
+                fallbackRenders++
+                fallbackPreview
+            },
+            renderWithSubject = { _, _, _, _, _ ->
+                subjectRenders++
+                subjectPreview
+            }
+        )
+
+        val result = ingestor.onFileDownloaded(
+            sourceFile(), CAMERA_HANDLE, isRaw = true, isJpeg = false
+        )
+
+        assertEquals(1, subjectRenders)
+        assertEquals(1, committer.subjectAttempts)
+        assertEquals(1, committer.plainCommits)
+        assertEquals(1, fallbackRenders)
+        assertTrue("the abandoned subject preview must not survive", !subjectPreview.exists())
+        val committed = checkNotNull(EditGraphJsonCodec.decode(committer.graphJson ?: ""))
+        assertEquals(SubjectOps(), committed.subject)
+        assertEquals(0.6f, committed.tone.exposure, 1e-4f)
+        assertTrue((result as TetheredIngestResult.Ingested).hasEdit)
     }
 
     @Test
