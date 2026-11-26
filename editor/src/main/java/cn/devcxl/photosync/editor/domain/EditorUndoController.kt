@@ -45,6 +45,7 @@ enum class EditParameterKey {
     PORTRAIT_BODY,
     AI_SUBJECT,
     AI_INPAINT,
+    AI_CLOUD,
     PRESET
 }
 

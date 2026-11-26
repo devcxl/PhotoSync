@@ -6,6 +6,8 @@ import java.io.FileOutputStream
 import android.graphics.Bitmap
 import android.graphics.Color
 
+import cn.devcxl.photosync.editor.vision.SubjectMask
+
 /**
  * Editable-mask conversion used by [CloudUploadSanitizer]'s BYOK upload path.
  *
@@ -54,6 +56,59 @@ internal object CloudMaskPngEncoder {
     }
 
     /**
+     * Converts an inverted [subject] mask into an editable mask at [width] x [height].
+     *
+     * The background is the edit target, so background pixels become fully transparent
+     * (`alpha = 0`, editable) while the subject stays opaque (`alpha = 255`, preserved). The subject
+     * mask is sampled bilinearly, so the provider mask keeps the hair transition band instead of a
+     * stair-stepped silhouette.
+     *
+     * @return A new `ARGB_8888` bitmap owned by the caller.
+     */
+    fun createBackgroundEditableMaskBitmap(
+        subject: SubjectMask,
+        width: Int,
+        height: Int
+    ): Bitmap {
+        require(width > 0 && height > 0) { "Mask dimensions must be positive" }
+        val resampled = subject.resampled(width, height)
+        val pixels = IntArray(width * height) { index ->
+            val alpha = (resampled.alpha[index].coerceIn(0.0f, 1.0f) * BYTE_MAX + 0.5f).toInt()
+                .coerceIn(0, BYTE_MAX)
+            Color.argb(alpha, 0, 0, 0)
+        }
+        val editable = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        editable.setPixels(pixels, 0, width, 0, 0, width, height)
+        return editable
+    }
+
+    /**
+     * Writes [mask] as a PNG without reinterpreting its alpha channel.
+     *
+     * Used by the inverted-subject mask, whose alpha is already the provider convention
+     * (`0` editable, `255` preserved) but also has transparent *background* pixels: running it
+     * through [createEditableMaskBitmap] would treat every transparent pixel as "untouched" and make
+     * it opaque.
+     *
+     * @return [outputFile] after a successful encode.
+     */
+    fun writePreservingAlphaPng(mask: Bitmap, outputFile: File): File {
+        var written = false
+        try {
+            outputFile.parentFile?.mkdirs()
+            FileOutputStream(outputFile).use { out ->
+                if (!mask.compress(Bitmap.CompressFormat.PNG, 100, out)) {
+                    throw CloudSanitizationException("Mask encoding failed")
+                }
+            }
+            written = true
+            return outputFile
+        } finally {
+            if (!written) outputFile.delete()
+        }
+    }
+
+    /**
      * Writes an editable PNG of [mask] at [width] x [height] to [outputFile].
      *
      * @return [outputFile] after a successful encode.
@@ -84,4 +139,6 @@ internal object CloudMaskPngEncoder {
         val blue = Color.blue(color)
         return (red * 299 + green * 587 + blue * 114) / 1000
     }
+
+    private const val BYTE_MAX = 255
 }

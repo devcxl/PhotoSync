@@ -1,0 +1,326 @@
+package cn.devcxl.photosync.editor.ui
+
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import timber.log.Timber
+
+import cn.devcxl.photosync.editor.R
+import cn.devcxl.photosync.editor.cloud.CloudConsentStore
+import cn.devcxl.photosync.editor.cloud.CloudEditCommand
+import cn.devcxl.photosync.editor.cloud.CloudEditError
+import cn.devcxl.photosync.editor.cloud.CloudEditExecutor
+import cn.devcxl.photosync.editor.cloud.CloudEditInputIssue
+import cn.devcxl.photosync.editor.cloud.CloudEditMode
+import cn.devcxl.photosync.editor.cloud.CloudEditOutcome
+import cn.devcxl.photosync.editor.cloud.CloudEditProvider
+import cn.devcxl.photosync.editor.cloud.CloudGeometryDigest
+import cn.devcxl.photosync.editor.cloud.CloudJobStage
+import cn.devcxl.photosync.editor.cloud.CloudMaskMode
+import cn.devcxl.photosync.editor.cloud.CloudProviderKind
+import cn.devcxl.photosync.editor.cloud.CloudProviderProfile
+import cn.devcxl.photosync.editor.cloud.CloudProviderSource
+import cn.devcxl.photosync.editor.domain.EditGraph
+import cn.devcxl.photosync.editor.domain.EditParameterKey
+import cn.devcxl.photosync.editor.domain.EditorUndoController
+import cn.devcxl.photosync.editor.domain.GeometryOps
+import cn.devcxl.photosync.editor.ui.widgets.CloudPanelListener
+import cn.devcxl.photosync.editor.ui.widgets.CloudPanelState
+import cn.devcxl.photosync.editor.ui.widgets.CloudPanelView
+
+/**
+ * Owns the `AI -> 云端` workflow from the panel tap to the committed `EditGraph`.
+ *
+ * ## Flow
+ * 1. [refresh] hides the whole panel while the P4 switch is off.
+ * 2. The first send asks for the one-time privacy/cost disclosure; only the explicit accept retries
+ *    the same generation.
+ * 3. The Post-Pass A frame plus the selected mask source become one [CloudEditCommand]; the
+ *    executor stages, sends and persists it off the UI thread.
+ * 4. A returned layer is committed as **one** undo transaction and the panel switches to opacity and
+ *    removal controls.
+ * 5. A Pass A geometry change with a mismatching digest opens the non-destructive conflict sheet:
+ *    remove the layer and apply the new framing, or abandon the geometry change.
+ *
+ * The panel, progress bar and dialogs are abstracted behind [EditorCloudHost] and [CloudPanelPort], so the
+ * state machine is unit-testable with no Activity, no network and no real dialog.
+ */
+internal class EditorCloudController(
+    private val scope: CoroutineScope,
+    private val host: EditorCloudHost,
+    private val panel: CloudPanelPort,
+    private val undoController: EditorUndoController,
+    private val providers: CloudProviderSource,
+    private val executor: CloudEditExecutor,
+    private val consent: CloudConsentStore
+) : CloudPanelListener {
+
+    init {
+        // The real tier-1 panel doubles as the port; wiring the listener here keeps integration to
+        // one constructor call while a fake port stays unaffected.
+        (panel as? CloudPanelView)?.listener = this
+    }
+
+    private var mode = CloudEditMode.WHOLE_IMAGE
+    private var prompt = ""
+    private var job: Job? = null
+
+    /** Repaints visibility and state; call after the editor loaded or the cloud switch changed. */
+    fun refresh() {
+        if (!providers.isCloudEnabled()) {
+            cancel()
+            panel.setCloudPanelVisible(false)
+            return
+        }
+        panel.setCloudPanelVisible(true)
+        panel.renderCloudPanel(currentState())
+    }
+
+    /** Cancels a running generation; a committed layer is never touched. */
+    fun cancel() {
+        if (job?.isActive == true) {
+            job?.cancel()
+            host.hideProgress()
+        }
+        job = null
+    }
+
+    /** Cancels jobs owned by this controller. */
+    fun release() = cancel()
+
+    override fun onCloudModeSelected(mode: CloudEditMode) {
+        if (!providers.isCloudEnabled()) {
+            refresh()
+            return
+        }
+        if (mode != CloudEditMode.WHOLE_IMAGE && activeMaskMode() == CloudMaskMode.NONE) {
+            host.showToast(R.string.editor_cloud_mask_unsupported)
+            return
+        }
+        this.mode = mode
+        refresh()
+    }
+
+    override fun onCloudPromptChanged(text: String) {
+        prompt = text
+    }
+
+    override fun onCloudGenerateClicked() {
+        if (!providers.isCloudEnabled()) {
+            refresh()
+            return
+        }
+        if (prompt.isBlank()) {
+            host.showToast(R.string.editor_cloud_prompt_required)
+            return
+        }
+        if (!consent.isAccepted()) {
+            host.showConsentDialog(::startGeneration)
+            return
+        }
+        startGeneration()
+    }
+
+    override fun onCloudOpacityChanged(opacity: Int) {
+        val layer = undoController.currentGraph.cloudLayer ?: return
+        host.onCloudLayerPreviewChanged(layer.copy(opacity = opacity.coerceIn(0, 100)))
+    }
+
+    override fun onCloudOpacityCommitted(opacity: Int) {
+        val graph = undoController.currentGraph
+        val layer = graph.cloudLayer ?: return
+        val updated = opacity.coerceIn(0, 100)
+        if (layer.opacity == updated) return
+        commit(graph.copy(cloudLayer = layer.copy(opacity = updated)), EditParameterKey.AI_CLOUD)
+    }
+
+    override fun onCloudRemoveLayerClicked() {
+        val graph = undoController.currentGraph
+        if (graph.cloudLayer == null) return
+        commit(graph.copy(cloudLayer = null), EditParameterKey.AI_CLOUD)
+        host.showToast(R.string.editor_cloud_layer_removed)
+    }
+
+    /**
+     * Applies a Pass A geometry change, guarded by the cloud layer digest.
+     *
+     * @return True when the change was committed immediately. False means the conflict sheet is
+     *   showing and the caller must not apply the geometry itself.
+     */
+    fun requestGeometryChange(newGeometry: GeometryOps, parameterKey: EditParameterKey): Boolean {
+        val graph = undoController.currentGraph
+        val layer = graph.cloudLayer
+        if (layer == null || CloudGeometryDigest.matches(layer, newGeometry)) {
+            commit(graph.copy(geometry = newGeometry), parameterKey)
+            return true
+        }
+        host.showGeometryConflictDialog {
+            val current = undoController.currentGraph
+            if (current.cloudLayer != null) {
+                commit(
+                    current.copy(geometry = newGeometry, cloudLayer = null),
+                    parameterKey
+                )
+                host.showToast(R.string.editor_cloud_geometry_removed)
+            }
+        }
+        return false
+    }
+
+    private fun startGeneration() {
+        val command = buildCommand() ?: return
+        job?.cancel()
+        job = scope.launch {
+            host.showProgress(R.string.editor_cloud_progress_preparing, 0)
+            val outcome = try {
+                executor.execute(command) { stage ->
+                    scope.launch { host.updateProgress(labelFor(stage), percentFor(stage)) }
+                }
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (error: Exception) {
+                Timber.e(error, "Cloud edit failed")
+                CloudEditOutcome.Failed(CloudEditError.Unknown(error))
+            } finally {
+                host.hideProgress()
+            }
+            handleOutcome(outcome)
+        }
+    }
+
+    private fun buildCommand(): CloudEditCommand? {
+        val source = host.currentPostPassABitmap()?.takeIf { !it.isRecycled }
+        if (source == null || source.width <= 0 || source.height <= 0) {
+            host.showToast(R.string.editor_cloud_source_unavailable)
+            return null
+        }
+        val graph = undoController.currentGraph
+        return when (mode) {
+            CloudEditMode.WHOLE_IMAGE -> CloudEditCommand(
+                mode = mode,
+                prompt = prompt,
+                geometry = graph.geometry,
+                source = source
+            )
+            CloudEditMode.PAINTED_MASK -> {
+                if (activeMaskMode() == CloudMaskMode.NONE) {
+                    host.showToast(R.string.editor_cloud_mask_unsupported)
+                    return null
+                }
+                val mask = host.paintedMaskBitmap()?.takeIf { !it.isRecycled }
+                if (mask == null) {
+                    host.showToast(R.string.editor_cloud_painted_mask_missing)
+                    return null
+                }
+                CloudEditCommand(
+                    mode = mode,
+                    prompt = prompt,
+                    geometry = graph.geometry,
+                    source = source,
+                    paintedMask = mask
+                )
+            }
+            CloudEditMode.SUBJECT_BACKGROUND -> {
+                if (activeMaskMode() == CloudMaskMode.NONE) {
+                    host.showToast(R.string.editor_cloud_mask_unsupported)
+                    return null
+                }
+                val subject = host.subjectMask()
+                if (subject == null) {
+                    host.showToast(R.string.editor_cloud_subject_mask_missing)
+                    return null
+                }
+                CloudEditCommand(
+                    mode = mode,
+                    prompt = prompt,
+                    geometry = graph.geometry,
+                    source = source,
+                    subjectMask = subject
+                )
+            }
+        }
+    }
+
+    private fun handleOutcome(outcome: CloudEditOutcome) {
+        when (outcome) {
+            is CloudEditOutcome.Applied -> {
+                val graph = undoController.currentGraph
+                if (!CloudGeometryDigest.matches(outcome.layer, graph.geometry)) {
+                    // The user changed framing while the request was in flight; the result no longer
+                    // belongs to the current canvas and must not be committed as if it did.
+                    Timber.w("Discarding a cloud result produced for a different geometry")
+                    host.showToast(R.string.editor_cloud_failed)
+                    return
+                }
+                commit(graph.copy(cloudLayer = outcome.layer), EditParameterKey.AI_CLOUD)
+                host.showToast(R.string.editor_cloud_applied)
+            }
+            is CloudEditOutcome.Failed -> host.showToast(
+                if (outcome.error is CloudEditError.Cancelled) {
+                    R.string.editor_cloud_cancelled
+                } else {
+                    R.string.editor_cloud_failed
+                }
+            )
+            CloudEditOutcome.ConsentRequired -> host.showConsentDialog(::startGeneration)
+            CloudEditOutcome.ProviderUnavailable -> host.showToast(R.string.editor_cloud_failed)
+            is CloudEditOutcome.InvalidInput -> host.showToast(labelFor(outcome.issue))
+        }
+    }
+
+    private fun commit(graph: EditGraph, parameterKey: EditParameterKey) {
+        val applied = undoController.onParameterDrag(graph, parameterKey)
+        undoController.onParameterRelease()
+        host.onGraphCommitted(applied)
+        refresh()
+    }
+
+    private fun currentState(): CloudPanelState {
+        val layer = undoController.currentGraph.cloudLayer
+        return CloudPanelState(
+            mode = mode,
+            prompt = prompt,
+            hasLayer = layer != null,
+            opacity = layer?.opacity ?: 100,
+            softMaskWarning = mode != CloudEditMode.WHOLE_IMAGE &&
+                activeMaskMode() == CloudMaskMode.SOFT
+        )
+    }
+
+    /**
+     * Advisory mask capability of the selected profile, used for chip availability and the Gemini
+     * warning. The authoritative contract remains [CloudEditProvider.capabilities] inside the service.
+     */
+    private fun activeMaskMode(): CloudMaskMode {
+        val profile: CloudProviderProfile = providers.activeProfile() ?: return CloudMaskMode.NONE
+        return when (profile.kind) {
+            CloudProviderKind.GEMINI -> CloudMaskMode.SOFT
+            CloudProviderKind.OPENAI_COMPATIBLE -> CloudMaskMode.HARD
+            CloudProviderKind.COMFY_UI -> {
+                if (profile.maskNodeId.isNotBlank()) CloudMaskMode.HARD else CloudMaskMode.NONE
+            }
+        }
+    }
+
+    private fun labelFor(stage: CloudJobStage): Int = when (stage) {
+        CloudJobStage.SUBMITTING -> R.string.editor_cloud_progress_submitting
+        CloudJobStage.QUEUED, CloudJobStage.RUNNING -> R.string.editor_cloud_progress_generating
+        CloudJobStage.DOWNLOADING -> R.string.editor_cloud_progress_downloading
+    }
+
+    private fun percentFor(stage: CloudJobStage): Int = when (stage) {
+        CloudJobStage.SUBMITTING -> 15
+        CloudJobStage.QUEUED -> 30
+        CloudJobStage.RUNNING -> 55
+        CloudJobStage.DOWNLOADING -> 85
+    }
+
+    private fun labelFor(issue: CloudEditInputIssue): Int = when (issue) {
+        CloudEditInputIssue.MISSING_SOURCE -> R.string.editor_cloud_source_unavailable
+        CloudEditInputIssue.MISSING_PAINTED_MASK -> R.string.editor_cloud_painted_mask_missing
+        CloudEditInputIssue.MISSING_SUBJECT_MASK -> R.string.editor_cloud_subject_mask_missing
+        CloudEditInputIssue.BLANK_PROMPT -> R.string.editor_cloud_prompt_required
+        CloudEditInputIssue.MASK_NOT_SUPPORTED -> R.string.editor_cloud_mask_unsupported
+    }
+}

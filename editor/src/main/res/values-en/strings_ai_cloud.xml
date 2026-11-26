@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- P4 BYOK cloud edit panel (AI > Cloud) -->
+    <string name="editor_tool_ai_cloud">Cloud</string>
+    <string name="editor_tool_ai_cloud_modified">Cloud •</string>
+    <string name="editor_cloud_panel_title">BYOK cloud generation (EXIF stripped)</string>
+    <string name="editor_cloud_mode_whole">Whole image</string>
+    <string name="editor_cloud_mode_painted">Painted repaint</string>
+    <string name="editor_cloud_mode_background">Invert subject background</string>
+    <string name="editor_cloud_prompt_hint">e.g. turn the jacket into a deep blue trench coat, keep the light</string>
+    <string name="editor_cloud_generate">Generate</string>
+    <string name="editor_cloud_soft_mask_warning">The Gemini engine does not guarantee strict pixel boundaries</string>
+    <string name="editor_cloud_provider_hint">Works with OpenAI / Gemini / self-hosted ComfyUI; results become a mid-pipeline layer you can keep colour grading.</string>
+    <string name="editor_cloud_opacity_label">Layer opacity</string>
+    <string name="editor_cloud_opacity_value">%1$d%%</string>
+    <string name="editor_cloud_remove_layer">Remove cloud layer</string>
+
+    <!-- First-run privacy and cost disclosure -->
+    <string name="editor_cloud_consent_title">First cloud-generated edit</string>
+    <string name="editor_cloud_consent_message">The photo is stripped of all EXIF / GPS metadata and scaled so its long edge is at most 2048 px before it is sent directly to the BYOK endpoint you configured (OpenAI / Gemini / self-hosted ComfyUI). PhotoSync never sees or stores your photo or API key; the endpoint provider may charge for the request.</string>
+    <string name="editor_cloud_consent_accept">I understand, send it</string>
+    <string name="editor_cloud_consent_cancel">Cancel</string>
+
+    <!-- Geometry conflict guard -->
+    <string name="editor_cloud_geometry_title">Geometry change affects the cloud layer</string>
+    <string name="editor_cloud_geometry_message">This photo contains a CloudEditLayer bound to the current crop. Changing crop, rotation, perspective or liquify requires removing that layer first.</string>
+    <string name="editor_cloud_geometry_remove">Remove layer and apply geometry</string>
+    <string name="editor_cloud_geometry_cancel">Cancel geometry change</string>
+
+    <!-- Status and errors -->
+    <string name="editor_cloud_prompt_required">Enter a prompt first</string>
+    <string name="editor_cloud_painted_mask_missing">Paint the area to repaint first</string>
+    <string name="editor_cloud_subject_mask_missing">Generate a subject mask first</string>
+    <string name="editor_cloud_mask_unsupported">This endpoint has no mask node configured; only whole-image edits are available</string>
+    <string name="editor_cloud_source_unavailable">The frame is not ready yet, please retry</string>
+    <string name="editor_cloud_applied">Cloud layer applied (colour grading stays available)</string>
+    <string name="editor_cloud_failed">Cloud generation failed, check the endpoint settings and retry</string>
+    <string name="editor_cloud_cancelled">Cloud generation cancelled</string>
+    <string name="editor_cloud_layer_removed">Cloud layer removed</string>
+    <string name="editor_cloud_geometry_removed">Old cloud layer removed and the new geometry applied</string>
+    <string name="editor_cloud_progress_preparing">Stripping EXIF and sanitizing the frame…</string>
+    <string name="editor_cloud_progress_submitting">Sending to the BYOK endpoint…</string>
+    <string name="editor_cloud_progress_generating">Generating in the cloud…</string>
+    <string name="editor_cloud_progress_downloading">Downloading the result…</string>
+</resources>

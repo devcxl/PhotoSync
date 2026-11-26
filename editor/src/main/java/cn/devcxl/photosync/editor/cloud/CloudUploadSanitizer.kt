@@ -104,6 +104,43 @@ class CloudUploadSanitizer(
     }
 
     /**
+     * Sanitizes an in-memory frame and returns a handle whose file must be deleted by [close].
+     *
+     * This is the editor path: the Post-Pass A composite only exists in memory, so it is re-encoded
+     * from pixels exactly like a file upload. The caller's bitmap is never recycled; only the
+     * internally created scaled copy is.
+     *
+     * @throws CloudSanitizationException when the frame is unusable or the re-encoded file still
+     *   fails the zero-sensitive-metadata verification.
+     */
+    fun createUpload(source: Bitmap): SanitizedUploadHandle {
+        if (source.isRecycled || source.width <= 0 || source.height <= 0) {
+            throw CloudSanitizationException("Source image could not be decoded")
+        }
+        val upright = scaledCopy(source, maxLongEdgePx)
+        ensureUploadDir()
+        val token = UUID.randomUUID().toString()
+        val partFile = File(uploadDir, "$token.part")
+        val uploadFile = File(uploadDir, "$token.jpg")
+        var published = false
+        try {
+            writeJpeg(upright, partFile)
+            verifySanitized(partFile, maxLongEdgePx)
+            if (!partFile.renameTo(uploadFile)) {
+                throw CloudSanitizationException("Upload staging failed")
+            }
+            published = true
+            return SanitizedUpload(uploadFile, upright.width, upright.height)
+        } finally {
+            if (!published) {
+                partFile.delete()
+                uploadFile.delete()
+            }
+            if (upright !== source && !upright.isRecycled) upright.recycle()
+        }
+    }
+
+    /**
      * Runs [block] with a sanitized upload and guarantees the staged file is deleted afterwards,
      * including when [block] throws.
      */
@@ -321,6 +358,21 @@ class CloudUploadSanitizer(
             val scaled = Bitmap.createScaledBitmap(source, targetWidth, targetHeight, true)
             if (scaled !== source) source.recycle()
             return scaled
+        }
+
+        /**
+         * Scales a caller-owned bitmap without ever recycling it.
+         *
+         * [scaleToLongEdge] recycles its input because the file path owns the decoded bitmap; an
+         * in-memory frame handed in by the editor is still in use after the upload is staged.
+         */
+        private fun scaledCopy(source: Bitmap, maxLongEdge: Int): Bitmap {
+            val longEdge = maxOf(source.width, source.height)
+            if (longEdge <= maxLongEdge) return source
+            val scale = maxLongEdge.toDouble() / longEdge
+            val targetWidth = (source.width * scale).roundToInt().coerceIn(1, maxLongEdge)
+            val targetHeight = (source.height * scale).roundToInt().coerceIn(1, maxLongEdge)
+            return Bitmap.createScaledBitmap(source, targetWidth, targetHeight, true)
         }
     }
 }
