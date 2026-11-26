@@ -14,6 +14,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 import cn.devcxl.photosync.editor.R
+import cn.devcxl.photosync.editor.domain.InpaintStroke
 import cn.devcxl.photosync.editor.ui.gesture.CanvasTransform
 import cn.devcxl.photosync.editor.ui.widgets.InpaintBrushOverlayView
 import cn.devcxl.photosync.editor.ui.widgets.InpaintPanelView
@@ -39,7 +40,7 @@ class InpaintBrushOverlayViewTest {
 
         assertEquals(0, overlay.strokeLayer.strokeCount)
         assertEquals(1, listener.preempted)
-        assertEquals(Triple(0, 0, false), listener.lastBbox)
+        assertTrue(listener.lastStrokes.isEmpty())
     }
 
     @Test
@@ -52,7 +53,7 @@ class InpaintBrushOverlayViewTest {
         overlay.dispatchTouchEvent(single(overlay, MotionEvent.ACTION_UP, 500f, 500f))
 
         assertEquals(1, overlay.strokeLayer.strokeCount)
-        val bbox = checkNotNull(listener.lastBbox)
+        val bbox = checkNotNull(listener.lastBbox())
         assertTrue("dab must be ~40 px wide, got ${bbox.first}", bbox.first in 38..42)
         assertFalse(bbox.third)
     }
@@ -67,7 +68,7 @@ class InpaintBrushOverlayViewTest {
         overlay.dispatchTouchEvent(single(overlay, MotionEvent.ACTION_MOVE, 900f, 500f))
         overlay.dispatchTouchEvent(single(overlay, MotionEvent.ACTION_UP, 900f, 500f))
 
-        val bbox = checkNotNull(listener.lastBbox)
+        val bbox = checkNotNull(listener.lastBbox())
         assertTrue("bbox width ${bbox.first} must exceed 256", bbox.first > 256)
         assertTrue(bbox.third)
     }
@@ -178,15 +179,27 @@ class InpaintBrushOverlayViewTest {
     }
 
     private class RecordingListener : InpaintBrushOverlayView.Listener {
-        var lastBbox: Triple<Int, Int, Boolean>? = null
+        var lastStrokes: List<InpaintStroke> = emptyList()
         var preempted = 0
 
-        override fun onBboxEstimated(widthPx: Int, heightPx: Int, isOversized: Boolean) {
-            lastBbox = Triple(widthPx, heightPx, isOversized)
+        override fun onInpaintStrokesChanged(strokes: List<InpaintStroke>) {
+            lastStrokes = strokes
         }
 
         override fun onInpaintTwoFingerPreempted() {
             preempted++
+        }
+
+        fun lastBbox(): Triple<Int, Int, Boolean>? {
+            val bounds = lastStrokes.map { it.bounds(OVERLAY_SIZE, OVERLAY_SIZE) }
+                .filterNot { it.isEmpty }
+                .reduceOrNull { first, second -> first.union(second) }
+                ?: return null
+            return Triple(bounds.width, bounds.height, bounds.width > 256 || bounds.height > 256)
+        }
+
+        private companion object {
+            const val OVERLAY_SIZE = 1000
         }
     }
 }

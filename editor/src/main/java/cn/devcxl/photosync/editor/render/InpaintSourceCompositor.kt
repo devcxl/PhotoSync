@@ -88,7 +88,12 @@ class InpaintSourceCompositor(
             }
             val region = IntArray(rect.width * rect.height)
             source.getPixels(region, 0, rect.width, rect.left, rect.top, rect.width, rect.height)
-            blended += blender.blendArgb(region, rect.width, 0, 0, rect, decoded)
+            blended += blender.blendArgb(
+                pixels = region,
+                stride = rect.width,
+                patchRect = InpaintPixelRect(0, 0, rect.width, rect.height),
+                decoded = decoded
+            )
             source.setPixels(region, 0, rect.width, rect.left, rect.top, rect.width, rect.height)
             applied++
         }
@@ -119,10 +124,67 @@ class InpaintSourceCompositor(
                 skipped++
                 continue
             }
-            blended += blender.blendArgb(pixels, width, rect.left, rect.top, rect, decoded)
+            blended += blender.blendArgb(pixels, width, rect, decoded)
             applied++
         }
         return InpaintComposeReport(applied, skipped, blended)
+    }
+
+    /**
+     * Blends [patches] into a packed `ARGB_8888` window of the source, in place.
+     *
+     * Used by the full-resolution nailing pass: the buffer covers only the painted region plus its
+     * context, while patch boxes stay normalized to the whole pre-crop source.
+     *
+     * @param originX Left edge of the window inside the source, in source pixels.
+     * @param originY Top edge of the window inside the source, in source pixels.
+     * @param sourceWidth Pre-crop source width the normalized boxes resolve against.
+     * @param sourceHeight Pre-crop source height the normalized boxes resolve against.
+     */
+    fun applyToArgbRegion(
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        patches: List<InpaintPatchRef>,
+        originX: Int,
+        originY: Int,
+        sourceWidth: Int,
+        sourceHeight: Int
+    ): InpaintComposeReport {
+        if (patches.isEmpty()) return InpaintComposeReport.EMPTY
+        require(width > 0 && height > 0) { "Source dimensions must be positive" }
+        require(pixels.size == width * height) { "Source buffer does not match its size" }
+        require(sourceWidth > 0 && sourceHeight > 0) { "Patch space must be positive" }
+        val window = InpaintPixelRect(0, 0, width, height)
+        var applied = 0
+        var skipped = 0
+        var blended = 0L
+        for (patch in patches) {
+            val rect = patch.bbox.toPixelRect(sourceWidth, sourceHeight)
+            val decoded = if (rect == null) null else decode(patch)
+            if (rect == null || decoded == null) {
+                skipped++
+                continue
+            }
+            val local = translate(rect, originX, originY)
+            val clip = local.intersection(window)
+            if (clip == null) {
+                applied++
+                continue
+            }
+            blended += blender.blendArgb(pixels, width, local, decoded, clip)
+            applied++
+        }
+        return InpaintComposeReport(applied, skipped, blended)
+    }
+
+    private fun InpaintPixelRect.intersection(other: InpaintPixelRect): InpaintPixelRect? {
+        val left = maxOf(left, other.left)
+        val top = maxOf(top, other.top)
+        val right = minOf(right, other.right)
+        val bottom = minOf(bottom, other.bottom)
+        if (right <= left || bottom <= top) return null
+        return InpaintPixelRect(left, top, right, bottom)
     }
 
     /**

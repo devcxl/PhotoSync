@@ -31,10 +31,10 @@ interface InpaintBrushCanvasHost {
     /** Brush radius as a fraction of the source-image width. */
     var brushRadiusNorm: Float
 
-    /** Width of the source image the strokes are normalized against. */
+    /** Preview width used as a fallback scale until the true source size is probed. */
     var sourceWidth: Int
 
-    /** Height of the source image the strokes are normalized against. */
+    /** Preview height used as a fallback scale until the true source size is probed. */
     var sourceHeight: Int
 
     /** Committed strokes; an in-flight stroke is deliberately not part of the layer. */

@@ -125,7 +125,7 @@ class SubjectMaskRenderContractTest {
         )
         val pixels = IntArray(4 * 4) { 0xFF000000.toInt() }
 
-        val composited = SubjectCpuComposer.apply(
+        val composited = SubjectCpuComposer.applyForeground(
             pixels = pixels,
             width = 4,
             height = 4,
@@ -133,6 +133,7 @@ class SubjectMaskRenderContractTest {
             composite = composite,
             inverseMatrix = Mat3.identity()
         )
+        SubjectCpuComposer.drawCheckerboard(composited, 4, 4)
 
         assertEquals(0xFF2E2E2E.toInt(), composited[0])
     }
@@ -154,7 +155,7 @@ class SubjectMaskRenderContractTest {
             )
         )
 
-        val composited = SubjectCpuComposer.apply(
+        val composited = SubjectCpuComposer.applyForeground(
             pixels = IntArray(4) { 0xFF000000.toInt() },
             width = 2,
             height = 2,

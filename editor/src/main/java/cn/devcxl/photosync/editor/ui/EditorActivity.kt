@@ -9,17 +9,9 @@ import android.os.Looper
 import android.view.View
 import android.widget.Toast
 
-import java.io.InputStream
-
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
-import androidx.lifecycle.repeatOnLifecycle
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
-import timber.log.Timber
 
 import cn.devcxl.photosync.editor.R
 import cn.devcxl.photosync.editor.contract.EditorHostRegistry
@@ -40,7 +32,6 @@ import cn.devcxl.photosync.editor.render.EditorPreviewSession
 import cn.devcxl.photosync.editor.ui.gesture.CanvasTransform
 import cn.devcxl.photosync.editor.ui.gesture.EditorGroup
 import cn.devcxl.photosync.editor.ui.gesture.EditorTool
-import cn.devcxl.photosync.editor.ui.panels.AiInferenceBarController
 import cn.devcxl.photosync.editor.ui.panels.EditorPanelController
 import cn.devcxl.photosync.editor.ui.panels.EditorPreviewGeometry
 
@@ -69,43 +60,17 @@ class EditorActivity : AppCompatActivity(),
     private lateinit var portraitHost: EditorPortraitHost
     private lateinit var renderCoordinator: EditorRenderCoordinator
     private lateinit var gestureHost: EditorGestureHost
-    private lateinit var aiInferenceBar: AiInferenceBarController
-    private lateinit var subjectController: EditorSubjectController
-    private lateinit var inpaintTools: EditorInpaintToolHost
+    private lateinit var aiTools: EditorAiToolHost
+    private val modelImport = EditorModelImportLauncher(this)
     private val renderer = EditorGlRenderer()
     private val undoController = EditorUndoController()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val lutStore by lazy { CubeLutStore(filesDir) }
 
-    /** Receives the next SAF `.onnx` selection; set by the AI tool that asked for it. */
-    private var pendingModelImport: ((InputStream) -> Unit)? = null
-
-    private val modelImportLauncher = registerForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        val importer = pendingModelImport
-        pendingModelImport = null
-        if (uri == null || importer == null) return@registerForActivityResult
-        runCatching { contentResolver.openInputStream(uri) }
-            .onSuccess { stream -> stream?.use(importer) }
-            .onFailure { error -> Timber.e(error, "The selected ONNX model could not be opened") }
-    }
-
     private var photoId: Long = 0L
     private var sourcePath: String = ""
     private var isRaw: Boolean = false
     private var preferLinearSource: Boolean = false
-
-    /** Photos that synced while this activity was in front, shown as `+N 新照片`. */
-    private var syncedPhotoCount: Int = 0
-
-    /**
-     * The in-flight end-side AI inference, if any.
-     *
-     * The AI tool waves launch their coroutines here so the inference bar's cancel button can stop
-     * the current run without touching the editor's other jobs.
-     */
-    private var aiInferenceJob: Job? = null
 
     private val settleFullQualityRunnable = Runnable { renderCoordinator.renderCurrentGraph(useProxy = false) }
 
@@ -120,7 +85,6 @@ class EditorActivity : AppCompatActivity(),
         sourcePath = intent.getStringExtra(EXTRA_SOURCE_PATH).orEmpty()
         isRaw = intent.getBooleanExtra(EXTRA_IS_RAW, false)
         initCoordinators()
-        initAiInferenceBar()
         canvas = EditorCanvasBinder(binding, renderer, undoController, liquifySession, this)
         preferLinearSource = canvas.configureSurfaceView()
         canvas.attachOverlays()
@@ -138,7 +102,6 @@ class EditorActivity : AppCompatActivity(),
         initActionHosts()
         panel.selectGroup(EditorGroup.TONE)
         loadInitialPhotoAndEditState()
-        observeTetheredPhotoEvents()
     }
 
     private fun initCoordinators() {
@@ -165,32 +128,14 @@ class EditorActivity : AppCompatActivity(),
         )
     }
 
-    private fun initAiInferenceBar() {
-        aiInferenceBar = AiInferenceBarController(
-            host = object : AiInferenceBarController.Host {
-                override fun setVisible(visible: Boolean) {
-                    binding.aiInferenceBar.visibility = if (visible) View.VISIBLE else View.GONE
-                }
-
-                override fun setLabel(label: CharSequence) {
-                    binding.aiInferenceLabel.text = label
-                }
-
-                override fun setProgress(percent: Int) {
-                    binding.aiInferenceProgress.progress = percent
-                }
-            },
-            onCancelRequested = {
-                aiInferenceJob?.cancel()
-                aiInferenceJob = null
-                if (::inpaintTools.isInitialized) inpaintTools.brush.cancelInference()
-                if (::inpaintTools.isInitialized) inpaintTools.cancelInstall()
-                if (::subjectController.isInitialized) subjectController.cancel()
-            }
-        )
+    private fun initActionHosts() {
+        initPortraitAndRenderHosts()
+        initGestureHost()
+        initAiHost()
+        initMediaHosts()
     }
 
-    private fun initActionHosts() {
+    private fun initPortraitAndRenderHosts() {
         portraitHost = EditorPortraitHost(
             context = this,
             filesDir = filesDir,
@@ -200,7 +145,7 @@ class EditorActivity : AppCompatActivity(),
             panelProvider = { panel },
             sourceProvider = { previewSession.source },
             onWarpsPublished = { binding.glSurfaceView.requestRender() },
-            onPreviewStatus = ::renderPortraitPreviewStatus,
+            onPreviewStatus = { EditorPortraitStatusBinder.render(binding, it) },
             onGraphEdited = { renderCoordinator.renderCurrentGraph(useProxy = true) },
             onGraphCommitted = {
                 renderCoordinator.renderCurrentGraph(useProxy = false)
@@ -220,6 +165,9 @@ class EditorActivity : AppCompatActivity(),
             panelProvider = { panel },
             overlaySyncProvider = { overlaySync }
         )
+    }
+
+    private fun initGestureHost() {
         gestureHost = EditorGestureHost(
             binding = binding,
             renderer = renderer,
@@ -229,23 +177,38 @@ class EditorActivity : AppCompatActivity(),
             renderCoordinatorProvider = { renderCoordinator },
             cancelSettle = { mainHandler.removeCallbacks(settleFullQualityRunnable) }
         )
-        subjectController = EditorSubjectController(
+    }
+
+    private fun initAiHost() {
+        aiTools = EditorAiToolHost(
             context = this,
+            binding = binding,
             filesDir = filesDir,
             photoId = photoId,
+            sourcePath = sourcePath,
+            isRaw = isRaw,
             undoController = undoController,
             previewSession = previewSession,
-            inferenceBar = aiInferenceBar,
             scope = lifecycleScope,
-            sourceProvider = { previewSession.source },
-            onGraphCommitted = { _, _ ->
+            liquifySession = liquifySession,
+            analysisProvider = { portraitHost.analysis() },
+            onCanvasTransform = ::onCanvasTransformChanged,
+            onGraphChanged = {
                 renderCoordinator.renderCurrentGraph(useProxy = false)
                 renderCoordinator.updateHistoryButtons()
             },
-            onImportRequested = { launchModelImport(subjectController::importModel) },
-            onRepaintRequested = { binding.glSurfaceView.requestRender() }
+            onRepaintRequested = { binding.glSurfaceView.requestRender() },
+            launchImport = modelImport::launch
         )
-        initInpaintHost()
+        EditorSyncPhotoPill(
+            binding = binding,
+            scope = lifecycleScope,
+            lifecycle = lifecycle,
+            events = EditorHostRegistry.tetheredPhotoEvents
+        ).observe()
+    }
+
+    private fun initMediaHosts() {
         lutImporter = EditorLutImportCoordinator(this, lutStore, undoController, previewSession) {
             renderCoordinator.renderCurrentGraph(useProxy = false)
             renderCoordinator.updateHistoryButtons()
@@ -257,68 +220,6 @@ class EditorActivity : AppCompatActivity(),
             onExportingChanged = topBar::setExporting,
             onFinished = { renderCoordinator.updateHistoryButtons() }
         )
-    }
-
-    /**
-     * Wires the `AI -> 消除` tool pair: the controller owns the model and the graph commit, the brush
-     * controller owns the strokes and the run.
-     */
-    private fun initInpaintHost() {
-        inpaintTools = EditorInpaintToolHost(
-            context = this,
-            binding = binding,
-            filesDir = filesDir,
-            photoId = photoId,
-            undoController = undoController,
-            previewSession = previewSession,
-            inferenceBar = aiInferenceBar,
-            scope = lifecycleScope,
-            onCanvasTransform = ::onCanvasTransformChanged,
-            onGraphChanged = {
-                renderCoordinator.renderCurrentGraph(useProxy = false)
-                renderCoordinator.updateHistoryButtons()
-            },
-            onRepaintRequested = { binding.glSurfaceView.requestRender() },
-            onSubjectCompositeStale = {
-                subjectController.refreshSourceComposite(undoController.currentGraph)
-            },
-            launchImport = ::launchModelImport
-        )
-    }
-
-    /** Opens the system document picker and routes the choice to the AI tool that asked for it. */
-    private fun launchModelImport(importer: (InputStream) -> Unit) {
-        pendingModelImport = importer
-        modelImportLauncher.launch(arrayOf("application/octet-stream", "*/*"))
-    }
-
-    /**
-     * Counts photos the camera synced while the editor was in front.
-     *
-     * Only `RESUMED` collects: an editor in the background must not accumulate a pill the user never
-     * saw, and the ingest itself never touches this activity's window, so an active slider drag or a
-     * liquify stroke keeps its focus.
-     */
-    private fun observeTetheredPhotoEvents() {
-        val events = EditorHostRegistry.tetheredPhotoEvents ?: emptyFlow()
-        lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.RESUMED) {
-                events.collect { incrementSyncedPhotoPill() }
-            }
-        }
-        binding.newSyncedPhotoPill.setOnClickListener { resetSyncedPhotoPill() }
-    }
-
-    private fun incrementSyncedPhotoPill() {
-        syncedPhotoCount++
-        binding.newSyncedPhotoPill.text =
-            getString(R.string.editor_new_photos_pill, syncedPhotoCount)
-        binding.newSyncedPhotoPill.visibility = View.VISIBLE
-    }
-
-    private fun resetSyncedPhotoPill() {
-        syncedPhotoCount = 0
-        binding.newSyncedPhotoPill.visibility = View.GONE
     }
 
     override fun onResume() {
@@ -334,11 +235,7 @@ class EditorActivity : AppCompatActivity(),
 
     override fun onDestroy() {
         mainHandler.removeCallbacks(settleFullQualityRunnable)
-        aiInferenceBar.dismiss()
-        aiInferenceJob?.cancel()
-        aiInferenceJob = null
-        if (::inpaintTools.isInitialized) inpaintTools.release()
-        if (::subjectController.isInitialized) subjectController.release()
+        if (::aiTools.isInitialized) aiTools.release()
         ActivePhotoEditRegistry.release(photoId)
         canvas.detachOverlays()
         portraitHost.release()
@@ -357,6 +254,7 @@ class EditorActivity : AppCompatActivity(),
         binding.inpaintBrushOverlayView.visibility = if (inpaintActive) View.VISIBLE else View.GONE
         overlaySync.sync(undoController.currentGraph)
         portraitHost.onToolChanged()
+        aiTools.onToolChanged(tool)
         renderCoordinator.renderCurrentGraph(useProxy = false)
         renderCoordinator.updateHistoryButtons()
     }
@@ -394,9 +292,9 @@ class EditorActivity : AppCompatActivity(),
     override fun onLutImportRequested() = lutImporter.launch()
 
     override fun onSubjectModeRequested(mode: SubjectBackgroundMode) =
-        subjectController.requestMode(mode)
+        aiTools.requestSubjectMode(mode)
 
-    override fun onSubjectColorRequested(argb: Int) = subjectController.requestColor(argb)
+    override fun onSubjectColorRequested(argb: Int) = aiTools.requestSubjectColor(argb)
     override fun onPreviewDragStarted() = gestureHost.onDragStarted()
     override fun onPreviewDragFinished() = gestureHost.onDragFinished()
     override fun onLiquifyMeshChanged() = gestureHost.onLiquifyMeshChanged()
@@ -468,19 +366,8 @@ class EditorActivity : AppCompatActivity(),
             renderCoordinator.publishLiquifyMesh()
             renderCoordinator.renderCurrentGraph(useProxy = false)
             renderCoordinator.updateHistoryButtons()
-            subjectController.restore(loaded.graph)
+            aiTools.restoreSubject(loaded.graph)
         }
-    }
-
-    private fun renderPortraitPreviewStatus(status: PortraitPreviewStatus) {
-        val row = binding.portraitPreviewStatus
-        row.root.visibility = if (status == PortraitPreviewStatus.Idle) View.GONE else View.VISIBLE
-        row.portraitPreviewSpinner.visibility =
-            if (status == PortraitPreviewStatus.Analyzing) View.VISIBLE else View.GONE
-        row.portraitPreviewMessage.setText(
-            if (status == PortraitPreviewStatus.Unavailable) R.string.editor_portrait_preview_unavailable
-            else R.string.editor_portrait_analyzing
-        )
     }
 
     companion object {

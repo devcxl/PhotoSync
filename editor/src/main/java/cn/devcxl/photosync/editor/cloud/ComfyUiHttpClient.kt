@@ -96,14 +96,23 @@ internal class ComfyUiHttpClient(
      * Confirms a mask exists by fetching it through `/view`.
      *
      * `/upload/mask` answers 200 even when `original_ref` was not found and nothing was written, so
-     * the only trustworthy confirmation is a non-empty image body.
+     * the only trustworthy confirmation is a PNG whose `IHDR` carries the dimensions of the mask we
+     * just uploaded. A stale PNG from an earlier run is rejected instead of silently bypassing the
+     * mask contract.
+     *
+     * @param ref Uploaded mask reference returned by `/upload/mask`.
+     * @param expectedWidth Width of the staged mask, in pixels.
+     * @param expectedHeight Height of the staged mask, in pixels.
+     * @throws CloudHttpFailure when `/view` returns anything but the expected PNG.
      */
-    suspend fun verifyUploadedFile(ref: ComfyUploadRef) {
+    suspend fun verifyUploadedFile(ref: ComfyUploadRef, expectedWidth: Int, expectedHeight: Int) {
         val bytes = get(viewQuery(ref.name, ref.subfolder, ref.type))
-        if (!isPng(bytes)) {
-            throw CloudHttpFailure(
-                CloudEditError.Invalid("ComfyUI reported a mask it did not store")
-            )
+        val dimensions = pngDimensions(bytes)
+        if (dimensions == null) {
+            throw CloudHttpFailure(CloudEditError.Invalid(CloudEditIssue.MASK_NOT_STORED))
+        }
+        if (dimensions.first != expectedWidth || dimensions.second != expectedHeight) {
+            throw CloudHttpFailure(CloudEditError.Invalid(CloudEditIssue.MASK_NOT_STORED))
         }
     }
 
@@ -118,7 +127,7 @@ internal class ComfyUiHttpClient(
             )
         val nodeErrors = json.optJSONObject("node_errors")
         if (nodeErrors != null && nodeErrors.length() > 0) {
-            throw CloudHttpFailure(CloudEditError.Invalid("ComfyUI rejected the workflow"))
+            throw CloudHttpFailure(CloudEditError.Invalid(CloudEditIssue.WORKFLOW_REJECTED))
         }
         val serverId = json.stringOrNull("prompt_id")
         if (serverId == null) return promptId
@@ -223,7 +232,7 @@ internal class ComfyUiHttpClient(
         val type = json.stringOrNull("type")?.takeIf { it.isNotBlank() } ?: "input"
         if (!ComfyPathGuard.isSafeFileName(name) || !ComfyPathGuard.isSafeSubfolder(subfolder)) {
             throw CloudHttpFailure(
-                CloudEditError.Invalid("ComfyUI returned an unusable file path")
+                CloudEditError.Invalid(CloudEditIssue.UNSAFE_FILE_PATH)
             )
         }
         if (!ComfyPathGuard.isSafeType(type)) {
@@ -263,10 +272,6 @@ internal class ComfyUiHttpClient(
         "$VIEW_PATH?filename=${encodeQueryValue(filename)}" +
             "&subfolder=${encodeQueryValue(subfolder)}&type=${encodeQueryValue(type)}"
 
-    private fun isPng(bytes: ByteArray): Boolean =
-        bytes.size >= PNG_SIGNATURE.size &&
-            PNG_SIGNATURE.indices.all { bytes[it] == PNG_SIGNATURE[it] }
-
     private companion object {
         const val UPLOAD_IMAGE_PATH = "/upload/image"
         const val UPLOAD_MASK_PATH = "/upload/mask"
@@ -274,10 +279,6 @@ internal class ComfyUiHttpClient(
         const val HISTORY_PATH = "/history"
         const val VIEW_PATH = "/view"
         const val SYSTEM_STATS_PATH = "/system_stats"
-        val PNG_SIGNATURE = byteArrayOf(
-            0x89.toByte(), 'P'.code.toByte(), 'N'.code.toByte(), 'G'.code.toByte(),
-            0x0D, 0x0A, 0x1A, 0x0A
-        )
     }
 }
 

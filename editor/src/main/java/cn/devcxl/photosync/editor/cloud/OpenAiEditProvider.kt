@@ -73,7 +73,7 @@ class OpenAiEditProvider(
     }
 
     override suspend fun testConnection(): CloudConnectionResult {
-        val endpoint = resolveEndpoint(MODELS_PATH)
+        val endpoint = resolveCloudEndpoint(networkPolicy, baseUrl, MODELS_PATH)
             ?: return CloudConnectionResult.Failed(
                 CloudEditError.EndpointRejected(CloudPolicyRejection.MALFORMED_URL)
             )
@@ -96,17 +96,17 @@ class OpenAiEditProvider(
     ): CloudEditResult {
         val model = (request.model ?: configuredModel).trim()
         if (model.isEmpty()) {
-            return CloudEditResult.Failure(CloudEditError.Invalid("No model is configured"))
+            return CloudEditResult.Failure(CloudEditError.Invalid(CloudEditIssue.NO_MODEL_CONFIGURED))
         }
         val prompt = request.prompt.trim()
         if (prompt.isEmpty()) {
-            return CloudEditResult.Failure(CloudEditError.Invalid("The prompt is empty"))
+            return CloudEditResult.Failure(CloudEditError.Invalid(CloudEditIssue.EMPTY_PROMPT))
         }
         if (prompt.length > MAX_PROMPT_CHARS) {
-            return CloudEditResult.Failure(CloudEditError.Invalid("The prompt is too long"))
+            return CloudEditResult.Failure(CloudEditError.Invalid(CloudEditIssue.PROMPT_TOO_LONG))
         }
         validateUploads(request)?.let { return CloudEditResult.Failure(it) }
-        val endpoint = resolveEndpoint(EDITS_PATH)
+        val endpoint = resolveCloudEndpoint(networkPolicy, baseUrl, EDITS_PATH)
         when (endpoint) {
             null -> return CloudEditResult.Failure(
                 CloudEditError.EndpointRejected(CloudPolicyRejection.MALFORMED_URL)
@@ -134,16 +134,16 @@ class OpenAiEditProvider(
     private fun validateUploads(request: CloudEditRequest): CloudEditError? {
         val image = request.image.file
         if (!image.isFile || !image.canRead()) {
-            return CloudEditError.Invalid("The staged upload is missing")
+            return CloudEditError.Invalid(CloudEditIssue.STAGED_UPLOAD_MISSING)
         }
         if (image.length() > MAX_IMAGE_BYTES) return CloudEditError.TooLarge
         val mask = request.mask ?: return null
         if (!mask.file.isFile || !mask.file.canRead()) {
-            return CloudEditError.Invalid("The staged mask is missing")
+            return CloudEditError.Invalid(CloudEditIssue.STAGED_MASK_MISSING)
         }
         if (mask.file.length() > MAX_MASK_BYTES) return CloudEditError.TooLarge
         if (mask.width != request.image.width || mask.height != request.image.height) {
-            return CloudEditError.Invalid("The mask must match the uploaded image size")
+            return CloudEditError.Invalid(CloudEditIssue.MASK_SIZE_MISMATCH)
         }
         return null
     }
@@ -235,15 +235,6 @@ class OpenAiEditProvider(
         }
         headers["Accept"] = "application/json"
         return headers
-    }
-
-    private fun resolveEndpoint(path: String): EndpointResolution? = try {
-        when (val check = networkPolicy.validateEndpoint(joinCloudUrl(baseUrl, path))) {
-            is CloudEndpointCheck.Allowed -> EndpointResolution.Allowed(check)
-            is CloudEndpointCheck.Rejected -> EndpointResolution.Rejected(check.reason)
-        }
-    } catch (e: IllegalArgumentException) {
-        null
     }
 
     private fun mimeForFormat(format: String): String = when (format.lowercase()) {

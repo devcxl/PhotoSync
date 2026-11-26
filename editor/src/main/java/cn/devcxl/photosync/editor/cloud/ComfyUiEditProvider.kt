@@ -83,7 +83,7 @@ class ComfyUiEditProvider(
      */
     suspend fun resume(promptId: String): CloudEditResult = try {
         if (!ComfyPathGuard.isSafePromptId(promptId)) {
-            CloudEditResult.Failure(CloudEditError.Invalid("The prompt id is invalid"))
+            CloudEditResult.Failure(CloudEditError.Invalid(CloudEditIssue.PROMPT_ID_INVALID))
         } else {
             val entry = findFinishedEntry(promptId)
             if (entry == null) {
@@ -116,19 +116,19 @@ class ComfyUiEditProvider(
     ): CloudEditResult {
         val prompt = request.prompt.trim()
         if (prompt.isEmpty()) {
-            return CloudEditResult.Failure(CloudEditError.Invalid("The prompt is empty"))
+            return CloudEditResult.Failure(CloudEditError.Invalid(CloudEditIssue.EMPTY_PROMPT))
         }
         validateBinding()?.let { return CloudEditResult.Failure(it) }
         val image = request.image.file
         if (!image.isFile || !image.canRead()) {
-            return CloudEditResult.Failure(CloudEditError.Invalid("The staged upload is missing"))
+            return CloudEditResult.Failure(CloudEditError.Invalid(CloudEditIssue.STAGED_UPLOAD_MISSING))
         }
         if (image.length() > MAX_UPLOAD_BYTES) {
             return CloudEditResult.Failure(CloudEditError.TooLarge)
         }
         if (request.mask != null && !binding.supportsMask) {
             return CloudEditResult.Failure(
-                CloudEditError.Invalid("The configured workflow has no mask node")
+                CloudEditError.Invalid(CloudEditIssue.WORKFLOW_NO_MASK_NODE)
             )
         }
         onStage(CloudJobStage.SUBMITTING)
@@ -144,7 +144,10 @@ class ComfyUiEditProvider(
                 seed = request.seed
             )
         } catch (e: IllegalArgumentException) {
-            return CloudEditResult.Failure(CloudEditError.Invalid(e.message))
+            return CloudEditResult.Failure(CloudEditError.Invalid(
+                issue = CloudEditIssue.WORKFLOW_INVALID,
+                providerMessage = e.message
+            ))
         }
         val submittedId = client.submitPrompt(workflow, UUID.randomUUID().toString())
         val entry = awaitFinishedEntry(submittedId, onStage)
@@ -158,13 +161,13 @@ class ComfyUiEditProvider(
     ): ComfyUploadRef? {
         val mask = request.mask ?: return null
         if (!mask.file.isFile || !mask.file.canRead()) {
-            throw CloudHttpFailure(CloudEditError.Invalid("The staged mask is missing"))
+            throw CloudHttpFailure(CloudEditError.Invalid(CloudEditIssue.STAGED_MASK_MISSING))
         }
         if (mask.file.length() > MAX_UPLOAD_BYTES) {
             throw CloudHttpFailure(CloudEditError.TooLarge)
         }
         val ref = client.uploadMask(mask.file, MASK_UPLOAD_NAME, imageRef)
-        client.verifyUploadedFile(ref)
+        client.verifyUploadedFile(ref, expectedWidth = mask.width, expectedHeight = mask.height)
         return ref
     }
 
@@ -194,7 +197,7 @@ class ComfyUiEditProvider(
         val status = entry.optJSONObject("status")
         val statusStr = status?.stringOrNull("status_str")
         if (statusStr == STATUS_ERROR) {
-            throw CloudHttpFailure(CloudEditError.Invalid("ComfyUI workflow execution failed"))
+            throw CloudHttpFailure(CloudEditError.Invalid(CloudEditIssue.WORKFLOW_FAILED))
         }
         if (status?.optBoolean("completed") == true) return entry
         if (entry.optJSONObject("outputs")?.length() ?: 0 > 0) return entry
@@ -253,9 +256,9 @@ class ComfyUiEditProvider(
     }
 
     private fun validateBinding(): CloudEditError? = when {
-        binding.workflowJson.isBlank() -> CloudEditError.Invalid("The workflow JSON is empty")
-        binding.imageNodeId.isBlank() -> CloudEditError.Invalid("The image node id is missing")
-        binding.promptNodeId.isBlank() -> CloudEditError.Invalid("The prompt node id is missing")
+        binding.workflowJson.isBlank() -> CloudEditError.Invalid(CloudEditIssue.WORKFLOW_INVALID)
+        binding.imageNodeId.isBlank() -> CloudEditError.Invalid(CloudEditIssue.WORKFLOW_NODE_MISSING)
+        binding.promptNodeId.isBlank() -> CloudEditError.Invalid(CloudEditIssue.WORKFLOW_NODE_MISSING)
         else -> null
     }
 

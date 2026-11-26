@@ -97,11 +97,11 @@ class App : Application() {
     }
 
     /**
-     * Process-wide ORT session owner.
+     * Process-wide ORT session owner shared with `:editor`.
      *
-     * Lazy on purpose: nothing on the cold-start path, the gallery or the preset strip may load
-     * ONNX Runtime or a model. The first AI tool that needs inference touches this property; the
-     * manager itself only creates a session when `withSession` is called.
+     * Construction is deliberately cheap: no model is loaded and no scheduler thread is started
+     * until the first AI tool calls `withSession`. `App.onCreate` injects the instance into
+     * [EditorHostRegistry] so every editor tool reuses one manager instead of creating its own.
      */
     val ortSessionManager: OrtSessionManager by lazy {
         OrtSessionManager(tier = DeviceMemoryTier.detect(this))
@@ -142,6 +142,9 @@ class App : Application() {
         EditorHostRegistry.editStore = editStore
         EditorHostRegistry.gallerySink = MediaStoreGallerySink(contentResolver)
         EditorHostRegistry.tetheredPhotoEvents = syncedPhotoEvents
+        // Inject the singleton before any editor tool is constructed. Touching the lazy value only
+        // builds the lightweight wrapper; the manager loads no model until its first withSession.
+        EditorHostRegistry.ortSessionManager = ortSessionManager
         applicationScope.launch {
             File(cacheDir, TetheredPhotoIngestor.STAGING_DIR_NAME).deleteRecursively()
             seedPresets(editStore)

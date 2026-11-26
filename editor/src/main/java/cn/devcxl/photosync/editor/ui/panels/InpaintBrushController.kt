@@ -3,22 +3,21 @@ package cn.devcxl.photosync.editor.ui.panels
 import kotlin.math.ceil
 
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import timber.log.Timber
 
-import cn.devcxl.photosync.editor.domain.InpaintMaskBuffer
 import cn.devcxl.photosync.editor.domain.InpaintPatchRef
+import cn.devcxl.photosync.editor.domain.InpaintStroke
+import cn.devcxl.photosync.editor.domain.InpaintWorkRegion
 import cn.devcxl.photosync.editor.ui.INPAINT_OVERSIZE_LIMIT_PX
 import cn.devcxl.photosync.editor.ui.InpaintBrushCanvasHost
 import cn.devcxl.photosync.editor.ui.InpaintBrushMode
 import cn.devcxl.photosync.editor.ui.InpaintPanelHost
+import cn.devcxl.photosync.editor.ui.InpaintStrokeProjection
 import cn.devcxl.photosync.editor.ui.gesture.CanvasTransform
 import cn.devcxl.photosync.editor.ui.widgets.InpaintBrushOverlayView
 import cn.devcxl.photosync.editor.ui.widgets.InpaintPanelView
@@ -45,7 +44,7 @@ internal class InpaintBrushController(
     private val panel: InpaintPanelHost,
     private val scope: CoroutineScope,
     private val executor: InpaintExecutor,
-    private val workDispatcher: CoroutineDispatcher = Dispatchers.Default
+    private val projectionProvider: () -> InpaintStrokeProjection? = { null }
 ) {
 
     /**
@@ -81,18 +80,20 @@ internal class InpaintBrushController(
     }
 
     /**
-     * Runs the actual removal for [mask].
+     * Runs the actual removal for [strokes].
      *
      * Integration adapts [cn.devcxl.photosync.editor.vision.MiGanInpainter]; tests provide a fake.
+     * Strokes are the visible (post-Pass A) normalized capsules the user painted; projecting and
+     * rasterizing them at the true source resolution is the executor's job.
      */
     fun interface InpaintExecutor {
 
         /**
-         * @param mask Source-resolution coverage mask.
+         * @param strokes Committed visible-frame strokes, oldest first.
          * @param onProgress Completion callback in `0..100`, already on the work dispatcher.
          */
         suspend fun inpaint(
-            mask: InpaintMaskBuffer,
+            strokes: List<InpaintStroke>,
             onProgress: (Int) -> Unit
         ): Result<List<InpaintPatchRef>>
     }
@@ -105,21 +106,30 @@ internal class InpaintBrushController(
     var paintedWidthPx: Int = 0
         private set
 
-    /** Height of the painted bbox in source pixels, or `0` when nothing is painted. */
+    /** Height of the painted bbox in true source pixels, or `0` when nothing is painted. */
     var paintedHeightPx: Int = 0
         private set
 
+    /**
+     * Upright full-resolution source size once the host has probed it.
+     *
+     * Until then the overlay's preview size is used, so the amber advice still works on the proxy
+     * at a slightly conservative scale. Setting a new size re-evaluates the committed strokes.
+     */
+    var sourcePixelSize: Pair<Int, Int>? = null
+        set(value) {
+            field = value
+            refreshPaintedBounds()
+        }
+
     private var inferenceJob: Job? = null
+    private var lastVisibleStrokes: List<InpaintStroke> = emptyList()
 
     /** Wires the real overlay and panel listeners and pushes the current state into both. */
     fun attach(overlay: InpaintBrushOverlayView, panelView: InpaintPanelView) {
         overlay.listener = object : InpaintBrushOverlayView.Listener {
-            override fun onBboxEstimated(
-                widthPx: Int,
-                heightPx: Int,
-                isOversized: Boolean
-            ) {
-                handleBboxEstimated(widthPx, heightPx, isOversized)
+            override fun onInpaintStrokesChanged(strokes: List<InpaintStroke>) {
+                handleStrokesChanged(strokes)
             }
 
             override fun onInpaintTwoFingerPreempted() {
@@ -162,9 +172,8 @@ internal class InpaintBrushController(
     /** Drops every committed stroke and the amber advice. */
     fun clearStrokes() {
         canvas.clearStrokes()
-        paintedWidthPx = 0
-        paintedHeightPx = 0
-        panel.hideOversizeWarning()
+        lastVisibleStrokes = emptyList()
+        clearPaintedBounds()
         host.onInpaintStrokesCleared()
     }
 
@@ -175,25 +184,57 @@ internal class InpaintBrushController(
     }
 
     /** Mirrors the painted bbox into the panel advice and the host. */
-    fun handleBboxEstimated(widthPx: Int, heightPx: Int, isOversized: Boolean) {
-        if (widthPx <= 0 || heightPx <= 0) {
-            paintedWidthPx = 0
-            paintedHeightPx = 0
-            panel.hideOversizeWarning()
-            host.onInpaintBboxEstimated(0, 0, false)
+    fun handleStrokesChanged(strokes: List<InpaintStroke>) {
+        lastVisibleStrokes = strokes
+        refreshPaintedBounds()
+    }
+
+    private fun refreshPaintedBounds() {
+        val (sourceWidth, sourceHeight) = currentSourceSize() ?: run {
+            clearPaintedBounds()
             return
         }
-        paintedWidthPx = widthPx
-        paintedHeightPx = heightPx
-        val oversized = isOversized ||
-            widthPx > INPAINT_OVERSIZE_LIMIT_PX ||
-            heightPx > INPAINT_OVERSIZE_LIMIT_PX
+        val bounds = if (lastVisibleStrokes.isEmpty()) {
+            null
+        } else {
+            val projection = projectionProvider()
+            val projected = projection?.projectStrokes(lastVisibleStrokes) ?: lastVisibleStrokes
+            InpaintWorkRegion.boundsOf(projected, sourceWidth, sourceHeight)
+        }
+        if (bounds == null) {
+            clearPaintedBounds()
+            return
+        }
+        paintedWidthPx = bounds.width
+        paintedHeightPx = bounds.height
+        val oversized = bounds.width > INPAINT_OVERSIZE_LIMIT_PX ||
+            bounds.height > INPAINT_OVERSIZE_LIMIT_PX
         if (oversized) {
-            panel.showOversizeWarning(widthPx, heightPx, suggestedSplits(widthPx, heightPx))
+            panel.showOversizeWarning(
+                bounds.width,
+                bounds.height,
+                suggestedSplits(bounds.width, bounds.height)
+            )
         } else {
             panel.hideOversizeWarning()
         }
-        host.onInpaintBboxEstimated(widthPx, heightPx, oversized)
+        host.onInpaintBboxEstimated(bounds.width, bounds.height, oversized)
+    }
+
+    private fun currentSourceSize(): Pair<Int, Int>? {
+        sourcePixelSize?.let { (width, height) ->
+            if (width > 0 && height > 0) return width to height
+        }
+        val width = canvas.sourceWidth
+        val height = canvas.sourceHeight
+        return if (width > 0 && height > 0) width to height else null
+    }
+
+    private fun clearPaintedBounds() {
+        paintedWidthPx = 0
+        paintedHeightPx = 0
+        panel.hideOversizeWarning()
+        host.onInpaintBboxEstimated(0, 0, false)
     }
 
     /**
@@ -217,16 +258,10 @@ internal class InpaintBrushController(
         inferenceJob = scope.launch {
             var outcome: Result<List<InpaintPatchRef>>? = null
             try {
-                val mask = withContext(workDispatcher) {
-                    canvas.strokeLayer.rasterize(canvas.sourceWidth, canvas.sourceHeight)
-                }
+                val strokes = canvas.strokeLayer.snapshot()
                 currentCoroutineContext().ensureActive()
-                if (!mask.hasPaintedPixels()) {
-                    host.onInpaintNoStrokes()
-                } else {
-                    outcome = executor.inpaint(mask) { percent ->
-                        host.onInpaintInferenceProgress(percent.coerceIn(0, 100))
-                    }
+                outcome = executor.inpaint(strokes) { percent ->
+                    host.onInpaintInferenceProgress(percent.coerceIn(0, 100))
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -253,9 +288,8 @@ internal class InpaintBrushController(
         outcome.fold(
             onSuccess = { patches ->
                 canvas.clearStrokes()
-                paintedWidthPx = 0
-                paintedHeightPx = 0
-                panel.hideOversizeWarning()
+                lastVisibleStrokes = emptyList()
+                clearPaintedBounds()
                 host.onInpaintPatchesReady(patches)
             },
             onFailure = { error ->

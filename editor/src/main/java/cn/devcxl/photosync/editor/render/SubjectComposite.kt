@@ -229,8 +229,9 @@ internal object SubjectCompositeFactory {
  * unavailable. It maps every output pixel through the same Pass A inverse homography and warp as
  * [GeometryCpuResampler], samples the source-space composite, and
  * composites exactly like the Pass D shader:
- * - [SubjectBackgroundMode.SOLID] → `a F + (1 - a) B_solid`;
- * - [SubjectBackgroundMode.TRANSPARENT] → the canvas checkerboard representation.
+ * - [SubjectBackgroundMode.SOLID] → `a F + (1 - a) B_solid`, applied before Pass D;
+ * - [SubjectBackgroundMode.TRANSPARENT] → `F` with `A = alpha`, so the caller can run Pass D on
+ *   the foreground only and draw the canvas checkerboard afterwards.
  */
 internal object SubjectCpuComposer {
 
@@ -239,9 +240,12 @@ internal object SubjectCpuComposer {
     private const val CHECKER_CELL_PX = 12
 
     /**
-     * Returns [pixels] composited with [composite], or the input when the subject is inactive.
+     * Composites the subject foreground into [pixels], returning a new buffer.
+     *
+     * Transparent subjects keep their alpha in the `A` byte and write the decontaminated foreground
+     * into `RGB`; Pass D preserves that alpha, so [drawCheckerboard] can run after the effects.
      */
-    fun apply(
+    fun applyForeground(
         pixels: IntArray,
         width: Int,
         height: Int,
@@ -255,8 +259,6 @@ internal object SubjectCpuComposer {
         val output = IntArray(pixels.size)
         val foreground = FloatArray(3)
         val solid = argbToRgb(subject.bgColorArgb)
-        val checkerLight = argbToRgb(0xFF000000.toInt() or CHECKER_LIGHT)
-        val checkerDark = argbToRgb(0xFF000000.toInt() or CHECKER_DARK)
         for (row in 0 until height) {
             val v = (row + 0.5f) / height
             for (column in 0 until width) {
@@ -280,8 +282,7 @@ internal object SubjectCpuComposer {
                     foreground[2] = mixFloat(foreground[2], (source and 0xFF) / 255.0f, bodyWeight)
                 }
                 output[index] = if (subject.bgMode == SubjectBackgroundMode.TRANSPARENT) {
-                    val light = ((column / CHECKER_CELL_PX) + (row / CHECKER_CELL_PX)) % 2 == 0
-                    mix(foreground, if (light) checkerLight else checkerDark, alpha)
+                    (toByte(alpha) shl 24) or packRgb(foreground)
                 } else {
                     mix(foreground, solid, alpha)
                 }
@@ -289,6 +290,36 @@ internal object SubjectCpuComposer {
         }
         return output
     }
+
+    /**
+     * Draws the canvas checkerboard behind the alpha-carrying [pixels] produced by
+     * [applyForeground].
+     *
+     * Must run **after** Pass D: the checkerboard is presentation-only, so LUT/grain/vignette may
+     * never darken it. Fully opaque buffers are returned unchanged.
+     */
+    fun drawCheckerboard(pixels: IntArray, width: Int, height: Int) {
+        if (width <= 0 || height <= 0) return
+        val checkerLight = argbToRgb(0xFF000000.toInt() or CHECKER_LIGHT)
+        val checkerDark = argbToRgb(0xFF000000.toInt() or CHECKER_DARK)
+        val foreground = FloatArray(3)
+        for (row in 0 until height) {
+            for (column in 0 until width) {
+                val index = row * width + column
+                val pixel = pixels[index]
+                val alpha = (pixel ushr 24) / 255.0f
+                if (alpha >= 1.0f) continue
+                foreground[0] = ((pixel ushr 16) and 0xFF) / 255.0f
+                foreground[1] = ((pixel ushr 8) and 0xFF) / 255.0f
+                foreground[2] = (pixel and 0xFF) / 255.0f
+                val light = ((column / CHECKER_CELL_PX) + (row / CHECKER_CELL_PX)) % 2 == 0
+                pixels[index] = mix(foreground, if (light) checkerLight else checkerDark, alpha)
+            }
+        }
+    }
+
+    private fun packRgb(rgb: FloatArray): Int =
+        (toByte(rgb[0]) shl 16) or (toByte(rgb[1]) shl 8) or toByte(rgb[2])
 
     private fun mixFloat(from: Float, to: Float, weight: Float): Float =
         from + (to - from) * weight

@@ -17,7 +17,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 import cn.devcxl.photosync.editor.domain.InpaintBBox
-import cn.devcxl.photosync.editor.domain.InpaintMaskBuffer
 import cn.devcxl.photosync.editor.domain.InpaintPatchRef
 import cn.devcxl.photosync.editor.domain.InpaintStroke
 import cn.devcxl.photosync.editor.domain.InpaintStrokeLayer
@@ -58,17 +57,22 @@ class InpaintBrushControllerTest {
     @Test
     fun shouldShowTheAmberAdviceAndSuggestSplits_whenTheBboxExceeds256() {
         val controller = controller(NoopExecutor())
+        val wide = InpaintStroke(
+            erase = false,
+            radiusNorm = 0.02f,
+            points = listOf(InpaintStrokePoint(0.1f, 0.5f), InpaintStrokePoint(0.36f, 0.5f))
+        )
 
-        controller.handleBboxEstimated(300, 100, isOversized = false)
+        controller.handleStrokesChanged(listOf(wide))
 
-        assertEquals(Triple(300, 100, 2), panel.warning)
-        assertEquals(Triple(300, 100, true), host.lastBbox)
-        assertTrue(controller.paintedWidthPx == 300)
+        assertEquals(Triple(300, 40, 2), panel.warning)
+        assertEquals(Triple(300, 40, true), host.lastBbox)
+        assertEquals(300, controller.paintedWidthPx)
 
-        controller.handleBboxEstimated(200, 100, isOversized = false)
+        controller.handleStrokesChanged(listOf(stroke()))
 
         assertNull(panel.warning)
-        assertEquals(Triple(200, 100, false), host.lastBbox)
+        assertEquals(Triple(40, 40, false), host.lastBbox)
         assertEquals(1, panel.warningHiddenCount)
     }
 
@@ -153,8 +157,7 @@ class InpaintBrushControllerTest {
             canvas = canvas,
             panel = panel,
             scope = scope,
-            executor = executor,
-            workDispatcher = Dispatchers.Default
+            executor = executor
         )
 
     private fun stroke(): InpaintStroke = InpaintStroke(
@@ -260,7 +263,7 @@ class InpaintBrushControllerTest {
 
     private class NoopExecutor : InpaintBrushController.InpaintExecutor {
         override suspend fun inpaint(
-            mask: InpaintMaskBuffer,
+            strokes: List<InpaintStroke>,
             onProgress: (Int) -> Unit
         ): Result<List<InpaintPatchRef>> = Result.success(emptyList())
     }
@@ -269,7 +272,7 @@ class InpaintBrushControllerTest {
         val started = CompletableDeferred<Unit>()
 
         override suspend fun inpaint(
-            mask: InpaintMaskBuffer,
+            strokes: List<InpaintStroke>,
             onProgress: (Int) -> Unit
         ): Result<List<InpaintPatchRef>> {
             started.complete(Unit)
@@ -281,7 +284,7 @@ class InpaintBrushControllerTest {
         private val patch: InpaintPatchRef
     ) : InpaintBrushController.InpaintExecutor {
         override suspend fun inpaint(
-            mask: InpaintMaskBuffer,
+            strokes: List<InpaintStroke>,
             onProgress: (Int) -> Unit
         ): Result<List<InpaintPatchRef>> {
             onProgress(0)

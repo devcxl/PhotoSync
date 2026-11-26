@@ -39,6 +39,11 @@ enum class CloudProviderKind {
 /**
  * Static capabilities a provider advertises to the editor UI.
  *
+ * The settings page consumes [CloudProviderCapabilities.maskMode] to decide whether an edit form
+ * offers a painted mask; the upload/size/seed fields are gated by the same record. Every provider
+ * fills it at construction so the future cloud-edit panel never has to guess a provider's contract
+ * from its class name.
+ *
  * @property maskMode Whether a painted mask is enforced, advisory or ignored.
  * @property maxImages Maximum number of input images accepted in one request.
  * @property maxUploadBytes Maximum bytes accepted for a single uploaded image.
@@ -113,8 +118,10 @@ class CloudEditRequest(
 /**
  * A staged upload owned by a [CloudEditRequest] rather than by [CloudUploadSanitizer].
  *
- * Use it to wrap an editable mask PNG written by [CloudUploadSanitizer.writeEditableMaskPng] so the
- * request can delete it with the same lifecycle as the sanitized photo.
+ * This is the seam the editor's cloud-edit panel will use to hand an editable mask PNG (written by
+ * [CloudUploadSanitizer.writeEditableMaskPng]) to a request, so the mask shares the photo's
+ * delete-on-close lifecycle. The settings-only slice does not construct it yet; the provider tests
+ * already reuse the same class so their fixtures cannot drift from the future integration.
  */
 class CloudUploadHandle(
     private val backingFile: File,
@@ -152,6 +159,75 @@ sealed interface CloudEditResult {
 }
 
 /**
+ * Machine-readable reason behind a [CloudEditError.Invalid].
+ *
+ * The domain layer never carries user-facing English text: the settings page maps these codes to
+ * localized strings, so a provider detail can change without leaking a debug sentence into the UI.
+ */
+enum class CloudEditIssue {
+
+    /** No specific local reason; the provider may have supplied a sanitized detail. */
+    GENERIC,
+
+    /** The provider profile has no model name. */
+    NO_MODEL_CONFIGURED,
+
+    /** The user prompt is blank. */
+    EMPTY_PROMPT,
+
+    /** The user prompt exceeds the provider limit. */
+    PROMPT_TOO_LONG,
+
+    /** The staged photo upload disappeared before the request could send it. */
+    STAGED_UPLOAD_MISSING,
+
+    /** The staged mask upload disappeared before the request could send it. */
+    STAGED_MASK_MISSING,
+
+    /** The uploaded mask dimensions differ from the photo. */
+    MASK_SIZE_MISMATCH,
+
+    /** ComfyUI accepted `/upload/mask` but `/view` does not return the uploaded mask. */
+    MASK_NOT_STORED,
+
+    /** A server-returned path failed the traversal/name guard. */
+    UNSAFE_FILE_PATH,
+
+    /** The user workflow JSON is empty, malformed or incomplete. */
+    WORKFLOW_INVALID,
+
+    /** ComfyUI refused the workflow with node errors. */
+    WORKFLOW_REJECTED,
+
+    /** ComfyUI reported that the workflow execution failed. */
+    WORKFLOW_FAILED,
+
+    /** The configured workflow has no mask input node. */
+    WORKFLOW_NO_MASK_NODE,
+
+    /** The configured workflow misses its image or prompt node id. */
+    WORKFLOW_NODE_MISSING,
+
+    /** A queue id is not a safe ComfyUI prompt id. */
+    PROMPT_ID_INVALID,
+
+    /** Gemini ended the interaction in a failed state. */
+    INTERACTION_FAILED,
+
+    /** A provider response was not valid JSON. */
+    RESPONSE_NOT_JSON,
+
+    /** A provider response contained no image block. */
+    RESPONSE_NO_IMAGE,
+
+    /** A base64 image payload could not be decoded. */
+    RESPONSE_BAD_BASE64,
+
+    /** A provider returned bytes that are not a supported image. */
+    RESPONSE_NOT_IMAGE
+}
+
+/**
  * Classified cloud failure. Messages never contain API keys, authorization headers or file paths.
  *
  * Every error except [RateLimited] and [Server] is terminal: the providers never retry a POST
@@ -162,8 +238,16 @@ sealed class CloudEditError {
     /** 401/403: the key or reverse-proxy credential was rejected. */
     data object Auth : CloudEditError()
 
-    /** 400/422 or a locally invalid request. [message] is the provider's sanitized detail. */
-    data class Invalid(val message: String?) : CloudEditError()
+    /**
+     * 400/422 or a locally invalid request.
+     *
+     * @param issue Typed local reason the settings page localizes.
+     * @param providerMessage Sanitized provider detail, when the response body carried one.
+     */
+    data class Invalid(
+        val issue: CloudEditIssue = CloudEditIssue.GENERIC,
+        val providerMessage: String? = null
+    ) : CloudEditError()
 
     /** 413, a local upload above the provider limit, or a response above the 32 MiB ceiling. */
     data object TooLarge : CloudEditError()

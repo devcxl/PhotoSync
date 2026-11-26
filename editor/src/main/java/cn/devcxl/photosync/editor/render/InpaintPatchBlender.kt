@@ -22,28 +22,34 @@ internal class InpaintPatchBlender {
     /**
      * Blends [decoded] over [pixels], a packed ARGB buffer with [stride] ints per row.
      *
-     * @param originX First bbox column inside [pixels].
-     * @param originY First bbox row inside [pixels].
+     * @param patchRect Full patch bbox in **buffer** pixel coordinates; its extent defines how the
+     *   patch scales.
+     * @param clip Sub-rectangle of [patchRect] that lies inside the buffer; defaults to the bbox.
      * @return Number of pixels whose alpha was greater than zero.
      */
     fun blendArgb(
         pixels: IntArray,
         stride: Int,
-        originX: Int,
-        originY: Int,
-        rect: InpaintPixelRect,
-        decoded: InpaintDecodedPatch
+        patchRect: InpaintPixelRect,
+        decoded: InpaintDecodedPatch,
+        clip: InpaintPixelRect = patchRect
     ): Long {
+        require(stride > 0) { "Stride must be positive" }
+        val bufferHeight = pixels.size / stride
+        val clipped = clip.clampedTo(stride, bufferHeight)
+        if (clipped.isEmpty) return 0L
         var blended = 0L
-        for (y in 0 until rect.height) {
-            val row = (originY + y) * stride + originX
-            for (x in 0 until rect.width) {
-                val alpha = sampleAlpha(decoded, x, y, rect.width, rect.height)
+        for (y in clipped.top until clipped.bottom) {
+            val row = y * stride
+            for (x in clipped.left until clipped.right) {
+                val sampleX = x - patchRect.left
+                val sampleY = y - patchRect.top
+                val alpha = sampleAlpha(decoded, sampleX, sampleY, patchRect.width, patchRect.height)
                 if (alpha == 0) continue
                 blended++
                 val index = row + x
                 val source = pixels[index]
-                val patch = sampleRgb(decoded, x, y, rect.width, rect.height)
+                val patch = sampleRgb(decoded, sampleX, sampleY, patchRect.width, patchRect.height)
                 val weight = alpha / 255.0f
                 val red = lerp((source shr 16) and 0xFF, (patch shr 16) and 0xFF, weight)
                 val green = lerp((source shr 8) and 0xFF, (patch shr 8) and 0xFF, weight)

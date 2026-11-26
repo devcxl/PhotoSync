@@ -22,6 +22,7 @@ import cn.devcxl.photosync.editor.domain.PassDEffectsParams
 import cn.devcxl.photosync.editor.domain.PreviewDetailPass
 import cn.devcxl.photosync.editor.domain.SpatialDetailParams
 import cn.devcxl.photosync.editor.domain.Srgb8Packer
+import cn.devcxl.photosync.editor.domain.SubjectBackgroundMode
 import cn.devcxl.photosync.editor.domain.ToneShaderMath
 import cn.devcxl.photosync.editor.domain.ToneShaderParams
 import cn.devcxl.photosync.wrapper.LinearRawBuffer
@@ -165,7 +166,7 @@ internal object PreviewCacheWriter {
             skinMask = skinMask?.takeIf { it.size == SkinMaskMath.MASK_SIZE * SkinMaskMath.MASK_SIZE },
             beforeEffects = subject?.let { composite ->
                 { buffer, width, height ->
-                    SubjectCpuComposer.apply(
+                    SubjectCpuComposer.applyForeground(
                         pixels = buffer,
                         width = width,
                         height = height,
@@ -178,7 +179,8 @@ internal object PreviewCacheWriter {
                         warpField = warpField
                     ).copyInto(buffer)
                 }
-            }
+            },
+            afterEffects = checkerboardEffects(graph, subject)
         )
         return Bitmap.createBitmap(
             pixels,
@@ -272,7 +274,7 @@ internal object PreviewCacheWriter {
             fullResolutionShortEdge = fullResolutionShortEdge,
             skinMask = skinMask
         )
-        val afterSubject = SubjectCpuComposer.apply(
+        val afterSubject = SubjectCpuComposer.applyForeground(
             pixels = afterPassC,
             width = width,
             height = height,
@@ -282,7 +284,19 @@ internal object PreviewCacheWriter {
             warpField = warpField
         )
         applyPassDEffectsToPixels(afterSubject, width, height, graph, lut)
+        if (subject != null && graph.subject.bgMode == SubjectBackgroundMode.TRANSPARENT) {
+            SubjectCpuComposer.drawCheckerboard(afterSubject, width, height)
+        }
         return afterSubject
+    }
+
+    /** Pass-D presentation stage: the checkerboard must never be graded by LUT/grain/vignette. */
+    private fun checkerboardEffects(
+        graph: EditGraph,
+        subject: SubjectComposite?
+    ): ((IntArray, Int, Int) -> Unit)? {
+        if (subject == null || graph.subject.bgMode != SubjectBackgroundMode.TRANSPARENT) return null
+        return { pixels, width, height -> SubjectCpuComposer.drawCheckerboard(pixels, width, height) }
     }
 
     private fun applyPassCToPixels(

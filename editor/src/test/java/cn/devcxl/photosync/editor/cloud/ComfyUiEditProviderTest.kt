@@ -38,7 +38,7 @@ class ComfyUiEditProviderTest {
     fun shouldUploadInjectPollAndFetch_whenWorkflowRuns() {
         val uploadBytes = imageBytes()
         val resultBytes = imageBytes()
-        val maskPng = imageBytes(width = 4, height = 4)
+        val maskPng = imageBytes(width = 8, height = 6)
         var imageParts: List<MultipartPart> = emptyList()
         var maskParts: List<MultipartPart> = emptyList()
         lateinit var promptRequest: TestHttpRequest
@@ -146,6 +146,29 @@ class ComfyUiEditProviderTest {
     }
 
     @Test
+    fun shouldRejectMask_whenViewReturnsAPngWithAnotherDimensions() {
+        startServer { request ->
+            when (request.path) {
+                "/upload/image" ->
+                    jsonResponse("""{"name":"upload.jpg","subfolder":"","type":"input"}""")
+                "/upload/mask" ->
+                    jsonResponse("""{"name":"mask.png","subfolder":"","type":"input"}""")
+                "/view" -> bytesResponse(imageBytes(width = 4, height = 4))
+                else -> jsonResponse("""{"error":{"message":"unexpected route"}}""", 400)
+            }
+        }
+
+        val result = runBlocking { provider().edit(newRequest()) }
+
+        val failure = result as CloudEditResult.Failure
+        assertEquals(
+            CloudEditIssue.MASK_NOT_STORED,
+            (failure.error as CloudEditError.Invalid).issue
+        )
+        assertEquals(0, server!!.requestCount { it.path == "/prompt" })
+    }
+
+    @Test
     fun shouldRejectPathTraversal_whenMaskResponseNamesParentDirectory() {
         startServer { request ->
             when (request.path) {
@@ -172,7 +195,7 @@ class ComfyUiEditProviderTest {
                     jsonResponse("""{"name":"upload.jpg","subfolder":"","type":"input"}""")
                 request.path == "/upload/mask" ->
                     jsonResponse("""{"name":"mask.png","subfolder":"","type":"input"}""")
-                request.path == "/view" -> bytesResponse(imageBytes(width = 4, height = 4))
+                request.path == "/view" -> bytesResponse(imageBytes(width = 8, height = 6))
                 request.path == "/prompt" ->
                     jsonResponse("""{"prompt_id":"$PROMPT_ID","node_errors":{}}""")
                 request.path.startsWith("/history/") ->
@@ -196,7 +219,7 @@ class ComfyUiEditProviderTest {
                     jsonResponse("""{"name":"upload.jpg","subfolder":"","type":"input"}""")
                 "/upload/mask" ->
                     jsonResponse("""{"name":"mask.png","subfolder":"","type":"input"}""")
-                "/view" -> bytesResponse(imageBytes(width = 4, height = 4))
+                "/view" -> bytesResponse(imageBytes(width = 8, height = 6))
                 "/prompt" -> jsonResponse(
                     """{"error":{"message":"Prompt outputs failed validation"},""" +
                         """"node_errors":{"10":{"errors":[]}}}""",
@@ -224,7 +247,7 @@ class ComfyUiEditProviderTest {
                 request.path == "/upload/mask" ->
                     jsonResponse("""{"name":"mask.png","subfolder":"","type":"input"}""")
                 request.path == "/view" && request.query["filename"] == MASK_NAME ->
-                    bytesResponse(imageBytes(width = 4, height = 4))
+                    bytesResponse(imageBytes(width = 8, height = 6))
                 request.path == "/prompt" -> {
                     promptCalls.incrementAndGet()
                     jsonResponse("""{"prompt_id":"$PROMPT_ID","node_errors":{}}""")

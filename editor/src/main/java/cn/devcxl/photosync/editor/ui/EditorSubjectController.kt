@@ -7,33 +7,24 @@ import android.content.Context
 import android.widget.Toast
 
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import timber.log.Timber
 
 import cn.devcxl.photosync.editor.R
+import cn.devcxl.photosync.editor.contract.EditorHostRegistry
 import cn.devcxl.photosync.editor.domain.AiAssetStore
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.EditParameterKey
 import cn.devcxl.photosync.editor.domain.EditorUndoController
-import cn.devcxl.photosync.editor.domain.LinearRawPreviewRenderer
 import cn.devcxl.photosync.editor.domain.SubjectBackgroundMode
 import cn.devcxl.photosync.editor.domain.SubjectOps
 import cn.devcxl.photosync.editor.render.EditorPreviewSession
 import cn.devcxl.photosync.editor.render.EditorSource
 import cn.devcxl.photosync.editor.render.SubjectComposite
-import cn.devcxl.photosync.editor.render.SubjectCompositeLoader
 import cn.devcxl.photosync.editor.ui.panels.AiInferenceBarController
-import cn.devcxl.photosync.editor.vision.AiModelCatalog
-import cn.devcxl.photosync.editor.vision.AiModelDownloadManager
 import cn.devcxl.photosync.editor.vision.DeviceMemoryTier
 import cn.devcxl.photosync.editor.vision.ModnetSubjectSegmenter
 import cn.devcxl.photosync.editor.vision.OrtSessionManager
-import cn.devcxl.photosync.editor.vision.SubjectImage
 
 /**
  * Owns the `AI -> 主体` workflow from the panel tap to the committed `EditGraph`.
@@ -52,7 +43,7 @@ import cn.devcxl.photosync.editor.vision.SubjectImage
  */
 internal class EditorSubjectController(
     private val context: Context,
-    private val filesDir: File,
+    filesDir: File,
     private val photoId: Long,
     private val undoController: EditorUndoController,
     private val previewSession: EditorPreviewSession,
@@ -60,20 +51,46 @@ internal class EditorSubjectController(
     private val scope: CoroutineScope,
     private val sourceProvider: () -> EditorSource?,
     private val onGraphCommitted: (EditGraph, EditParameterKey) -> Unit,
-    private val onImportRequested: () -> Unit,
-    private val onRepaintRequested: () -> Unit
+    onImportRequested: () -> Unit,
+    onRepaintRequested: () -> Unit
 ) {
 
-    private val assets = AiAssetStore(filesDir)
-    private val downloads = AiModelDownloadManager(
-        File(filesDir, AiModelCatalog.MODELS_DIR_NAME)
+    /**
+     * The process-wide ORT owner, or a private fallback for hosts that did not inject one.
+     *
+     * A shared manager is never closed here: its tiered idle release, memory-pressure hook and
+     * single-flight model switch are what keep one native session alive across both AI tools.
+     */
+    private val sharedSessions = EditorHostRegistry.ortSessionManager
+    private val sessions = sharedSessions ?: OrtSessionManager(
+        tier = DeviceMemoryTier.detect(context)
     )
-    private val sessions = OrtSessionManager(tier = DeviceMemoryTier.detect(context))
-    private val segmenter = ModnetSubjectSegmenter(sessions, assets)
+    private val ownsSessions = sharedSessions == null
+    private val segmenter = ModnetSubjectSegmenter(sessions, AiAssetStore(filesDir))
+    private val installer = SubjectModelInstaller(
+        context = context,
+        filesDir = filesDir,
+        scope = scope,
+        inferenceBar = inferenceBar,
+        onImportRequested = onImportRequested
+    )
+    private val composites = SubjectCompositeRefresher(
+        filesDir = filesDir,
+        sourceProvider = sourceProvider,
+        scope = scope,
+        onCompositeReady = previewSession::applySubjectComposite,
+        onRepaintRequested = onRepaintRequested
+    )
+    private val inference = SubjectInferenceRunner(
+        context = context,
+        photoId = photoId,
+        inferenceBar = inferenceBar,
+        sourceProvider = sourceProvider,
+        composites = composites,
+        segmenter = segmenter
+    )
 
     private var job: Job? = null
-    private var cachedMaskRef: String = ""
-    private var cachedComposite: SubjectComposite? = null
     private var pendingMode: SubjectBackgroundMode? = null
     private var pendingColor: Int = SubjectOps.DEFAULT_BG_COLOR_ARGB
 
@@ -81,14 +98,16 @@ internal class EditorSubjectController(
     fun cancel() {
         job?.cancel()
         job = null
+        installer.cancel()
         pendingMode = null
         if (inferenceBar.isVisible) inferenceBar.dismiss()
     }
 
-    /** Releases the ORT session this controller owns. */
+    /** Releases the tool-owned jobs; the shared ORT manager stays alive. */
     fun release() {
         cancel()
-        sessions.close()
+        composites.reset()
+        if (ownsSessions) sessions.close()
     }
 
     /**
@@ -127,60 +146,37 @@ internal class EditorSubjectController(
     fun restore(graph: EditGraph) {
         if (graph.subject.bgMode == SubjectBackgroundMode.ORIGINAL) return
         if (graph.subject.maskRef.isBlank()) {
-            commit(graph.copy(subject = graph.subject.copy(bgMode = SubjectBackgroundMode.ORIGINAL)), null)
+            commit(
+                graph.copy(subject = graph.subject.copy(bgMode = SubjectBackgroundMode.ORIGINAL)),
+                null
+            )
             return
         }
         launchWork {
-            val composite = loadComposite(graph, graph.subject)
+            val composite = composites.load(graph)
+            val current = undoController.currentGraph
             if (composite == null) {
-                commitOnMain(
-                    undoController.currentGraph.copy(
-                        subject = undoController.currentGraph.subject.copy(
-                            bgMode = SubjectBackgroundMode.ORIGINAL
-                        )
-                    ),
-                    null
-                )
+                val fallback = current.subject.copy(bgMode = SubjectBackgroundMode.ORIGINAL)
+                commitOnMain(current.copy(subject = fallback), null)
             } else {
-                commitOnMain(undoController.currentGraph, composite)
+                commitOnMain(current, composite)
             }
         }
     }
 
     /** Persists a user-selected `.onnx` file and continues the pending mask generation. */
     fun importModel(input: InputStream) {
-        launchWork {
-            inferenceBar.show(context.getString(R.string.editor_subject_model_importing))
-            inferenceBar.updateProgress(10)
-            val result = downloads.importLocal(AiModelCatalog.MODNET_PORTRAIT, input)
-            inferenceBar.dismiss()
-            result.fold(
-                onSuccess = { model ->
-                    generateWithModel(
-                        modelFile = model,
-                        graph = undoController.currentGraph,
-                        mode = pendingMode ?: undoController.currentGraph.subject.bgMode,
-                        color = pendingColor
-                    )
-                },
-                onFailure = { error ->
-                    Timber.e(error, "The local MODNet model was rejected")
-                    showUnavailable()
-                    AiModelPromptDialog.show(
-                        context = context,
-                        spec = AiModelCatalog.MODNET_PORTRAIT,
-                        onDownload = {
-                            downloadModel(
-                                undoController.currentGraph,
-                                pendingMode ?: SubjectBackgroundMode.ORIGINAL,
-                                pendingColor
-                            )
-                        },
-                        onImport = onImportRequested
-                    )
-                }
-            )
-        }
+        val graph = undoController.currentGraph
+        installer.import(
+            input = input,
+            onReady = { model ->
+                generateWithModel(model, graph, pendingMode ?: graph.subject.bgMode, pendingColor)
+            },
+            onFailed = {
+                showUnavailable()
+                promptModelInstall()
+            }
+        )
     }
 
     /**
@@ -192,15 +188,7 @@ internal class EditorSubjectController(
      * cut-out in lock-step with the canvas; an absent mask or mode is simply a no-op.
      */
     fun refreshSourceComposite(graph: EditGraph) {
-        if (graph.subject.maskRef.isBlank()) return
-        cachedComposite = null
-        cachedMaskRef = ""
-        // Deliberately not through launchWork: this refresh must never cancel an in-flight mask run.
-        scope.launch {
-            val composite = loadComposite(graph, graph.subject) ?: return@launch
-            previewSession.applySubjectComposite(composite)
-            onRepaintRequested()
-        }
+        composites.refresh(graph)
     }
 
     private fun applyExistingMask(
@@ -209,7 +197,7 @@ internal class EditorSubjectController(
         color: Int = graph.subject.bgColorArgb
     ) {
         launchWork {
-            val composite = loadComposite(graph, graph.subject)
+            val composite = composites.load(graph)
             if (composite == null) {
                 generateMask(graph.copy(subject = graph.subject.copy(maskRef = "")), mode, color)
                 return@launchWork
@@ -226,51 +214,39 @@ internal class EditorSubjectController(
         }
     }
 
-    private fun generateMask(
-        graph: EditGraph,
-        mode: SubjectBackgroundMode,
-        color: Int
-    ) {
+    private fun generateMask(graph: EditGraph, mode: SubjectBackgroundMode, color: Int) {
         pendingMode = mode
         pendingColor = color
-        val spec = AiModelCatalog.MODNET_PORTRAIT
-        val modelFile = downloads.modelFile(spec)
-        if (!downloads.isInstalled(spec)) {
-            AiModelPromptDialog.show(
-                context = context,
-                spec = spec,
-                onDownload = { downloadModel(graph, mode, color) },
-                onImport = onImportRequested
-            )
+        if (!installer.isInstalled()) {
+            installer.showPrompt(onDownload = { downloadModel(graph, mode, color) })
             return
         }
         launchWork {
-            generateWithModel(modelFile, graph, mode, color)
+            generateWithModel(installer.modelFile(), graph, mode, color)
         }
     }
 
     private fun downloadModel(graph: EditGraph, mode: SubjectBackgroundMode, color: Int) {
-        launchWork {
-            inferenceBar.show(context.getString(R.string.editor_subject_model_downloading))
-            val result = downloads.download(AiModelCatalog.MODNET_PORTRAIT) { progress ->
-                val percent = (progress * PROGRESS_SCALE).toInt()
-                scope.launch { inferenceBar.updateProgress(percent) }
+        installer.download(
+            onReady = { model -> generateWithModel(model, graph, mode, color) },
+            onFailed = {
+                showUnavailable()
+                promptModelInstall()
             }
-            inferenceBar.dismiss()
-            result.fold(
-                onSuccess = { model -> generateWithModel(model, graph, mode, color) },
-                onFailure = { error ->
-                    Timber.e(error, "The MODNet model download failed")
-                    showUnavailable()
-                    AiModelPromptDialog.show(
-                        context = context,
-                        spec = AiModelCatalog.MODNET_PORTRAIT,
-                        onDownload = { downloadModel(undoController.currentGraph, mode, color) },
-                        onImport = onImportRequested
-                    )
-                }
-            )
-        }
+        )
+    }
+
+    private fun promptModelInstall() {
+        val graph = undoController.currentGraph
+        installer.showPrompt(
+            onDownload = {
+                downloadModel(
+                    graph = graph,
+                    mode = pendingMode ?: graph.subject.bgMode,
+                    color = pendingColor
+                )
+            }
+        )
     }
 
     private suspend fun generateWithModel(
@@ -279,86 +255,17 @@ internal class EditorSubjectController(
         mode: SubjectBackgroundMode = graph.subject.bgMode,
         color: Int = graph.subject.bgColorArgb
     ) {
-        val source = sourceProvider()
-        val image = source?.let { subjectImage(it) }
-        if (image == null) {
-            showToast(R.string.editor_subject_inference_failed)
-            return
-        }
-        inferenceBar.show(context.getString(R.string.editor_subject_inference_label))
-        inferenceBar.updateProgress(PROGRESS_INFERENCE_START)
-        val segmented = withContext(Dispatchers.Default) { segmenter.segment(image, modelFile) }
-        currentCoroutineContext().ensureActive()
-        inferenceBar.updateProgress(PROGRESS_INFERENCE_DONE)
-        val mask = segmented.getOrElse { error ->
-            Timber.e(error, "MODNet subject segmentation failed")
-            inferenceBar.dismiss()
-            showToast(R.string.editor_subject_inference_failed)
-            return
-        }
-        val reference = segmenter.saveMask(photoId, mask)
-        if (reference == null) {
-            inferenceBar.dismiss()
-            showToast(R.string.editor_subject_inference_failed)
-            return
-        }
-        inferenceBar.updateLabel(context.getString(R.string.editor_subject_refine_label))
-        val composite = withContext(Dispatchers.Default) {
-            SubjectCompositeLoader.fromSource(source, mask)
-        }
-        currentCoroutineContext().ensureActive()
-        inferenceBar.dismiss()
+        val result = inference.run(modelFile) ?: return
         commitOnMain(
             undoController.currentGraph.copy(
                 subject = undoController.currentGraph.subject.copy(
-                    maskRef = reference.relativePath,
+                    maskRef = result.maskRef,
                     bgMode = mode,
                     bgColorArgb = color
                 )
             ),
-            composite
+            result.composite
         )
-    }
-
-    private suspend fun loadComposite(graph: EditGraph, subject: SubjectOps): SubjectComposite? {
-        val maskRef = subject.maskRef
-        if (maskRef == cachedMaskRef && cachedComposite != null) return cachedComposite
-        return withContext(Dispatchers.IO) {
-            val source = sourceProvider()
-            val mask = SubjectCompositeLoader.loadMask(filesDir, graph)
-            if (mask == null || source == null) {
-                null
-            } else {
-                SubjectCompositeLoader.fromSource(source, mask)?.also {
-                    cachedMaskRef = maskRef
-                    cachedComposite = it
-                }
-            }
-        }
-    }
-
-    private fun subjectImage(source: EditorSource): SubjectImage? = try {
-        when (source) {
-            is EditorSource.BitmapSource -> source.proxy.toSubjectImage()
-            is EditorSource.LinearRawSource -> {
-                val proxy = source.proxy
-                val pixels = LinearRawPreviewRenderer.renderArgb(
-                    source = proxy,
-                    graph = EditGraph(),
-                    fullResolutionShortEdge = minOf(proxy.width, proxy.height)
-                )
-                SubjectImage(proxy.width, proxy.height, pixels)
-            }
-        }
-    } catch (oom: OutOfMemoryError) {
-        Timber.e(oom, "OOM while preparing the subject inference image")
-        null
-    }
-
-    private fun android.graphics.Bitmap.toSubjectImage(): SubjectImage {
-        val pixels = IntArray(width * height)
-        getPixels(pixels, 0, width, 0, 0, width, height)
-        return SubjectImage(width, height, pixels)
     }
 
     private fun commitOnMain(graph: EditGraph, composite: SubjectComposite?) {
@@ -367,13 +274,7 @@ internal class EditorSubjectController(
     }
 
     private fun commit(graph: EditGraph, composite: SubjectComposite?) {
-        if (composite != null) {
-            cachedComposite = composite
-            cachedMaskRef = graph.subject.maskRef
-        } else {
-            cachedComposite = null
-            cachedMaskRef = ""
-        }
+        if (composite != null) composites.store(graph.subject, composite) else composites.reset()
         val applied = undoController.onParameterDrag(graph, EditParameterKey.AI_SUBJECT)
         undoController.onParameterRelease()
         onGraphCommitted(applied, EditParameterKey.AI_SUBJECT)
@@ -396,9 +297,4 @@ internal class EditorSubjectController(
         Toast.makeText(context, messageRes, Toast.LENGTH_SHORT).show()
     }
 
-    private companion object {
-        const val PROGRESS_SCALE = 100.0f
-        const val PROGRESS_INFERENCE_START = 35
-        const val PROGRESS_INFERENCE_DONE = 75
-    }
 }

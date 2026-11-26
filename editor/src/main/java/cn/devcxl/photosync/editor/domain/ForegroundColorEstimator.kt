@@ -208,7 +208,8 @@ internal object ForegroundColorEstimator {
                 }
             }
             nextForeground.copyInto(foreground)
-            nextBackground.copyInto(background)        }
+            nextBackground.copyInto(background)
+        }
     }
 
     private fun solvePixel(
@@ -227,30 +228,12 @@ internal object ForegroundColorEstimator {
             copyPixel(previousBackground, outputBackground, index)
             return
         }
-        var weightSum = EPSILON_R.toDouble()
-        var alphaSum = 0.0
-        var alphaSquareSum = 0.0
-        val imageSums = DoubleArray(ForegroundEstimate.CHANNELS)
-        val alphaImageSums = DoubleArray(ForegroundEstimate.CHANNELS)
-        for (offsetRow in -SAMPLE_RADIUS..SAMPLE_RADIUS) {
-            for (offsetColumn in -SAMPLE_RADIUS..SAMPLE_RADIUS) {
-                val sampleColumn = (column + offsetColumn).coerceIn(0, level.width - 1)
-                val sampleRow = (row + offsetRow).coerceIn(0, level.height - 1)
-                val sampleIndex = sampleRow * level.width + sampleColumn
-                val sampleAlpha = level.alpha[sampleIndex]
-                val weight = sampleWeight(pixelAlpha, sampleAlpha).toDouble()
-                weightSum += weight
-                alphaSum += weight * sampleAlpha
-                alphaSquareSum += weight * sampleAlpha * sampleAlpha
-                for (channel in 0 until ForegroundEstimate.CHANNELS) {
-                    val sample = level.image[sampleIndex * ForegroundEstimate.CHANNELS + channel]
-                    imageSums[channel] += weight * sample
-                    alphaImageSums[channel] += weight * sampleAlpha * sample
-                }
-            }
-        }
-        val determinant = weightSum * alphaSquareSum - alphaSum * alphaSum
-        val conditioning = determinant / (weightSum * alphaSquareSum).coerceAtLeast(DETERMINANT_FLOOR)
+        val system = LocalSystem()
+        accumulateLocalSystem(level, column, row, pixelAlpha, system)
+        val determinant = system.weightSum * system.alphaSquareSum -
+            system.alphaSum * system.alphaSum
+        val conditioning = determinant /
+            (system.weightSum * system.alphaSquareSum).coerceAtLeast(DETERMINANT_FLOOR)
         // A narrow alpha window makes the local slope underdetermined (the classic matting
         // ill-conditioning). Keeping the upsampled coarse estimate is better than amplifying noise.
         if (conditioning < MIN_CONDITIONING) {
@@ -259,15 +242,49 @@ internal object ForegroundColorEstimator {
             return
         }
         for (channel in 0 until ForegroundEstimate.CHANNELS) {
-            val background = (alphaSquareSum * imageSums[channel] -
-                alphaSum * alphaImageSums[channel]) / determinant
-            val difference = (weightSum * alphaImageSums[channel] -
-                alphaSum * imageSums[channel]) / determinant
-            val foreground = background + difference
+            val background = (system.alphaSquareSum * system.imageSums[channel] -
+                system.alphaSum * system.alphaImageSums[channel]) / determinant
+            val difference = (system.weightSum * system.alphaImageSums[channel] -
+                system.alphaSum * system.imageSums[channel]) / determinant
             outputBackground[index * ForegroundEstimate.CHANNELS + channel] =
                 background.toFloat().coerceIn(0.0f, 1.0f)
             outputForeground[index * ForegroundEstimate.CHANNELS + channel] =
-                foreground.toFloat().coerceIn(0.0f, 1.0f)
+                (background + difference).toFloat().coerceIn(0.0f, 1.0f)
+        }
+    }
+
+    /** Weighted normal-equation accumulators of one `5 x 5` local matting window. */
+    private class LocalSystem {
+        var weightSum: Double = EPSILON_R.toDouble()
+        var alphaSum: Double = 0.0
+        var alphaSquareSum: Double = 0.0
+        val imageSums = DoubleArray(ForegroundEstimate.CHANNELS)
+        val alphaImageSums = DoubleArray(ForegroundEstimate.CHANNELS)
+    }
+
+    private fun accumulateLocalSystem(
+        level: Level,
+        column: Int,
+        row: Int,
+        pixelAlpha: Float,
+        system: LocalSystem
+    ) {
+        for (offsetRow in -SAMPLE_RADIUS..SAMPLE_RADIUS) {
+            for (offsetColumn in -SAMPLE_RADIUS..SAMPLE_RADIUS) {
+                val sampleColumn = (column + offsetColumn).coerceIn(0, level.width - 1)
+                val sampleRow = (row + offsetRow).coerceIn(0, level.height - 1)
+                val sampleIndex = sampleRow * level.width + sampleColumn
+                val sampleAlpha = level.alpha[sampleIndex]
+                val weight = sampleWeight(pixelAlpha, sampleAlpha).toDouble()
+                system.weightSum += weight
+                system.alphaSum += weight * sampleAlpha
+                system.alphaSquareSum += weight * sampleAlpha * sampleAlpha
+                for (channel in 0 until ForegroundEstimate.CHANNELS) {
+                    val sample = level.image[sampleIndex * ForegroundEstimate.CHANNELS + channel]
+                    system.imageSums[channel] += weight * sample
+                    system.alphaImageSums[channel] += weight * sampleAlpha * sample
+                }
+            }
         }
     }
 

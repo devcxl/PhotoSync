@@ -7,6 +7,6 @@
 **Status:** resolved
 
 - [x] 首次进入「AI → 主体」触发去背/换底且未下载 MODNet 时，正确弹出按需下载底单；下载完成或本地 SAF 导入校验通过后自动继续生成 `SubjectMask` 并实时更新画布。（JVM 单测覆盖控制流与校验路径；真机 UI 未复跑）
-- [ ] 透明去背模式画布展示棋盘格背景，导出后在系统相册生成带准确发丝透明通道的无损 PNG；纯色换底模式支持切换底色且导出为保留拍摄 EXIF 的 JPEG；换底前后再调 3D LUT / 颗粒 / 暗角可自然作用于整帧画面。（实现与合成顺序已就位：棋盘格在 Pass D 内、PNG 走 `PngStripSink`、JPEG 保留 EXIF；真机发丝像素与 EXIF 逐项复验未跑）
+- [ ] 透明去背模式画布展示棋盘格背景，导出后在系统相册生成带准确发丝透明通道的无损 PNG；纯色换底模式支持切换底色且导出为保留拍摄 EXIF 的 JPEG；换底前后再调 3D LUT / 颗粒 / 暗角可自然作用于整帧画面。（实现与合成顺序已就位：棋盘格在 Pass D **之后**叠加，CPU 预览/缩略图与 GL 顺序一致；PNG 走 `PngStripSink`、JPEG 保留 EXIF；真机发丝像素与 EXIF 逐项复验未跑）
 - [ ] 预览与 24MP 全分辨率列带烘焙均经过分块 `GuidedFilter` 与 FMGE 去色溢，无整帧 OOM、无列带接缝，且暗底人像发丝无明显亮白边；模拟烘焙期 OOM 时自动降级为双线性羽化并成功完成导出。（`BandGuidedFilterTest` / `BakeSubjectSupportTest` / `SubjectMaskRenderContractTest` 通过；24MP 真机 OOM 与接缝未复验）
 - [x] 支持独立撤销、长按 Before/After 展示原始相机底片、保存退出后主界面缩略图与大图同步显示去背/换底效果，且重开编辑器可复用已缓存 `SubjectMask` 无需重复推理。（JVM 单测覆盖撤销与复用；长按对比在消除集成中改为独立原片纹理，真机像素未复跑）

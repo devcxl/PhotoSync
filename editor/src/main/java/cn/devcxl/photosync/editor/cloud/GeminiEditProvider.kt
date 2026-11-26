@@ -72,9 +72,10 @@ class GeminiEditProvider(
     }
 
     override suspend fun testConnection(): CloudConnectionResult {
-        val endpoint = resolveEndpoint(MODELS_PATH) ?: return CloudConnectionResult.Failed(
-            CloudEditError.EndpointRejected(CloudPolicyRejection.MALFORMED_URL)
-        )
+        val endpoint = resolveCloudEndpoint(networkPolicy, baseUrl, MODELS_PATH)
+            ?: return CloudConnectionResult.Failed(
+                CloudEditError.EndpointRejected(CloudPolicyRejection.MALFORMED_URL)
+            )
         if (endpoint is EndpointResolution.Rejected) {
             return CloudConnectionResult.Failed(CloudEditError.EndpointRejected(endpoint.reason))
         }
@@ -94,15 +95,17 @@ class GeminiEditProvider(
     ): CloudEditResult {
         val model = (request.model ?: configuredModel).trim()
         if (model.isEmpty()) {
-            return CloudEditResult.Failure(CloudEditError.Invalid("No model is configured"))
+            return CloudEditResult.Failure(CloudEditError.Invalid(CloudEditIssue.NO_MODEL_CONFIGURED))
         }
         val prompt = request.prompt.trim()
         if (prompt.isEmpty()) {
-            return CloudEditResult.Failure(CloudEditError.Invalid("The prompt is empty"))
+            return CloudEditResult.Failure(CloudEditError.Invalid(CloudEditIssue.EMPTY_PROMPT))
         }
         val image = request.image.file
         if (!image.isFile || !image.canRead()) {
-            return CloudEditResult.Failure(CloudEditError.Invalid("The staged upload is missing"))
+            return CloudEditResult.Failure(
+                CloudEditError.Invalid(CloudEditIssue.STAGED_UPLOAD_MISSING)
+            )
         }
         if (image.length() > MAX_REQUEST_BYTES) {
             return CloudEditResult.Failure(CloudEditError.TooLarge)
@@ -111,9 +114,10 @@ class GeminiEditProvider(
         if (estimatedRequestBytes(encodedImage, prompt) > MAX_REQUEST_BYTES) {
             return CloudEditResult.Failure(CloudEditError.TooLarge)
         }
-        val endpoint = resolveEndpoint(INTERACTIONS_PATH) ?: return CloudEditResult.Failure(
-            CloudEditError.EndpointRejected(CloudPolicyRejection.MALFORMED_URL)
-        )
+        val endpoint = resolveCloudEndpoint(networkPolicy, baseUrl, INTERACTIONS_PATH)
+            ?: return CloudEditResult.Failure(
+                CloudEditError.EndpointRejected(CloudPolicyRejection.MALFORMED_URL)
+            )
         if (endpoint is EndpointResolution.Rejected) {
             return CloudEditResult.Failure(CloudEditError.EndpointRejected(endpoint.reason))
         }
@@ -126,7 +130,10 @@ class GeminiEditProvider(
         }
         if (GeminiInteractionParser.isTerminalFailure(status)) {
             return CloudEditResult.Failure(
-                CloudEditError.Invalid(GeminiInteractionParser.failureSummary(status, interaction))
+                CloudEditError.Invalid(
+                issue = CloudEditIssue.INTERACTION_FAILED,
+                providerMessage = GeminiInteractionParser.failureSummary(status, interaction)
+            )
             )
         }
         val interactionId = interaction.optString("id").takeIf { it.isNotBlank() }
@@ -205,7 +212,8 @@ class GeminiEditProvider(
             if (GeminiInteractionParser.isTerminalFailure(status)) {
                 return CloudEditResult.Failure(
                     CloudEditError.Invalid(
-                        GeminiInteractionParser.failureSummary(status, interaction)
+                        issue = CloudEditIssue.INTERACTION_FAILED,
+                        providerMessage = GeminiInteractionParser.failureSummary(status, interaction)
                     )
                 )
             }
@@ -213,7 +221,8 @@ class GeminiEditProvider(
     }
 
     private suspend fun getInteraction(interactionId: String): JSONObject {
-        val endpoint = resolveEndpoint("$INTERACTIONS_PATH/${encodeQueryValue(interactionId)}")
+        val path = "$INTERACTIONS_PATH/${encodeQueryValue(interactionId)}"
+        val endpoint = resolveCloudEndpoint(networkPolicy, baseUrl, path)
             ?: throw CloudHttpFailure(
                 CloudEditError.EndpointRejected(CloudPolicyRejection.MALFORMED_URL)
             )
@@ -260,15 +269,6 @@ class GeminiEditProvider(
         headers["Api-Revision"] = GEMINI_API_REVISION
         headers["Accept"] = "application/json"
         return headers
-    }
-
-    private fun resolveEndpoint(path: String): EndpointResolution? = try {
-        when (val check = networkPolicy.validateEndpoint(joinCloudUrl(baseUrl, path))) {
-            is CloudEndpointCheck.Allowed -> EndpointResolution.Allowed(check)
-            is CloudEndpointCheck.Rejected -> EndpointResolution.Rejected(check.reason)
-        }
-    } catch (e: IllegalArgumentException) {
-        null
     }
 
     private fun estimatedRequestBytes(encodedImage: String, prompt: String): Long =

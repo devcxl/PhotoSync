@@ -12,7 +12,6 @@ import android.view.View
 import cn.devcxl.photosync.editor.domain.InpaintStroke
 import cn.devcxl.photosync.editor.domain.InpaintStrokeLayer
 import cn.devcxl.photosync.editor.domain.InpaintStrokePoint
-import cn.devcxl.photosync.editor.ui.INPAINT_OVERSIZE_LIMIT_PX
 import cn.devcxl.photosync.editor.ui.InpaintBrushCanvasHost
 import cn.devcxl.photosync.editor.ui.InpaintBrushMode
 import cn.devcxl.photosync.editor.ui.gesture.CanvasTransform
@@ -22,8 +21,9 @@ import cn.devcxl.photosync.editor.ui.gesture.CanvasTransform
  *
  * Single finger paints a red translucent stroke (or erases with the eraser). A second finger
  * immediately **discards the in-flight stroke** and takes over zoom/pan, so "pinch, don't smear"
- * holds and an aborted stroke can never reach `EditGraph`. The view reports the painted bbox in
- * source pixels after every sample, which is what drives the amber >256 px advice.
+ * holds and an aborted stroke can never reach `EditGraph`. The view reports the visible stroke
+ * capsules after every sample; the controller projects them onto the pre-crop source, where the
+ * amber >256 px advice is evaluated in true source pixels.
  *
  * Only the inpainting tool installs this view; the committed strokes live in [strokeLayer] so the
  * controller and the inference run share one source of truth.
@@ -38,8 +38,13 @@ class InpaintBrushOverlayView @JvmOverloads constructor(
      * Callbacks raised while the user paints or pinches.
      */
     interface Listener {
-        /** Painted bbox changed; `0 x 0` means nothing is painted any more. */
-        fun onBboxEstimated(widthPx: Int, heightPx: Int, isOversized: Boolean) {}
+        /**
+         * Visible strokes changed, including the in-flight one.
+         *
+         * Items are normalized to the rendered frame; the controller projects them onto the
+         * pre-crop source and derives the true-pixel bbox there.
+         */
+        fun onInpaintStrokesChanged(strokes: List<InpaintStroke>) {}
 
         /** A second finger discarded the in-flight stroke and took over the canvas. */
         fun onInpaintTwoFingerPreempted() {}
@@ -83,7 +88,7 @@ class InpaintBrushOverlayView @JvmOverloads constructor(
             val next = value.coerceAtLeast(0)
             if (field == next) return
             field = next
-            notifyBounds()
+            notifyStrokes()
         }
 
     override var sourceHeight: Int = 0
@@ -91,7 +96,7 @@ class InpaintBrushOverlayView @JvmOverloads constructor(
             val next = value.coerceAtLeast(0)
             if (field == next) return
             field = next
-            notifyBounds()
+            notifyStrokes()
         }
 
     override val strokeLayer: InpaintStrokeLayer = InpaintStrokeLayer()
@@ -155,7 +160,7 @@ class InpaintBrushOverlayView @JvmOverloads constructor(
         activeStrokeView = null
         brushCentre = null
         invalidate()
-        notifyBounds()
+        notifyStrokes()
     }
 
     /** Drops every committed stroke and any in-flight one. */
@@ -166,7 +171,7 @@ class InpaintBrushOverlayView @JvmOverloads constructor(
         activeStrokeView = null
         brushCentre = null
         invalidate()
-        notifyBounds()
+        notifyStrokes()
     }
 
     private fun onPointerDown(event: MotionEvent): Boolean {
@@ -185,7 +190,7 @@ class InpaintBrushOverlayView @JvmOverloads constructor(
         brushCentre = point
         lastSampleX = event.x
         lastSampleY = event.y
-        notifyBounds()
+        notifyStrokes()
         invalidate()
         return true
     }
@@ -212,7 +217,7 @@ class InpaintBrushOverlayView @JvmOverloads constructor(
         val point = uvOf(event)
         points.add(point)
         brushCentre = point
-        notifyBounds()
+        notifyStrokes()
         invalidate()
         return true
     }
@@ -256,26 +261,13 @@ class InpaintBrushOverlayView @JvmOverloads constructor(
             )
         )
         committedStrokes = strokeLayer.snapshot()
-        notifyBounds()
+        notifyStrokes()
     }
 
-    private fun notifyBounds() {
-        if (sourceWidth <= 0 || sourceHeight <= 0) {
-            listener?.onBboxEstimated(0, 0, false)
-            return
-        }
-        val committed = strokeLayer.bounds(sourceWidth, sourceHeight)
-        val active = activeStrokeView?.bounds(sourceWidth, sourceHeight)
-        val bounds = listOfNotNull(committed, active).reduceOrNull { first, second ->
-            first.union(second)
-        }
-        if (bounds == null || bounds.isEmpty) {
-            listener?.onBboxEstimated(0, 0, false)
-            return
-        }
-        val oversized = bounds.width > INPAINT_OVERSIZE_LIMIT_PX ||
-            bounds.height > INPAINT_OVERSIZE_LIMIT_PX
-        listener?.onBboxEstimated(bounds.width, bounds.height, oversized)
+    private fun notifyStrokes() {
+        val active = activeStrokeView
+        val strokes = if (active == null) committedStrokes else committedStrokes + active
+        listener?.onInpaintStrokesChanged(strokes)
     }
 
     private fun uvOf(event: MotionEvent): InpaintStrokePoint =

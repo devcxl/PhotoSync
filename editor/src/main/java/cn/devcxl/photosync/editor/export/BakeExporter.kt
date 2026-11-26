@@ -258,7 +258,8 @@ class BakeExporter(
             graph = graph,
             sourcePath = request.sourcePath,
             isRaw = request.isRaw,
-            filesDir = filesDir
+            filesDir = filesDir,
+            inpaint = InpaintOverlay.of(filesDir, graph)
         )
         val plan = SubjectRenderContract.plan(graph, hasMask = true)
             ?: return ResolvedBakeSubject(null, null)

@@ -187,7 +187,11 @@ internal class BakeSubjectSupport(
             for (column in 0 until lowWidth) {
                 val globalU = band.tileUv.mapU((column + 0.5f) / lowWidth)
                 val preCrop = inverseMatrix.map(globalU, globalV)
-                low[row * lowWidth + column] = mask.sample(preCrop.u, preCrop.v)
+                val warped = warpField?.let { field ->
+                    val displacement = field.displacementAt(preCrop.u, preCrop.v)
+                    Uv(preCrop.u + displacement.u, preCrop.v + displacement.v)
+                } ?: preCrop
+                low[row * lowWidth + column] = mask.sample(warped.u, warped.v)
             }
         }
         return try {

@@ -55,16 +55,20 @@ internal object SubjectCompositeLoader {
      *
      * Used when the bake no longer owns an [EditorSource]; the decode is the same upright preview
      * the editor analyses, so the mask stays aligned with the exported pixels.
+     *
+     * @param inpaint Pre-Pass A repair overlay the bake already composed into its textures. Passing
+     *   it keeps the FMGE initialization from seeding the cut-out with pixels the user erased.
      */
     fun resolveForFile(
         graph: EditGraph,
         sourcePath: String,
         isRaw: Boolean,
-        filesDir: File
+        filesDir: File,
+        inpaint: InpaintOverlay? = null
     ): SubjectComposite? {
         if (graph.subject.bgMode == SubjectBackgroundMode.ORIGINAL) return null
         val mask = loadMask(filesDir, graph) ?: return null
-        return fromFile(sourcePath, isRaw, mask)
+        return fromFile(sourcePath, isRaw, mask, inpaint)
     }
 
     /** Loads and verifies the mask of [graph], or `null` when it is absent or tampered with. */
@@ -114,16 +118,22 @@ internal object SubjectCompositeLoader {
     }
 
     /** Decodes a `1024px` upright proxy of [sourcePath] and builds its composite. */
-    fun fromFile(sourcePath: String, isRaw: Boolean, mask: SubjectMask): SubjectComposite? = try {
+    fun fromFile(
+        sourcePath: String,
+        isRaw: Boolean,
+        mask: SubjectMask,
+        inpaint: InpaintOverlay? = null
+    ): SubjectComposite? = try {
         if (isRaw) {
             val linear = RawWrapper.decodeToLinearRgba16F(sourcePath, PROXY_MAX_EDGE_PX)
             if (linear != null) {
-                fromLinear(linear, mask)
+                val composed = inpaint?.applyToLinearCopy(linear) ?: linear
+                fromLinear(composed, mask)
             } else {
                 val thumbnail = RawWrapper.decodeThumbnailBitmap(sourcePath, PROXY_MAX_EDGE_PX)
                 thumbnail?.let { bitmap ->
                     try {
-                        fromBitmap(bitmap, mask)
+                        fromBitmapWithOverlay(bitmap, mask, inpaint)
                     } finally {
                         if (!bitmap.isRecycled) bitmap.recycle()
                     }
@@ -133,7 +143,7 @@ internal object SubjectCompositeLoader {
             val loaded = EditorBitmapLoader.loadUprightPreviewBitmap(sourcePath, isRaw = false)
             loaded?.let { bitmap ->
                 try {
-                    fromBitmap(bitmap, mask)
+                    fromBitmapWithOverlay(bitmap, mask, inpaint)
                 } finally {
                     if (!bitmap.isRecycled) bitmap.recycle()
                 }
@@ -145,6 +155,19 @@ internal object SubjectCompositeLoader {
     } catch (error: RuntimeException) {
         Timber.e(error, "The subject composite proxy could not be decoded")
         null
+    }
+
+    private fun fromBitmapWithOverlay(
+        source: Bitmap,
+        mask: SubjectMask,
+        inpaint: InpaintOverlay?
+    ): SubjectComposite? {
+        val composed = inpaint?.applyToBitmapCopy(source) ?: source
+        return try {
+            fromBitmap(composed, mask)
+        } finally {
+            if (composed !== source && !composed.isRecycled) composed.recycle()
+        }
     }
 
     private val PROXY_MAX_EDGE_PX = SubjectCompositeFactory.PROXY_MAX_EDGE_PX

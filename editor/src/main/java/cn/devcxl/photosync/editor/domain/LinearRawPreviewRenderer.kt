@@ -22,7 +22,10 @@ internal object LinearRawPreviewRenderer {
      * Renders [source] into packed `ARGB_8888` pixels, row-major (Pass B -> Pass C -> Pass D).
      *
      * @param beforeEffects Optional CPU composite inserted between Pass C and Pass D, used by the
-     *   subject cut-out so LUT/grain/vignette still act on the composited frame.
+     *   solid-background subject cut-out so LUT/grain/vignette still act on the composited frame.
+     * @param afterEffects Optional presentation stage inserted **after** Pass D. The transparent
+     *   cut-out draws its checkerboard here so LUT/grain/vignette can never tint the presentation
+     *   background, matching the Pass D shader order exactly.
      */
     fun renderArgb(
         source: LinearRawBuffer,
@@ -30,7 +33,8 @@ internal object LinearRawPreviewRenderer {
         lut: Lut3dSamples? = null,
         fullResolutionShortEdge: Int = minOf(source.width, source.height),
         skinMask: FloatArray? = null,
-        beforeEffects: ((pixels: IntArray, width: Int, height: Int) -> Unit)? = null
+        beforeEffects: ((pixels: IntArray, width: Int, height: Int) -> Unit)? = null,
+        afterEffects: ((pixels: IntArray, width: Int, height: Int) -> Unit)? = null
     ): IntArray {
         val toneParams = ToneShaderParams.from(graph)
         val colorParams = ColorGradingParams.from(graph)
@@ -62,7 +66,9 @@ internal object LinearRawPreviewRenderer {
             skinMask = skinMask
         )
         beforeEffects?.invoke(detailed, width, height)
-        return applyPassDEffects(detailed, width, height, graph, lut)
+        val graded = applyPassDEffects(detailed, width, height, graph, lut)
+        afterEffects?.invoke(graded, width, height)
+        return graded
     }
 
     private fun renderStraight(

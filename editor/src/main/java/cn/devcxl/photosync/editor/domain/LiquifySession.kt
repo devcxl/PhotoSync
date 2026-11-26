@@ -22,6 +22,16 @@ internal class LiquifySession(
     var mesh: LiquifyMesh = LiquifyMesh.empty()
         private set
 
+    /**
+     * Monotonic change counter of [mesh].
+     *
+     * The mesh is mutated in place by a push/restore stamp, so its identity is not a valid cache
+     * key. Coordinate projections use this revision to rebuild their composed warp only when the
+     * grid actually changed.
+     */
+    var revision: Int = 0
+        private set
+
     /** Brush mode, size and strength. */
     var settings: LiquifyBrushSettings = LiquifyBrushSettings()
         private set
@@ -70,6 +80,7 @@ internal class LiquifySession(
             strength = settings.strength,
             frameAspect = frameAspect
         )
+        revision++
     }
 
     /**
@@ -86,6 +97,7 @@ internal class LiquifySession(
             strength = settings.strength,
             frameAspect = frameAspect
         )
+        revision++
     }
 
     /** Rolls the mesh back to the pre-stroke snapshot without creating an undo step. */
@@ -93,6 +105,7 @@ internal class LiquifySession(
         val start = strokeStart ?: return
         strokeStart = null
         mesh = start
+        revision++
     }
 
     /**
@@ -112,6 +125,7 @@ internal class LiquifySession(
     fun undo(): Boolean {
         val restored = history.undo(mesh) ?: return false
         mesh = restored
+        revision++
         return true
     }
 
@@ -119,6 +133,7 @@ internal class LiquifySession(
     fun redo(): Boolean {
         val replayed = history.redo(mesh) ?: return false
         mesh = replayed
+        revision++
         return true
     }
 
@@ -131,6 +146,7 @@ internal class LiquifySession(
         if (mesh.isZero()) return false
         history.record(mesh)
         mesh = LiquifyMesh.empty()
+        revision++
         return true
     }
 
@@ -143,9 +159,11 @@ internal class LiquifySession(
     fun load(ref: LiquifyRef?): Boolean {
         history.reset()
         mesh = LiquifyMesh.empty()
+        revision++
         if (ref == null) return false
         val loaded = store.read(ref) ?: return false
         mesh = loaded
+        revision++
         return true
     }
 }
