@@ -1,7 +1,7 @@
 package cn.devcxl.photosync.editor.ui.gesture
 
 /**
- * The six fixed category tabs of the editor drawer.
+ * The seven fixed category tabs of the editor drawer.
  */
 enum class EditorGroup {
     PRESET,
@@ -9,7 +9,8 @@ enum class EditorGroup {
     TONE,
     COLOR,
     DETAIL,
-    PORTRAIT
+    PORTRAIT,
+    AI
 }
 
 /**
@@ -54,6 +55,10 @@ enum class EditorTool {
     SKIN_SMOOTH,
     FACE_RESHAPE,
     BODY_RESHAPE,
+    AI_SUBJECT,
+    AI_ERASE,
+    AI_SKY,
+    AI_CLOUD,
     PRESET
 }
 
@@ -69,6 +74,9 @@ enum class GestureRoute {
 
     /** Paint displacement into the `128 x 128` liquify grid. */
     LIQUIFY_BRUSH_STROKE,
+
+    /** Paint the inpainting removal mask. */
+    INPAINT_BRUSH_STROKE,
 
     /** Pan the canvas with one finger and hold still to compare against the original. */
     CANVAS_SINGLE_PAN_HOLD_COMPARE
@@ -99,6 +107,11 @@ object GestureRouter {
     /**
      * Returns the route that must own the current gesture.
      *
+     * The order is the contract: two fingers always win, then a geometry handle, then a brush. The
+     * inpainting brush follows the liquify rule — a single finger paints, and a second finger
+     * discards the unfinished dab and takes over zoom/pan, so "pinch, don't smear" holds for both
+     * brush tools.
+     *
      * @param group Currently selected category tab.
      * @param tool Currently selected sub-tool.
      * @param pointerCount Number of pointers currently down on the canvas.
@@ -114,6 +127,9 @@ object GestureRouter {
         }
         if (group == EditorGroup.GEOMETRY && tool == EditorTool.LIQUIFY) {
             return GestureRoute.LIQUIFY_BRUSH_STROKE
+        }
+        if (group == EditorGroup.AI && tool == EditorTool.AI_ERASE) {
+            return GestureRoute.INPAINT_BRUSH_STROKE
         }
         return GestureRoute.CANVAS_SINGLE_PAN_HOLD_COMPARE
     }

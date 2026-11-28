@@ -1,8 +1,5 @@
 package cn.devcxl.photosync.editor.render
 
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-
 import android.opengl.GLES20
 
 import timber.log.Timber
@@ -19,17 +16,6 @@ import cn.devcxl.photosync.editor.domain.TileUvTransform
 import cn.devcxl.photosync.editor.domain.ToneShaderParams
 import cn.devcxl.photosync.editor.domain.WarpDisplacementField
 import cn.devcxl.photosync.editor.lut.Lut3dTexture
-
-/**
- * Logs why the offscreen preview must not publish and returns `false` for expression use.
- *
- * Every caller answers a `null` write with the CPU renderer, so a reason string is the whole
- * contract between the GPU stages and their orchestrator.
- */
-internal fun previewUnavailable(reason: String): Boolean {
-    Timber.w("Offscreen preview: %s; using the CPU renderer", reason)
-    return false
-}
 
 /**
  * GL execution of the four physical preview passes for one offscreen render.
@@ -62,6 +48,10 @@ internal class OffscreenPreviewPasses : AutoCloseable {
 
     private val warpTexture = WarpTexture()
     private val skinMaskTexture = SkinMaskTexture()
+    private val subjectTexture = SubjectMaskTexture()
+    private val subjectWeightTexture = SubjectWeightTexture()
+    private val cloudTextures = CloudLayerTextures()
+    private val skyTextures = SkyLayerTextures()
     private val curveLutTexture = CurveLutTexture()
     private val lutTexture = Lut3dTexture()
     private val prepassAnalyzer = PrepassAnalyzer(capabilities)
@@ -70,9 +60,11 @@ internal class OffscreenPreviewPasses : AutoCloseable {
     private val passBTarget = OffscreenColorTarget(capabilities)
     private val outputTarget = OffscreenColorTarget(capabilities)
 
-    private var readbackBuffer: ByteBuffer? = null
+    private val readback = OffscreenFrameReadback()
     private var prepassTextureId: Int = 0
     private var atmosphericLight: FloatArray = DEFAULT_ATMOSPHERIC_LIGHT
+    private var cloudOpacity: Float = 0.0f
+    private var skyLayer: SkyLayerPixels? = null
 
     /** `GL_MAX_TEXTURE_SIZE` of the context, from [init]. */
     var maxTextureSize: Int = 0
@@ -85,6 +77,10 @@ internal class OffscreenPreviewPasses : AutoCloseable {
     /** Samples per axis of the uploaded 3D LUT, or `0` when none is bound. */
     val lutSampleSize: Int
         get() = lutTexture.sampleSize
+
+    /** True when a subject composite was uploaded and can be sampled by Pass D. */
+    val isSubjectActive: Boolean
+        get() = subjectTexture.isActive
 
     /**
      * Compiles every program and probes the driver on the current thread.
@@ -124,7 +120,10 @@ internal class OffscreenPreviewPasses : AutoCloseable {
         warpField: WarpDisplacementField?,
         skinMask: FloatArray?,
         curve: CurveOps,
-        lut: Lut3dSamples?
+        lut: Lut3dSamples?,
+        subject: SubjectComposite? = null,
+        cloud: CloudLayerPixels? = null,
+        sky: SkyLayerPixels? = null
     ): Boolean {
         warpTexture.stage(warpField)
         val warpUploadFailed = warpTexture.uploadIfNeeded()
@@ -136,6 +135,36 @@ internal class OffscreenPreviewPasses : AutoCloseable {
         skinMaskTexture.uploadIfNeeded()
         if (skinMask != null && !skinMaskTexture.isActive) {
             return previewUnavailable("the skin mask could not be uploaded")
+        }
+
+        subjectTexture.stage(subject)
+        subjectTexture.uploadIfNeeded()
+        if (subject != null && !subjectTexture.isActive) {
+            return previewUnavailable("the subject composite could not be uploaded")
+        }
+        subjectWeightTexture.stage(subject)
+        subjectWeightTexture.uploadIfNeeded()
+        if (subject != null && !subjectWeightTexture.isActive) {
+            return previewUnavailable("the subject weight could not be uploaded")
+        }
+
+        cloudTextures.stage(cloud)
+        cloudTextures.uploadIfNeeded()
+        if (cloud != null && !cloudTextures.isActive) {
+            // The layer is optional: skip it instead of refusing the whole frame.
+            Timber.w("Offscreen preview: the cloud layer could not be uploaded; skipping it")
+            cloudTextures.clear()
+            cloudTextures.uploadIfNeeded()
+        }
+        cloudOpacity = if (cloudTextures.isActive) cloud?.opacity ?: 0.0f else 0.0f
+
+        skyLayer = sky
+        skyTextures.stage(sky)
+        skyTextures.uploadIfNeeded()
+        if (sky != null && !skyTextures.isActive) {
+            // The replacement is optional: fall back to the original sky instead of failing the save.
+            Timber.w("Offscreen preview: the sky layer could not be uploaded; skipping it")
+            skyLayer = null
         }
 
         curveLutTexture.stage(curve)
@@ -219,10 +248,13 @@ internal class OffscreenPreviewPasses : AutoCloseable {
         autoBrightGain: Float,
         graph: EditGraph,
         toneParams: ToneShaderParams,
-        colorParams: ColorGradingParams
+        colorParams: ColorGradingParams,
+        subjectUvMatrix: FloatArray = IDENTITY_MATRIX
     ): Boolean {
         passBTarget.ensureSize(width, height, allowHalfFloat = true, exactSize = true)
-        return drawPassBInto(passBTarget, linearSource, autoBrightGain, graph, toneParams, colorParams)
+        return drawPassBInto(
+            passBTarget, width, height, linearSource, autoBrightGain, graph, toneParams, colorParams, subjectUvMatrix
+        )
     }
 
     /** Grades into the Pre-pass target, which must keep the format [PrepassAnalyzer] allocated. */
@@ -232,8 +264,12 @@ internal class OffscreenPreviewPasses : AutoCloseable {
         autoBrightGain: Float,
         graph: EditGraph,
         toneParams: ToneShaderParams,
-        colorParams: ColorGradingParams
-    ): Boolean = drawPassBInto(target, linearSource, autoBrightGain, graph, toneParams, colorParams)
+        colorParams: ColorGradingParams,
+        subjectUvMatrix: FloatArray = IDENTITY_MATRIX
+    ): Boolean = drawPassBInto(
+        target, target.width, target.height, linearSource, autoBrightGain, graph, toneParams, colorParams,
+        subjectUvMatrix
+    )
 
     /**
      * Runs the planned Pass C sub-passes on [passBTextureId].
@@ -245,12 +281,15 @@ internal class OffscreenPreviewPasses : AutoCloseable {
         width: Int,
         height: Int,
         spatialParams: SpatialDetailParams,
-        fullResolutionShortEdge: Int
+        fullResolutionShortEdge: Int,
+        graph: EditGraph,
+        subjectUvMatrix: FloatArray = IDENTITY_MATRIX
     ): Int? {
         val plan = SpatialDetailPlanner.plan(
             params = spatialParams,
             prepassAvailable = prepassTextureId != 0,
-            skinMaskAvailable = skinMaskTexture.isActive
+            skinMaskAvailable = skinMaskTexture.isActive,
+            subjectMaskAvailable = subjectWeightTexture.isActive
         )
         if (plan.stages.isEmpty()) return 0
         val output = spatialChain.run(
@@ -263,7 +302,14 @@ internal class OffscreenPreviewPasses : AutoCloseable {
             prepassTextureId = prepassTextureId,
             skinMaskTextureId = if (skinMaskTexture.isActive) skinMaskTexture.textureId else 0,
             atmosphericLight = atmosphericLight,
-            guideTransform = TileUvTransform.IDENTITY
+            guideTransform = TileUvTransform.IDENTITY,
+            subjectBokeh = subjectBokehParams(
+                graph = graph,
+                width = width,
+                height = height,
+                fullResolutionShortEdge = fullResolutionShortEdge,
+                subjectUvMatrix = subjectUvMatrix
+            )
         )
         // The chain returns its input when nothing ran and an *intermediate* texture when a later
         // ping-pong target failed, so comparing against the input is not enough. Counting the draws
@@ -287,10 +333,30 @@ internal class OffscreenPreviewPasses : AutoCloseable {
         width: Int,
         height: Int,
         inputTextureId: Int,
-        effectsParams: PassDEffectsParams
+        effectsParams: PassDEffectsParams,
+        subjectMode: Int = 0,
+        subjectColorRgb: Int = 0xFFFFFF,
+        subjectUvMatrix: FloatArray? = null,
+        subjectCheckerboard: Boolean = true,
+        sky: SkyDrawParams? = null
     ): Boolean {
         outputTarget.ensureSize(width, height, allowHalfFloat = false, exactSize = true)
         if (!outputTarget.isReady) return previewUnavailable("the Pass D target is incomplete")
+        val subject = if (subjectMode != 0 && subjectTexture.isActive) {
+            SubjectDrawParams(
+                textureId = subjectTexture.textureId,
+                mode = subjectMode,
+                solidColorRgb = subjectColorRgb,
+                localSpace = false,
+                uvMatrix = subjectUvMatrix ?: IDENTITY_MATRIX,
+                warpTextureId = if (warpTexture.isWarpActive) warpTexture.textureId else 0,
+                warpScale = warpTexture.decodeScale,
+                warpOffset = warpTexture.decodeOffset,
+                checkerboard = subjectCheckerboard
+            )
+        } else {
+            null
+        }
         outputTarget.bind()
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
         effectsProgram.draw(
@@ -307,7 +373,9 @@ internal class OffscreenPreviewPasses : AutoCloseable {
                 tileUv = TileUvTransform.IDENTITY,
                 pixelScaleX = width.toFloat(),
                 pixelScaleY = height.toFloat(),
-                flipVerticalForScreen = false
+                flipVerticalForScreen = false,
+                subject = subject,
+                sky = sky ?: skyParams(subjectUvMatrix ?: IDENTITY_MATRIX, width, height)
             )
         )
         outputTarget.unbind()
@@ -319,21 +387,7 @@ internal class OffscreenPreviewPasses : AutoCloseable {
      *
      * @return The pixels, or `null` when the driver reports an error.
      */
-    fun readFrame(width: Int, height: Int): IntArray? {
-        val requiredBytes = width * height * BYTES_PER_RGBA8_PIXEL
-        val buffer = readbackBuffer?.takeIf { it.capacity() >= requiredBytes }
-            ?: ByteBuffer.allocateDirect(requiredBytes)
-                .order(ByteOrder.nativeOrder())
-                .also { readbackBuffer = it }
-        buffer.rewind()
-        outputTarget.bind()
-        GLES20.glPixelStorei(GLES20.GL_PACK_ALIGNMENT, 1)
-        GLES20.glReadPixels(0, 0, width, height, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, buffer)
-        GLES20.glPixelStorei(GLES20.GL_PACK_ALIGNMENT, DEFAULT_PACK_ALIGNMENT)
-        outputTarget.unbind()
-        if (!clearOfGlErrors("Pass D read-back")) return null
-        return OffscreenPreviewFrames.toArgb(buffer, width, height)
-    }
+    fun readFrame(width: Int, height: Int): IntArray? = readback.read(outputTarget, width, height)
 
     /** Releases every GL object of this render. Must run with the context still current. */
     override fun close() {
@@ -343,23 +397,30 @@ internal class OffscreenPreviewPasses : AutoCloseable {
         effectsProgram.release()
         warpTexture.release()
         skinMaskTexture.release()
+        subjectTexture.release()
+        subjectWeightTexture.release()
+        cloudTextures.release()
+        skyTextures.release()
         curveLutTexture.release()
         lutTexture.release()
         prepassAnalyzer.release()
         geometryTarget.release()
         passBTarget.release()
         outputTarget.release()
+        readback.release()
         capabilities.reset()
-        readbackBuffer = null
     }
 
     private fun drawPassBInto(
         target: OffscreenColorTarget,
+        width: Int,
+        height: Int,
         linearSource: Boolean,
         autoBrightGain: Float,
         graph: EditGraph,
         toneParams: ToneShaderParams,
-        colorParams: ColorGradingParams
+        colorParams: ColorGradingParams,
+        subjectUvMatrix: FloatArray
     ): Boolean {
         if (!target.isReady) return previewUnavailable("the Pass B target is incomplete")
         target.bind()
@@ -381,12 +442,72 @@ internal class OffscreenPreviewPasses : AutoCloseable {
                 texelWidth = target.width,
                 texelHeight = target.height,
                 ditherAmp = if (target.isHalfFloatTarget) 0.0f else PassDEffectsMath.DITHER_AMPLITUDE,
-                flipVerticalForScreen = false
+                flipVerticalForScreen = false,
+                subject = graph.subject,
+                subjectWeightTextureId = subjectWeightTexture.activeTextureId,
+                subjectLocalSpace = false,
+                subjectUvMatrix = subjectUvMatrix,
+                subjectWarpTextureId = if (warpTexture.isWarpActive) warpTexture.textureId else 0,
+                subjectWarpScale = warpTexture.decodeScale,
+                subjectWarpOffset = warpTexture.decodeOffset,
+                cloudLayerTextureId = if (cloudTextures.isActive) cloudTextures.imageTextureId else 0,
+                cloudMaskTextureId = if (cloudTextures.isActive) cloudTextures.maskTextureId else 0,
+                cloudOpacity = cloudOpacity,
+                sky = skyParams(subjectUvMatrix, target.width, target.height)
             )
         )
         target.unbind()
         return clearOfGlErrors("Pass B")
     }
+
+    /**
+     * Builds the Pass B/D sky bundle from the staged layer.
+     *
+     * The source-space mask is mapped through the same Pass A inverse matrix the subject stage uses,
+     * so a crop or a warp moves the sky boundary with the pixels.
+     */
+    private fun skyParams(
+        uvMatrix: FloatArray,
+        width: Int,
+        height: Int
+    ): SkyDrawParams? {
+        val layer = skyLayer ?: return null
+        val maskId = skyTextures.maskTextureId
+        if (maskId == 0) return null
+        return SkyDrawParams(
+            maskTextureId = maskId,
+            assetTextureId = if (skyTextures.hasAsset) skyTextures.assetTextureId else 0,
+            procedural = layer.procedural,
+            blend = layer.blend,
+            stats = layer.stats,
+            relight = layer.ops.relight,
+            uvMatrix = uvMatrix,
+            warpTextureId = if (warpTexture.isWarpActive) warpTexture.textureId else 0,
+            warpScale = warpTexture.decodeScale,
+            warpOffset = warpTexture.decodeOffset,
+            tileUv = TileUvTransform.IDENTITY,
+            pixelScaleX = width.toFloat(),
+            pixelScaleY = height.toFloat()
+        )
+    }
+
+    private fun subjectBokehParams(
+        graph: EditGraph,
+        width: Int,
+        height: Int,
+        fullResolutionShortEdge: Int,
+        subjectUvMatrix: FloatArray
+    ): SubjectBokehDrawParams? = SubjectBokehPlanner.params(
+        blur = graph.subject.blur,
+        shortEdge = minOf(width, height),
+        maskTextureId = subjectWeightTexture.activeTextureId,
+        localSpace = false,
+        uvMatrix = subjectUvMatrix,
+        fullShortEdge = fullResolutionShortEdge,
+        warpTextureId = if (warpTexture.isWarpActive) warpTexture.textureId else 0,
+        warpScale = warpTexture.decodeScale,
+        warpOffset = warpTexture.decodeOffset
+    )
 
     /**
      * Drains every pending GL error.
@@ -403,24 +524,17 @@ internal class OffscreenPreviewPasses : AutoCloseable {
     private fun warpRequested(field: WarpDisplacementField?): Boolean =
         field != null && !field.isZero()
 
-    /** Returns true when the GL error queue is clean, logging the first error otherwise. */
-    private fun clearOfGlErrors(stage: String): Boolean {
-        val error = GLES20.glGetError()
-        if (error == GLES20.GL_NO_ERROR) return true
-        if (error == GL_CONTEXT_LOST_ERROR) {
-            return previewUnavailable("the GL context was lost during $stage")
-        }
-        return previewUnavailable("GL error 0x%x after %s".format(error, stage))
-    }
+    private fun clearOfGlErrors(stage: String): Boolean = GlErrorGuard.clear(stage)
 
     private companion object {
         /** A single-use chain analyses exactly one graph revision. */
         const val PREPASS_REVISION = 1
-        const val BYTES_PER_RGBA8_PIXEL = 4
-        const val DEFAULT_PACK_ALIGNMENT = 4
 
-        /** `GL_CONTEXT_LOST`; `GLES20` does not expose it and the value is context-loss specific. */
-        const val GL_CONTEXT_LOST_ERROR = 0x0505
+        val IDENTITY_MATRIX = floatArrayOf(
+            1.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f,
+            0.0f, 0.0f, 1.0f
+        )
 
         val DEFAULT_ATMOSPHERIC_LIGHT = floatArrayOf(1.0f, 1.0f, 1.0f)
     }

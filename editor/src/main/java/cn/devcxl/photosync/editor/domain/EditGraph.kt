@@ -286,7 +286,161 @@ data class PortraitOps(
 }
 
 /**
- * Non-destructive parametric edit graph v1 for a single photo.
+ * How the background around a [SubjectOps] subject is rendered.
+ *
+ * [ORIGINAL] keeps the camera pixels, [TRANSPARENT] cuts them out for RGBA export and [SOLID]
+ * replaces them with [SubjectOps.bgColorArgb].
+ */
+enum class SubjectBackgroundMode(val wireName: String) {
+    ORIGINAL("original"),
+    TRANSPARENT("transparent"),
+    SOLID("solid");
+
+    companion object {
+        fun fromWireName(raw: String?): SubjectBackgroundMode =
+            entries.firstOrNull { it.wireName.equals(raw, ignoreCase = true) } ?: ORIGINAL
+    }
+}
+
+/**
+ * Normalized bounding box of one [InpaintPatchRef] in the **pre-crop original image space**.
+ *
+ * Geometry and colour therefore apply on top of the repaired pixels instead of moving the patch.
+ */
+data class InpaintBBox(
+    val left: Float = 0.0f,
+    val top: Float = 0.0f,
+    val right: Float = 1.0f,
+    val bottom: Float = 1.0f
+)
+
+/**
+ * Subject-mask driven appearance controls (P1).
+ *
+ * `maskRef` points at the content-addressed subject mask produced on device; the background mode
+ * and the foreground/background relative adjustments are pure parameters. `maskRef` is deliberately
+ * ignored by [isIdentity] because a mask without an effect renders nothing.
+ */
+data class SubjectOps(
+    val maskRef: String = "",
+    val bgMode: SubjectBackgroundMode = SubjectBackgroundMode.ORIGINAL,
+    val bgColorArgb: Int = DEFAULT_BG_COLOR_ARGB,
+    val blur: Int = 0,
+    val fgExposure: Int = 0,
+    val fgTemp: Int = 0,
+    val fgSat: Int = 0,
+    val bgExposure: Int = 0,
+    val bgTemp: Int = 0,
+    val bgSat: Int = 0
+) {
+    fun isIdentity(): Boolean =
+        bgMode == SubjectBackgroundMode.ORIGINAL &&
+            blur == 0 &&
+            fgExposure == 0 &&
+            fgTemp == 0 &&
+            fgSat == 0 &&
+            bgExposure == 0 &&
+            bgTemp == 0 &&
+            bgSat == 0
+
+    /** True when the foreground/background relative exposure, temperature or saturation is set. */
+    fun hasGradingAdjustments(): Boolean =
+        fgExposure != 0 ||
+            fgTemp != 0 ||
+            fgSat != 0 ||
+            bgExposure != 0 ||
+            bgTemp != 0 ||
+            bgSat != 0
+
+    /** True when the simulated background bokeh is requested. */
+    fun hasBackgroundBlur(): Boolean = blur > 0
+
+    /**
+     * True when any effect needs the refined subject alpha, i.e. the composite must be loaded even
+     * with an `ORIGINAL` background.
+     */
+    fun requiresMaskProcessing(): Boolean =
+        bgMode != SubjectBackgroundMode.ORIGINAL || hasBackgroundBlur() || hasGradingAdjustments()
+
+    companion object {
+        /** Opaque white, the default solid background of [SubjectBackgroundMode.SOLID]. */
+        const val DEFAULT_BG_COLOR_ARGB: Int = 0xFFFFFFFF.toInt()
+    }
+}
+
+/**
+ * One ordered inpainting patch: a lossless local RGB patch plus its feathered mask, both addressed
+ * by confined relative paths under the photo's edit directory.
+ */
+data class InpaintPatchRef(
+    val bbox: InpaintBBox = InpaintBBox(),
+    val patchRelPath: String,
+    val maskRelPath: String,
+    val sha256: String = ""
+)
+
+/**
+ * Where the replacement sky of [SkyOps] comes from.
+ */
+enum class SkyAssetType(val wireName: String) {
+    NONE("none"),
+    PROCEDURAL("procedural"),
+    CUSTOM("custom"),
+    PACK("pack");
+
+    companion object {
+        fun fromWireName(raw: String?): SkyAssetType =
+            entries.firstOrNull { it.wireName.equals(raw, ignoreCase = true) } ?: NONE
+    }
+}
+
+/**
+ * Sky replacement parameters and the reference to the selected sky asset (P3).
+ *
+ * The mask itself is computed per photo; [assetIdOrRelPath] is either a built-in procedural id,
+ * a user-imported asset path or a downloadable pack id. A `NONE` asset type makes the whole group
+ * a rendering no-op regardless of the remaining fields.
+ */
+data class SkyOps(
+    val maskRef: String = "",
+    val assetType: SkyAssetType = SkyAssetType.NONE,
+    val assetIdOrRelPath: String = "",
+    val assetSha256: String = "",
+    val relight: Int = 0,
+    val horizonOffset: Float = 0.0f,
+    val horizonFeather: Int = 0,
+    val edgeShift: Int = 0
+) {
+    fun isIdentity(): Boolean =
+        assetType == SkyAssetType.NONE &&
+            relight == 0 &&
+            abs(horizonOffset) < 1e-4f &&
+            horizonFeather == 0 &&
+            edgeShift == 0
+}
+
+/**
+ * A pixel layer returned by a BYOK cloud edit endpoint (P4).
+ *
+ * The layer is mounted in the Post-Pass A / Pre-Pass B space and bound to the geometry digest it
+ * was generated for; a later geometry change invalidates it.
+ */
+data class CloudEditLayerRef(
+    val imageRelPath: String,
+    val maskRelPath: String? = null,
+    val sha256: String = "",
+    val opacity: Int = 100,
+    val featherPx: Float = 0.0f,
+    val geometryDigest: String = "",
+    val providerTag: String = ""
+)
+
+/**
+ * Non-destructive parametric edit graph v2 for a single photo.
+ *
+ * Schema v2 adds the optional AI groups ([subject], [inpaint], [sky] and [cloudLayer]). Every one
+ * defaults to a neutral value, so a v1 document and an untouched v2 graph both report
+ * [isIdentity] and keep the renderer's zero-cost short circuit.
  */
 data class EditGraph(
     val schema: Int = CURRENT_SCHEMA_VERSION,
@@ -296,7 +450,11 @@ data class EditGraph(
     val color: ColorOps = ColorOps(),
     val detail: DetailOps = DetailOps(),
     val effects: EffectsOps = EffectsOps(),
-    val portrait: PortraitOps = PortraitOps()
+    val portrait: PortraitOps = PortraitOps(),
+    val subject: SubjectOps = SubjectOps(),
+    val inpaint: List<InpaintPatchRef> = emptyList(),
+    val sky: SkyOps = SkyOps(),
+    val cloudLayer: CloudEditLayerRef? = null
 ) {
     /**
      * Returns true when every parameter equals its neutral default so no edit record needs
@@ -309,7 +467,11 @@ data class EditGraph(
             color.isIdentity() &&
             detail.isIdentity() &&
             effects.isIdentity() &&
-            portrait.isIdentity()
+            portrait.isIdentity() &&
+            subject.isIdentity() &&
+            inpaint.isEmpty() &&
+            sky.isIdentity() &&
+            cloudLayer == null
 
     /**
      * True when Pass A (crop, rotate, straighten, perspective, lateral CA or warp mesh) must run;
@@ -319,6 +481,6 @@ data class EditGraph(
         !geometry.isIdentity() || effects.ca.hasLateralCa() || hasWarp
 
     companion object {
-        const val CURRENT_SCHEMA_VERSION = 1
+        const val CURRENT_SCHEMA_VERSION = 2
     }
 }

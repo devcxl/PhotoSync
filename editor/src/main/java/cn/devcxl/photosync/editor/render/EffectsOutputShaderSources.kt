@@ -1,8 +1,8 @@
 package cn.devcxl.photosync.editor.render
 
 /**
- * GLSL ES 3.00 source of Pass D (`EffectsOutputPass`): tetrahedral 3D LUT, post-crop film grain,
- * post-crop vignette and `1/255` triangular dithering.
+ * GLSL ES 3.00 source of Pass D (`EffectsOutputPass`): subject cut-out composite, tetrahedral 3D LUT,
+ * post-crop film grain, post-crop vignette and `1/255` triangular dithering.
  *
  * Every formula mirrors `PassDEffectsMath` constant for constant, and the vertex stage is shared
  * with Pass B so both passes use the same canvas letterbox transform.
@@ -28,11 +28,30 @@ internal object EffectsOutputShaderSources {
         uniform float uDitherAmp;
         uniform vec4 uTileUvTransform;
         uniform vec2 uTilePixelScale;
+        uniform int uSubjectMode;
+        uniform sampler2D uSubjectTex;
+        uniform vec4 uSubjectColor;
+        uniform mat3 uSubjectUvMatrix;
+        uniform int uSubjectLocal;
+        uniform sampler2D uSubjectWarpTex;
+        uniform int uHasSubjectWarpTex;
+        uniform vec2 uSubjectWarpScale;
+        uniform vec2 uSubjectWarpOffset;
+        uniform int uSubjectChecker;
+        ${SkyShaderSources.RELIGHT_UNIFORMS}
+        ${SkyShaderSources.COMPOSITE_UNIFORMS}
 
         const vec3 LUMA_WEIGHTS = vec3(0.2126, 0.7152, 0.0722);
         const float GRAIN_FINE_FREQUENCY = 1400.0;
         const float GRAIN_COARSE_FREQUENCY = 120.0;
         const float GRAIN_MAX_AMPLITUDE = 0.06;
+
+        vec4 sampleTex2D(sampler2D s, vec2 uv) {
+            return texture(s, uv);
+        }
+
+        ${SkyShaderSources.SAMPLING_FUNCTIONS}
+        ${SkyShaderSources.COMPOSITE_FUNCTIONS}
 
         float hash21(vec2 cell, float seed) {
             vec3 p = fract(vec3(cell.xyx) * 0.1031 + seed * 0.0173);
@@ -120,6 +139,40 @@ internal object EffectsOutputShaderSources {
             // frame was rendered in one pass or as column bands with slightly different UV math.
             vec2 pixelIndex = floor(globalUv * pixelScale);
             vec2 snappedUv = (pixelIndex + vec2(0.5)) / pixelScale;
+
+            // The sky is the background the subject composite sits on; compositing it first keeps
+            // the cut-out's alpha and decontaminated foreground authoritative.
+            srgb = applySkyComposite(srgb, vTexCoord, globalUv);
+
+            float subjectAlpha = 1.0;
+            if (uSubjectMode != 0) {
+                vec2 subjectUv = vTexCoord;
+                if (uSubjectLocal == 0) {
+                    vec3 mapped = uSubjectUvMatrix * vec3(globalUv, 1.0);
+                    subjectUv = mapped.xy / max(mapped.z, 1e-6);
+                    if (uHasSubjectWarpTex == 1) {
+                        vec2 warp = texture(uSubjectWarpTex, subjectUv).xy *
+                            uSubjectWarpScale + uSubjectWarpOffset;
+                        subjectUv += warp;
+                    }
+                }
+                vec4 subject = texture(uSubjectTex, subjectUv);
+                subjectAlpha = subject.a;
+                // On the fully opaque body the already-graded source is the better foreground: it
+                // carries Pass B/C tone and colour edits that the source-space FMGE estimate cannot.
+                // Only the transition band (hair) takes the decontaminated colour.
+                float bodyWeight = smoothstep(0.85, 1.0, subjectAlpha);
+                vec3 subjectForeground = mix(subject.rgb, src.rgb, bodyWeight);
+                if (uSubjectMode == 1) {
+                    // Solid backdrop: compose the decontaminated foreground over the chosen colour,
+                    // then let LUT / grain / vignette act on the whole frame.
+                    srgb = subjectForeground * subjectAlpha + uSubjectColor.rgb * (1.0 - subjectAlpha);
+                } else {
+                    // Transparent cut-out: effects must act on the foreground only. The checkerboard
+                    // is presentation-only and is added after the effects below.
+                    srgb = subjectForeground;
+                }
+            }
             if (uLutActive == 1 && uLutSize >= 2.0) {
                 srgb = mix(srgb, tetrahedralLut(srgb), uLutStrength);
             }
@@ -129,7 +182,21 @@ internal object EffectsOutputShaderSources {
             float ditherX = hash21(pixelIndex, uGrain.w);
             float ditherY = hash21(pixelIndex, uGrain.w + 31.0);
             float dither = (ditherX - ditherY) * uDitherAmp;
-            fragColor = vec4(clamp(srgb + vec3(dither), 0.0, 1.0), src.a);
+            vec3 finalColor = clamp(srgb + vec3(dither), 0.0, 1.0);
+            if (uSubjectMode == 2) {
+                if (uSubjectChecker == 1) {
+                    vec2 cell = floor(globalUv * pixelScale / 12.0);
+                    float parity = mod(cell.x + cell.y, 2.0);
+                    vec3 checker = mix(vec3(0.18), vec3(0.26), parity);
+                    fragColor = vec4(mix(checker, finalColor, subjectAlpha), 1.0);
+                } else {
+                    // Alpha-preserving export: RGB stays the decontaminated foreground so a
+                    // downscaler in the gallery cannot bleed the checkerboard into the edge.
+                    fragColor = vec4(finalColor, subjectAlpha);
+                }
+                return;
+            }
+            fragColor = vec4(finalColor, src.a);
         }
     """.trimIndent()
 }

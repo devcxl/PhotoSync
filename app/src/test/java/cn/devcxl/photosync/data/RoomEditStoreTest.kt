@@ -14,12 +14,15 @@ class RoomEditStoreTest {
 
     private fun store(
         editDao: FakePhotoEditDao = FakePhotoEditDao(),
-        cleaned: MutableList<Long> = mutableListOf()
+        cleaned: MutableList<Long> = mutableListOf(),
+        livePrefs: RecordingPrefs = RecordingPrefs(),
+        livePresetEnabled: () -> Boolean = { true }
     ): RoomEditStore = RoomEditStore(
         photoEditDao = editDao,
         userPresetDao = FakeUserPresetDao(),
-        liveTetherPrefs = RecordingPrefs(),
-        onClearPhotoEditCache = { id -> cleaned += id }
+        liveTetherPrefs = livePrefs,
+        onClearPhotoEditCache = { id -> cleaned += id },
+        livePresetEnabled = livePresetEnabled
     )
 
     @Test
@@ -62,6 +65,30 @@ class RoomEditStoreTest {
 
         assertNull(store.getEditForPhoto(42L))
         assertEquals(listOf(42L), cleanedPhotoIds)
+    }
+
+    @Test
+    fun shouldHideThePreset_whenTheMasterSwitchIsOffAndRestoreIt_whenEnabledAgain() {
+        var enabled = true
+        val prefs = RecordingPrefs()
+        val store = store(livePrefs = prefs, livePresetEnabled = { enabled })
+
+        store.setLiveTetherPresetId("preset-7")
+        assertEquals("preset-7", store.getLiveTetherPresetId())
+
+        enabled = false
+        assertNull("a disabled switch must not hand a preset to the ingestor", store.getLiveTetherPresetId())
+        assertEquals(
+            "the remembered id must survive the switch",
+            "preset-7",
+            prefs.getString(RoomEditStore.PREF_LIVE_TETHER_PRESET_ID, null)
+        )
+
+        val reopenedWhileDisabled = store(livePrefs = prefs, livePresetEnabled = { enabled })
+        assertNull(reopenedWhileDisabled.getLiveTetherPresetId())
+
+        enabled = true
+        assertEquals("preset-7", reopenedWhileDisabled.getLiveTetherPresetId())
     }
 
     @Test

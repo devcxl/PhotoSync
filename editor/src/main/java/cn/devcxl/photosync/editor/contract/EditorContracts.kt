@@ -3,6 +3,7 @@ package cn.devcxl.photosync.editor.contract
 import kotlinx.coroutines.flow.Flow
 
 import cn.devcxl.photosync.editor.domain.EditGraph
+import cn.devcxl.photosync.editor.vision.OrtSessionManager
 
 /**
  * Self-contained arguments passed when launching the editor activity so `:editor` never needs
@@ -122,4 +123,18 @@ object EditorHostRegistry {
      */
     @Volatile
     var tetheredPhotoEvents: Flow<Long>? = null
+
+    /**
+     * Process-wide ORT session owner, injected by `:app` during `Application.onCreate`.
+     *
+     * Every AI tool must share this one manager, otherwise the "at most one native session" contract
+     * of [OrtSessionManager] can be bypassed by holding two tool-owned instances at the same time.
+     * Constructing the manager loads no model and starts no thread; the first `withSession` call is
+     * still the only thing that touches ONNX Runtime.
+     *
+     * `null` is only expected in JVM tests or in a host that has not wired the registry yet; a tool
+     * then falls back to a private manager that it owns and closes itself.
+     */
+    @Volatile
+    var ortSessionManager: OrtSessionManager? = null
 }

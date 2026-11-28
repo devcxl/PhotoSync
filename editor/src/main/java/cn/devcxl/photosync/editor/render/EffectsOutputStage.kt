@@ -22,7 +22,11 @@ internal data class EffectsStageRequest(
     val passBDraw: ExposureDrawParams,
     /** Pixel size of the rendered frame, used as the global dither coordinate scale. */
     val pixelScaleX: Int = 0,
-    val pixelScaleY: Int = 0
+    val pixelScaleY: Int = 0,
+    /** Pass D subject composite, or `null` for the zero-cost short circuit. */
+    val subject: SubjectDrawParams? = null,
+    /** Pass D sky composite, or `null` for the zero-cost short circuit. */
+    val sky: SkyDrawParams? = null
 )
 
 /**
@@ -153,7 +157,9 @@ internal class EffectsOutputStage(
                 ditherAmp = PassDEffectsMath.DITHER_AMPLITUDE,
                 pixelScaleX = pixelScaleX.toFloat(),
                 pixelScaleY = pixelScaleY.toFloat(),
-                flipVerticalForScreen = true
+                flipVerticalForScreen = true,
+                subject = request.subject,
+                sky = request.sky
             )
         )
     }

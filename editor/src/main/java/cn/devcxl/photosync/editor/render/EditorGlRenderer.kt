@@ -13,7 +13,11 @@ import cn.devcxl.photosync.editor.domain.LiquifyMesh
 import cn.devcxl.photosync.editor.domain.Lut3dSamples
 import cn.devcxl.photosync.editor.domain.PassDEffectsParams
 import cn.devcxl.photosync.editor.domain.PortraitWarpComposer
+import cn.devcxl.photosync.editor.domain.ProceduralSky
+import cn.devcxl.photosync.editor.domain.SkyBlendParams
+import cn.devcxl.photosync.editor.domain.SkyRelightStats
 import cn.devcxl.photosync.editor.domain.SpatialDetailParams
+import cn.devcxl.photosync.editor.domain.SubjectOps
 import cn.devcxl.photosync.editor.domain.ToneShaderParams
 
 /**
@@ -26,8 +30,8 @@ import cn.devcxl.photosync.editor.domain.ToneShaderParams
  *    display color grading.
  * 3. **Pass C** ([SpatialDetailRenderer]) runs the 1024px Pre-pass, guided NR, dark-channel
  *    dehaze, Clarity/Texture and Y sharpening (short-circuited to 0 FBO draw calls when neutral).
- * 4. **Pass D** ([EffectsOutputStage]) applies tetrahedral 3D LUT, post-crop grain, vignette and
- *    `1/255` triangular dithering.
+ * 4. **Pass D** ([EffectsOutputStage]) composites the subject cut-out, then applies tetrahedral 3D
+ *    LUT, post-crop grain, vignette and `1/255` triangular dithering.
  */
 internal class EditorGlRenderer : GLSurfaceView.Renderer {
 
@@ -65,6 +69,9 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
     var frameState: RenderFrameState = RenderFrameState()
 
     @Volatile
+    private var skyStats: SkyRelightStats = SkyRelightStats.NEUTRAL
+
+    @Volatile
     var canvasTransform: CanvasViewportTransform = CanvasViewportTransform()
 
     /** FBO draw calls Pass C issued in the most recent frame; `0` when short-circuited. */
@@ -97,12 +104,18 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
 
         val state = frameState
-        val activeTexture = pipeline.activeTexture(state.useFastProxy)
+        val compareTexture = if (compareOriginal) pipeline.compareActiveTexture(state.useFastProxy) else 0
+        val useCompare = compareTexture != 0
+        val activeTexture = if (useCompare) compareTexture else pipeline.activeTexture(state.useFastProxy)
         if (activeTexture == 0) {
             lastPassCDrawCalls = 0
             return
         }
-        val (srcW, srcH) = pipeline.activeDimensions(state.useFastProxy)
+        val (srcW, srcH) = if (useCompare) {
+            pipeline.compareActiveDimensions(state.useFastProxy)
+        } else {
+            pipeline.activeDimensions(state.useFastProxy)
+        }
         pipeline.drawFrame(
             PreviewFrameRequest(
                 sourceTextureId = activeTexture,
@@ -117,7 +130,14 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
                 canvas = canvasTransform,
                 state = state,
                 compareOriginal = compareOriginal,
-                graphRevision = prepassRevision
+                graphRevision = prepassRevision,
+                subjectTextureId = pipeline.subjectTextureId,
+                subjectWeightTextureId = pipeline.subjectWeightTextureId,
+                subjectWarpTextureId = pipeline.warpTextureId,
+                subjectWarpScale = pipeline.warpDecodeScale,
+                subjectWarpOffset = pipeline.warpDecodeOffset,
+                cloudLayerTextureId = pipeline.cloudLayerTextureId,
+                cloudMaskTextureId = pipeline.cloudMaskTextureId
             )
         )
         lastPassCDrawCalls = pipeline.lastPassCDrawCalls
@@ -136,6 +156,16 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
     fun releaseSource() {
         stagedSource = null
         pipeline.releaseSource()
+    }
+
+    /**
+     * Stages the untouched decode that press-and-hold comparison must show.
+     *
+     * `null` restores the old behaviour, where "before" is the same source the canvas samples (that
+     * is exact while no repair patch exists).
+     */
+    fun setCompareSource(source: EditorSource?) {
+        if (source == null) pipeline.clearCompareSource() else pipeline.setCompareSource(source)
     }
 
     /** Stages the liquify displacement grid for the next frame. */
@@ -163,6 +193,41 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
     /** Stages the portrait `skinMask` that gates Pass C Stage 0 and the sharpening suppression. */
     fun setSkinMask(mask: FloatArray?) {
         pipeline.stageSkinMask(mask)
+    }
+
+    /** Stages the source-space subject composite for the next Pass D draw. */
+    fun setSubjectComposite(composite: SubjectComposite?) {
+        pipeline.stageSubjectComposite(composite)
+        pipeline.invalidatePrepass()
+        prepassRevision++
+    }
+
+    /**
+     * Stages the decoded Post-Pass A cloud layer, or `null` to unbind it.
+     *
+     * The caller decodes and digest-verifies the layer off the GL thread
+     * ([CloudLayerBlender.prepare]); this only hands the pixels to the GL upload.
+     */
+    fun setCloudLayer(pixels: CloudLayerPixels?) {
+        pipeline.stageCloudLayer(pixels)
+        prepassRevision++
+    }
+
+    /**
+     * Stages the decoded P3 sky layer, or `null` to render the original sky.
+     *
+     * The caller verifies the mask digest, decodes the replacement image and computes the Pre-pass
+     * OKLab delta off the GL thread; this only publishes the mask/asset pixels and the shared stats.
+     */
+    fun setSkyLayer(layer: SkyLayerPixels?) {
+        synchronized(stateLock) {
+            skyStats = layer?.stats ?: SkyRelightStats.NEUTRAL
+            // The graph state may already be published while the layer was still decoding; the
+            // uniform snapshot must pick up the Pre-pass delta or the relight would stay neutral.
+            frameState = frameState.copy(skyStats = skyStats)
+        }
+        pipeline.stageSkyLayer(layer)
+        prepassRevision++
     }
 
     private fun publishWarpLocked() {
@@ -194,6 +259,10 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
             }
             val spatialParams = SpatialDetailParams.from(graph)
             pipeline.stageCurve(graph.color.curve)
+            val subjectPlan = SubjectRenderContract.plan(
+                graph = graph,
+                hasMask = pipeline.isSubjectCompositeAvailable
+            )
             frameState = RenderFrameState(
                 toneParams = ToneShaderParams.from(graph),
                 colorParams = ColorGradingParams.from(graph),
@@ -206,10 +275,26 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
                 lateralCaRedK = GeometryMath.lateralCaKFromSlider(aberration.redCyan),
                 lateralCaBlueK = GeometryMath.lateralCaKFromSlider(aberration.blueYellow),
                 outputAspectRatio = outputAspect,
-                warpActive = warpActive
+                warpActive = warpActive,
+                subjectMode = subjectPlan?.shaderMode ?: SUBJECT_MODE_OFF,
+                subjectColorRgb = subjectPlan?.solidColorRgb
+                    ?: (SubjectOps.DEFAULT_BG_COLOR_ARGB and RGB_MASK),
+                subjectUvMatrix = if (geometryActive) inverseMatrix else RenderFrameState.IDENTITY_MATRIX,
+                subjectWarpActive = pipeline.isSubjectCompositeAvailable && warpActive,
+                subjectOps = graph.subject,
+                cloudLayerOpacity = EditorRenderStateMath.cloudLayerOpacity(graph),
+                skyOps = graph.sky,
+                skyStats = skyStats,
+                skyBlend = SkyBlendParams.from(graph),
+                skyProcedural = ProceduralSky.of(graph)
             )
             isPassCActive = !useFastProxy && !spatialParams.isZeroDrawCallShortCircuit
-            val prepassSig = prepassSignature(graph, warpActive, portraitFaceWarp, portraitBodyWarp)
+            val prepassSig = EditorRenderStateMath.prepassSignature(
+                graph,
+                warpActive,
+                portraitFaceWarp,
+                portraitBodyWarp
+            )
             if (prepassSig != lastPrepassInputSignature) {
                 lastPrepassInputSignature = prepassSig
                 pipeline.invalidatePrepass()
@@ -218,28 +303,16 @@ internal class EditorGlRenderer : GLSurfaceView.Renderer {
         }
     }
 
-    private fun prepassSignature(
-        graph: EditGraph,
-        warpActive: Boolean,
-        faceWarp: FloatArray?,
-        bodyWarp: FloatArray?
-    ): Int {
-        var hash = graph.baseLook.hashCode()
-        hash = 31 * hash + graph.geometry.hashCode()
-        hash = 31 * hash + graph.tone.hashCode()
-        hash = 31 * hash + graph.color.copy(lut = null).hashCode()
-        hash = 31 * hash + graph.effects.ca.hashCode()
-        hash = 31 * hash + warpActive.hashCode()
-        hash = 31 * hash + (faceWarp?.contentHashCode() ?: 0)
-        hash = 31 * hash + (bodyWarp?.contentHashCode() ?: 0)
-        return hash
-    }
-
     private fun applySourceMetadata(source: EditorSource?) {
         if (source == null) return
         imageWidth = source.width.coerceAtLeast(1)
         imageHeight = source.height.coerceAtLeast(1)
         linearInput = source.isLinear
         autoBrightGain = (source as? EditorSource.LinearRawSource)?.autoBrightGain ?: 1.0f
+    }
+
+    private companion object {
+        const val SUBJECT_MODE_OFF = 0
+        const val RGB_MASK = 0x00FFFFFF
     }
 }

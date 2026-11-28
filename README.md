@@ -44,6 +44,18 @@ PhotoSync 是一款 Android 相机伴侣应用，专为摄影师和影像爱好�
 - **面部重塑** — 脸型、眼睛、鼻子、下巴、额头、笑容（MLS 网格）
 - **身体重塑** — 腰部、腿部，可拖拽引导线
 
+**AI 工具（端侧，按需下载）**
+- **主体去背** — MODNet 主体蒙版 + 分块 GuidedFilter + FMGE 去色溢；透明 PNG（保留 Alpha）、纯色换底、背景虚化
+- **前后景独立调色** — 主体与背景各自的曝光/色温/饱和度偏移
+- **智能消除** — MI-GAN 任意范围涂抹修复：源像素直径笔刷（8–1200 px，小/中/大快捷档）、精细/快速两档、分批渐进提交，可随时停止并保留已完成部分
+- **换天空** — 零模型经典天空分割 + 4 组 0 KB 程序化天空 + 可选 CC0 高清云彩包（不内置）+ 前景 OKLab 重光照
+- **按需模型管理** — MODNet / MI-GAN 绝不随安装包分发；设置页「AI 模型管理」按多镜像下载或 SAF 导入，严格校验字节数与 SHA-256
+- **可选云端增强（默认关闭）** — 纯 BYOK OpenAI-compatible / Gemini / 自建 ComfyUI；强制 HTTPS、禁用重定向、外发前剥离全部 EXIF 与缩略图
+
+**设置与诊断**
+- **统一设置页** — 顶栏齿轮入口，六分组覆盖联机与相册、编辑器、AI 工具、云端增强、存储与缓存、关于与诊断
+- **存储与诊断** — 模型 / AI 编辑资产 / 预览缓存 / LUT / 天空分类占用与清理，并汇总当前生效设置
+
 **联机暗房**
 - **用户预设** — 保存/应用自定义外观（可携带人像调整），内置 5 组精选预设
 - **LiveTetherPreset** — 新照片自动套用当前预设
@@ -52,14 +64,15 @@ PhotoSync 是一款 Android 相机伴侣应用，专为摄影师和影像爱好�
 
 **RAW 与导出**
 - **RAW 解码** — LibRaw + lcms2 色彩管理，支持 ARW、CR3、NEF、DNG、RAF 等 20+ 格式
-- **无损导出** — JPEG 直接拷贝；RAW / 编辑图全分辨率流式烘焙（libjpeg-turbo，EXIF 写回）
-- **无云上传** — 所有处理在本地完成
+- **无损导出** — JPEG 直接拷贝；RAW / 编辑图全分辨率流式烘焙（JPEG 走 libjpeg-turbo，去背走流式 RGBA8 PNG，EXIF 写回）
+- **默认纯本地** — 图像处理全部在本机完成；可选云端增强默认关闭且为纯 BYOK
 
 ## 适用场景
 
 - 外出拍摄时即拍即看，不耗相机屏幕电量
 - 现场将 RAW/JPEG 快速导入平板或大屏设备查看
 - 现场快修：套用预设调色、液化与面部/身体重塑后再交付
+- 现场出片：主体去背导出透明 PNG、涂抹消除路人、换天空后直接交付
 - 批量导出照片到本地，无压缩、无云端上传
 
 ## 快速上手
@@ -67,7 +80,7 @@ PhotoSync 是一款 Android 相机伴侣应用，专为摄影师和影像爱好�
 1. 用 USB 线将相机连接到手机/平板
 2. 在相机上选择「PC 连接」或「PTP/MTP」模式
 3. 打开 PhotoSync，点击「连接相机」，照片随即同步到应用
-4. 点开照片进入编辑器：调色、曲线、人像、液化，或直接套用预设
+4. 点开照片进入编辑器：调色、曲线、人像、液化，或直接用「AI」Tab 做去背、消除与换天空
 5. 保存后回到相册，可导出到系统相册或继续拍摄
 
 ---
@@ -82,6 +95,8 @@ PhotoSync 是一款 Android 相机伴侣应用，专为摄影师和影像爱好�
 | 数据库 | Room（v4：照片、编辑记录、预设） |
 | 图像处理 | LibRaw 0.21.4 + lcms2 2.18（独立 `libraw.so`）、libjpeg-turbo 3.2.2 |
 | 人像 | MediaPipe Tasks（Face Landmarker + Image Segmenter） |
+| 端侧 AI | ONNX Runtime 1.22.0（CPU / XNNPACK；模型 100% 按需下载，不随包内置） |
+| 密钥存储 | AndroidKeyStore（AES-256-GCM，仅按需的 BYOK 云端增强） |
 | 渲染 | OpenGL ES 3.0 离屏渲染链（Pass A–D） |
 | 后台任务 | WorkManager（批量导出） |
 | 架构 | MVVM + Clean Architecture |
@@ -103,12 +118,13 @@ PhotoSync/
 │       ├── ptp/            # USB PTP 协议、恢复与连接管理
 │       ├── receiver/       # USB 广播接收器
 │       └── utils/          # 工具类
-├── editor/                 # 图像编辑器模块（UI、渲染、人像、导出）
+├── editor/                 # 图像编辑器模块（UI、渲染、人像、AI、导出）
 │   └── src/main/java/cn/devcxl/photosync/editor/
-│       ├── domain/         # EditGraph、预设、液化、MLS/身体重塑
-│       ├── render/         # GLES Pass A–D、离屏预览
-│       ├── vision/         # MediaPipe 人像分析
-│       ├── export/         # 全分辨率烘焙
+│       ├── domain/         # EditGraph、预设、液化、MLS/身体重塑、AI 资产存储
+│       ├── render/         # GLES Pass A–D、离屏预览、主体/天空合成
+│       ├── vision/         # MediaPipe 人像分析 + ONNX Runtime 端侧 AI（MODNet / MI-GAN）
+│       ├── cloud/          # 可选 BYOK 云端增强（默认关闭）
+│       ├── export/         # 全分辨率流式烘焙（JPEG / 透明 PNG）
 │       └── ui/             # 编辑器界面与面板
 ├── libraw/                 # Native 模块（独立 libraw.so + JNI 桥接）
 │   └── src/main/

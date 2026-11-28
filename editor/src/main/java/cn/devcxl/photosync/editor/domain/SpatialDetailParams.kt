@@ -35,7 +35,9 @@ data class SpatialDetailParams(
     /** Skin tone evening amount in `0..1`. */
     val skinEvenTone: Float = 0.0f,
     /** True when the Portrait panel's skin smoothing occupies Pass C first. */
-    val hasSkinSmoothing: Boolean = false
+    val hasSkinSmoothing: Boolean = false,
+    /** Normalized `subject.blur` in `0..1`; `0` keeps the simulated bokeh stage out of Pass C. */
+    val subjectBlur: Float = 0.0f
 ) {
 
     /** True when Stage 0 (skin frequency separation) must run. */
@@ -62,6 +64,10 @@ data class SpatialDetailParams(
     val needsPrepass: Boolean
         get() = hasDehaze || hasClarityTexture
 
+    /** True when the terminal simulated background bokeh stage must run. */
+    val hasSubjectBokeh: Boolean
+        get() = subjectBlur > 0.0f
+
     /**
      * The physical 0-draw-call contract: when every spatial slider **and** the glow coupling are
      * neutral, Pass C is skipped entirely instead of rendering a copy of its input.
@@ -73,7 +79,8 @@ data class SpatialDetailParams(
             dehaze == 0.0f &&
             clarity == 0.0f &&
             texture == 0.0f &&
-            sharpenAmount == 0.0f
+            sharpenAmount == 0.0f &&
+            !hasSubjectBokeh
 
     companion object {
         /** `detail.sharpen.radius` default, in full-resolution pixels. */
@@ -118,7 +125,8 @@ data class SpatialDetailParams(
                 skinSmooth = skin.smooth / SLIDER_SCALE,
                 skinTexture = skin.texture / SLIDER_SCALE,
                 skinEvenTone = skin.evenTone / SLIDER_SCALE,
-                hasSkinSmoothing = skin.smooth != 0 || skin.evenTone != 0
+                hasSkinSmoothing = skin.smooth != 0 || skin.evenTone != 0,
+                subjectBlur = graph.subject.blur / SLIDER_SCALE
             )
         }
     }

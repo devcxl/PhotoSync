@@ -30,6 +30,56 @@ internal object ColorShaderGlsl {
         uniform float uSplitBalance;
     """.trimIndent()
 
+    /**
+     * Uniform block of the subject relight and of the terminal Pass C bokeh.
+     *
+     * Pass B declares [SUBJECT_RELIGHT_UNIFORMS] with `uSubjectGradeActive`; Pass C reuses the same
+     * names for its bokeh stage and simply drives `subjectWeightAt` directly.
+     */
+    val SUBJECT_UNIFORMS = """
+        uniform sampler2D uSubjectMaskTex;
+        uniform int uSubjectGradeActive;
+        uniform int uSubjectLocal;
+        uniform sampler2D uSubjectWarpTex;
+        uniform int uHasSubjectWarpTex;
+        uniform mat3 uSubjectUvMatrix;
+        uniform vec2 uSubjectWarpScale;
+        uniform vec2 uSubjectWarpOffset;
+        uniform vec3 uSubjectFgGrade;
+        uniform vec3 uSubjectBgGrade;
+    """.trimIndent()
+
+    /**
+     * Refined subject alpha at [SUBJECT_UNIFORMS]'s mapping, plus the relative grade applied before
+     * Pass B1. Mirrors `SubjectRelightMath` expression for expression.
+     */
+    val SUBJECT_RELIGHT_FUNCTIONS = """
+        float subjectWeightAt(vec2 localUv) {
+            vec2 uv = localUv;
+            if (uSubjectLocal == 0) {
+                vec3 mapped = uSubjectUvMatrix * vec3(localUv, 1.0);
+                uv = mapped.xy / max(mapped.z, 1e-6);
+                if (uHasSubjectWarpTex == 1) {
+                    uv += sampleSubjectTex(uSubjectWarpTex, uv).xy *
+                        uSubjectWarpScale + uSubjectWarpOffset;
+                }
+            }
+            return clamp(sampleSubjectTex(uSubjectMaskTex, uv).r, 0.0, 1.0);
+        }
+
+        vec3 applySubjectRelight(vec3 linear) {
+            if (uSubjectGradeActive == 0) return linear;
+            float weight = subjectWeightAt(vTexCoord);
+            vec3 grade = mix(uSubjectBgGrade, uSubjectFgGrade, weight);
+            vec3 c = max(linear, vec3(0.0)) * exp2(grade.x * 2.0);
+            c.r *= 1.0 + grade.y * 0.15;
+            c.b *= 1.0 - grade.y * 0.15;
+            float luma = luminance(c);
+            c = luma + (c - luma) * max(0.0, 1.0 + grade.z * 0.8);
+            return max(c, vec3(0.0));
+        }
+    """.trimIndent()
+
     val FUNCTIONS = """
         const float PI_CONST = 3.14159265;
         const float TWO_PI_CONST = 6.28318531;

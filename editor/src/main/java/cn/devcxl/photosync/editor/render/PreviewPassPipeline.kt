@@ -7,6 +7,7 @@ import cn.devcxl.photosync.editor.domain.CurveOps
 import cn.devcxl.photosync.editor.domain.Lut3dSamples
 import cn.devcxl.photosync.editor.domain.PassDEffectsMath
 import cn.devcxl.photosync.editor.domain.SpatialDetailPlanner
+import cn.devcxl.photosync.editor.domain.TileUvTransform
 import cn.devcxl.photosync.editor.domain.WarpDisplacementField
 
 /**
@@ -19,7 +20,8 @@ import cn.devcxl.photosync.editor.domain.WarpDisplacementField
  * 3. **Pass C** ([SpatialDetailRenderer]) runs the 1024px Pre-pass + spatial-detail chain
  *    (skin smoothing, NR, dehaze, clarity/texture, sharpening) when non-neutral outside a fast
  *    proxy drag, otherwise short-circuits at **0 FBO draw calls**.
- * 4. **Pass D** ([EffectsOutputStage]) adds the 3D LUT, film grain, post-crop vignette and dithering.
+ * 4. **Pass D** ([EffectsOutputStage]) composites the subject cut-out, then adds the 3D LUT, film
+ *    grain, post-crop vignette and dithering.
  */
 internal class PreviewPassPipeline {
 
@@ -37,8 +39,13 @@ internal class PreviewPassPipeline {
     private val effectsStage = EffectsOutputStage(exposureProgram, capabilities)
     private val geometryTarget = OffscreenColorTarget(capabilities)
     private val textures = EditorSourceTextures()
+    private val compareTextures = EditorSourceTextures()
     private val warpTexture = WarpTexture()
     private val skinMaskTexture = SkinMaskTexture()
+    private val subjectTexture = SubjectMaskTexture()
+    private val subjectWeightTexture = SubjectWeightTexture()
+    private val cloudTextures = CloudLayerTextures()
+    private val skyTextures = SkyLayerTextures()
     private val curveLutTexture = CurveLutTexture()
     private var geometryFallbackLogged = false
 
@@ -66,8 +73,13 @@ internal class PreviewPassPipeline {
         lastPassCDrawCalls = 0
         warpTexture.invalidate()
         skinMaskTexture.invalidate()
+        subjectTexture.invalidate()
+        subjectWeightTexture.invalidate()
+        cloudTextures.invalidate()
+        skyTextures.invalidate()
         curveLutTexture.invalidate()
         textures.invalidateContext()
+        compareTextures.invalidateContext()
         if (preferEs3 && !geometryProgram.init()) {
             capabilities.markMinimalFallback("Pass A GeometryCa")
         }
@@ -76,14 +88,75 @@ internal class PreviewPassPipeline {
     /** Stages [source] for upload on the GL thread. */
     fun setSource(source: EditorSource) = textures.stage(source)
 
+    /** Stages the untouched decode the Before/After comparison must show. */
+    fun setCompareSource(source: EditorSource) = compareTextures.stage(source)
+
+    /** Drops the staged comparison source, so compare falls back to the edited source. */
+    fun clearCompareSource() = compareTextures.clear()
+
     /** Drops the staged source without touching GL objects. */
-    fun releaseSource() = textures.clear()
+    fun releaseSource() {
+        textures.clear()
+        compareTextures.clear()
+    }
 
     /** Stages the composed `uWarpTex` field (face MLS + body + liquify). */
     fun stageWarpField(field: WarpDisplacementField?): Boolean = warpTexture.stage(field)
 
     /** Stages the portrait `skinMask`; `null` unbinds the Stage 0 / sharpening suppression mask. */
     fun stageSkinMask(mask: FloatArray?): Boolean = skinMaskTexture.stage(mask)
+
+    /** Stages the source-space subject composite, or `null` to disable the Pass D subject stage. */
+    fun stageSubjectComposite(composite: SubjectComposite?) {
+        subjectTexture.stage(composite)
+        subjectWeightTexture.stage(composite)
+    }
+
+    /** True when a composite is staged or uploaded, so [EditorGlRenderer] may activate the stage. */
+    val isSubjectCompositeAvailable: Boolean
+        get() = subjectTexture.isActive || subjectTexture.isStaged
+
+    /** Uploaded subject texture name, or `0` before the first upload. */
+    val subjectTextureId: Int
+        get() = subjectTexture.textureId
+
+    /** Uploaded refined subject alpha, or `0` when the subject stage has no mask. */
+    val subjectWeightTextureId: Int
+        get() = subjectWeightTexture.activeTextureId
+
+    /** Stages the Post-Pass A cloud layer pixels, or `null` to unbind the layer. */
+    fun stageCloudLayer(pixels: CloudLayerPixels?) = cloudTextures.stage(pixels)
+
+    /** Stages the decoded P3 sky layer, or `null` to render the original sky. */
+    fun stageSkyLayer(layer: SkyLayerPixels?) = skyTextures.stage(layer)
+
+    /** Uploaded sky mask texture, or `0` when no sky may be composited. */
+    val skyMaskTextureId: Int
+        get() = if (skyTextures.isActive) skyTextures.maskTextureId else 0
+
+    /** Uploaded replacement sky image, or `0` for a procedural sky. */
+    val skyAssetTextureId: Int
+        get() = if (skyTextures.isActive && skyTextures.hasAsset) skyTextures.assetTextureId else 0
+
+    /** Uploaded cloud layer texture, or `0` when no layer may be sampled. */
+    val cloudLayerTextureId: Int
+        get() = if (cloudTextures.isActive) cloudTextures.imageTextureId else 0
+
+    /** Uploaded cloud coverage texture, or `0` for a whole-frame layer. */
+    val cloudMaskTextureId: Int
+        get() = if (cloudTextures.isActive) cloudTextures.maskTextureId else 0
+
+    /** Uploaded `uWarpTex`, or `0` when the composed warp is neutral. */
+    val warpTextureId: Int
+        get() = if (warpTexture.isWarpActive) warpTexture.textureId else 0
+
+    /** Decode scale of the uploaded warp grid. */
+    val warpDecodeScale: Float
+        get() = warpTexture.decodeScale
+
+    /** Decode offset of the uploaded warp grid. */
+    val warpDecodeOffset: Float
+        get() = warpTexture.decodeOffset
 
     /** Stages the 1D tone-curve LUT for the next frame. */
     fun stageCurve(curve: CurveOps) = curveLutTexture.stage(curve)
@@ -101,11 +174,24 @@ internal class PreviewPassPipeline {
     fun activeDimensions(useFastProxy: Boolean): Pair<Int, Int> =
         textures.activeDimensions(useFastProxy)
 
+    /** Texture of the un-edited decode, or `0` when compare must fall back to [activeTexture]. */
+    fun compareActiveTexture(useFastProxy: Boolean): Int =
+        compareTextures.activeTexture(useFastProxy)
+
+    /** Pixel dimensions of the compare texture. */
+    fun compareActiveDimensions(useFastProxy: Boolean): Pair<Int, Int> =
+        compareTextures.activeDimensions(useFastProxy)
+
     /** Uploads everything staged on the GL thread. */
     fun uploadPending(preferEs3: Boolean): Boolean {
         textures.uploadPending()
+        compareTextures.uploadPending()
         val warpFailed = warpTexture.uploadIfNeeded()
         skinMaskTexture.uploadIfNeeded()
+        subjectTexture.uploadIfNeeded()
+        subjectWeightTexture.uploadIfNeeded()
+        cloudTextures.uploadIfNeeded()
+        skyTextures.uploadIfNeeded()
         curveLutTexture.uploadIfNeeded(preferEs3)
         effectsStage.uploadPending(preferEs3)
         return warpFailed
@@ -127,19 +213,70 @@ internal class PreviewPassPipeline {
             return
         }
         val frame = renderGeometryPass(request, source)
-        if (capabilities.isMinimalFallback) {
+        if (!capabilities.allowsPassDEffects) {
             lastPassCDrawCalls = 0
             drawPassB(request, frame)
             return
         }
         val passCTexture = renderSpatialDetailIfActive(request, frame)
-        val effectsActive = !request.state.effectsParams.isIdentity && effectsStage.isReady
+        val subject = subjectDrawParams(request)
+        val sky = skyDrawParams(request)
+        val effectsActive = (!request.state.effectsParams.isIdentity ||
+            subject != null ||
+            sky != null) && effectsStage.isReady
         when {
-            effectsActive && passCTexture != 0 -> drawPassDFromTexture(request, frame, passCTexture)
-            effectsActive -> drawPassD(request, frame)
+            effectsActive && passCTexture != 0 ->
+                drawPassDFromTexture(request, frame, passCTexture, subject, sky)
+            effectsActive -> drawPassD(request, frame, subject, sky)
             passCTexture != 0 -> presentPassC(request, frame, passCTexture)
             else -> drawPassB(request, frame)
         }
+    }
+
+    /**
+     * Builds the Pass B/D sky bundle from the staged layer and the current frame state.
+     *
+     * The mask is sampled through the Pass A inverse matrix and the composed warp, so a crop, a
+     * liquify stroke or a body reshape moves the sky boundary together with the pixels.
+     */
+    private fun skyDrawParams(request: PreviewFrameRequest): SkyDrawParams? {
+        val state = request.state
+        val blend = state.skyBlend ?: return null
+        val maskId = skyMaskTextureId
+        if (maskId == 0) return null
+        return SkyDrawParams(
+            maskTextureId = maskId,
+            assetTextureId = skyAssetTextureId,
+            procedural = state.skyProcedural,
+            blend = blend,
+            stats = state.skyStats,
+            relight = state.skyOps.relight,
+            uvMatrix = if (state.geometryActive) state.geometryInverseMatrix else SkyDrawParams.IDENTITY_MATRIX,
+            warpTextureId = if (state.warpActive) warpTexture.textureId else 0,
+            warpScale = warpTexture.decodeScale,
+            warpOffset = warpTexture.decodeOffset,
+            tileUv = TileUvTransform.IDENTITY,
+            // `edgeShift` is expressed in full-resolution source pixels; using the viewport here
+            // would make a 2 px shrink mean a different amount at every zoom level.
+            pixelScaleX = request.fullResolutionShortEdge.coerceAtLeast(1).toFloat(),
+            pixelScaleY = request.fullResolutionShortEdge.coerceAtLeast(1).toFloat()
+        )
+    }
+
+    private fun subjectDrawParams(request: PreviewFrameRequest): SubjectDrawParams? {
+        val state = request.state
+        if (state.subjectMode == 0 || request.subjectTextureId == 0) return null
+        return SubjectDrawParams(
+            textureId = request.subjectTextureId,
+            mode = state.subjectMode,
+            solidColorRgb = state.subjectColorRgb,
+            localSpace = false,
+            uvMatrix = state.subjectUvMatrix,
+            warpTextureId = if (state.subjectWarpActive) warpTexture.textureId else 0,
+            warpScale = warpTexture.decodeScale,
+            warpOffset = warpTexture.decodeOffset,
+            checkerboard = state.subjectMode == SUBJECT_MODE_TRANSPARENT
+        )
     }
 
     private fun renderGeometryPass(request: PreviewFrameRequest, source: PreviewFrameInput): PreviewFrameInput {
@@ -184,10 +321,12 @@ internal class PreviewPassPipeline {
     private fun renderSpatialDetailIfActive(request: PreviewFrameRequest, frame: PreviewFrameInput): Int {
         val state = request.state
         val skinMaskAvailable = skinMaskTexture.isActive
+        val subjectMaskAvailable = subjectMaskTextureAvailable()
         val plan = SpatialDetailPlanner.plan(
             state.spatialParams,
             prepassAvailable = true,
-            skinMaskAvailable = skinMaskAvailable
+            skinMaskAvailable = skinMaskAvailable,
+            subjectMaskAvailable = subjectMaskAvailable
         )
         if (state.useFastProxy || plan.isZeroDrawCallShortCircuit || !spatialDetail.isReady) {
             lastPassCDrawCalls = 0
@@ -205,7 +344,8 @@ internal class PreviewPassPipeline {
             targetHeight = targetHeight,
             fullResolutionShortEdge = request.fullResolutionShortEdge,
             skinMaskTextureId = if (skinMaskTexture.isActive) skinMaskTexture.textureId else 0,
-            allowHalfFloat = true
+            allowHalfFloat = true,
+            subjectBokeh = subjectBokehParams(request, targetWidth, targetHeight)
         ) { target ->
             target.bind()
             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
@@ -224,6 +364,29 @@ internal class PreviewPassPipeline {
         lastPassCDrawCalls = if (outputTex != 0) spatialDetail.lastDrawCalls else 0
         GLES20.glViewport(0, 0, request.viewportWidth, request.viewportHeight)
         return outputTex
+    }
+
+    private fun subjectMaskTextureAvailable(): Boolean =
+        subjectWeightTexture.isActive && subjectWeightTexture.activeTextureId != 0
+
+    private fun subjectBokehParams(
+        request: PreviewFrameRequest,
+        targetWidth: Int,
+        targetHeight: Int
+    ): SubjectBokehDrawParams? {
+        val state = request.state
+        if (!state.subjectOps.hasBackgroundBlur() || !subjectMaskTextureAvailable()) return null
+        return SubjectBokehPlanner.params(
+            blur = state.subjectOps.blur,
+            shortEdge = minOf(targetWidth, targetHeight),
+            maskTextureId = subjectWeightTexture.activeTextureId,
+            localSpace = false,
+            uvMatrix = state.subjectUvMatrix,
+            fullShortEdge = request.fullResolutionShortEdge,
+            warpTextureId = if (state.subjectWarpActive) warpTexture.textureId else 0,
+            warpScale = warpTexture.decodeScale,
+            warpOffset = warpTexture.decodeOffset
+        )
     }
 
     private fun presentPassC(request: PreviewFrameRequest, frame: PreviewFrameInput, textureId: Int) {
@@ -245,13 +408,26 @@ internal class PreviewPassPipeline {
                 request = request,
                 frame = frame,
                 curveTextureId = curveLutTexture.textureId,
-                ditherAmp = PassDEffectsMath.DITHER_AMPLITUDE
+                ditherAmp = PassDEffectsMath.DITHER_AMPLITUDE,
+                sky = skyDrawParams(request)
             )
         )
     }
 
-    private fun drawPassD(request: PreviewFrameRequest, frame: PreviewFrameInput) {
-        if (!effectsStage.draw(PreviewDrawRequests.effects(request, frame, curveLutTexture.textureId))) {
+    private fun drawPassD(
+        request: PreviewFrameRequest,
+        frame: PreviewFrameInput,
+        subject: SubjectDrawParams?,
+        sky: SkyDrawParams?
+    ) {
+        val stageRequest = PreviewDrawRequests.effects(
+            request,
+            frame,
+            curveLutTexture.textureId,
+            subject,
+            sky
+        )
+        if (!effectsStage.draw(stageRequest)) {
             drawPassB(request, frame)
         }
     }
@@ -259,11 +435,13 @@ internal class PreviewPassPipeline {
     private fun drawPassDFromTexture(
         request: PreviewFrameRequest,
         frame: PreviewFrameInput,
-        textureId: Int
+        textureId: Int,
+        subject: SubjectDrawParams?,
+        sky: SkyDrawParams?
     ) {
         effectsStage.drawFromTexture(
             textureId,
-            PreviewDrawRequests.effects(request, frame, curveLutTexture.textureId)
+            PreviewDrawRequests.effects(request, frame, curveLutTexture.textureId, subject, sky)
         )
     }
 
@@ -271,5 +449,9 @@ internal class PreviewPassPipeline {
         if (geometryFallbackLogged) return
         geometryFallbackLogged = true
         Timber.w("Pass A target unavailable; preview falls back to the un-warped source")
+    }
+
+    private companion object {
+        const val SUBJECT_MODE_TRANSPARENT = 2
     }
 }

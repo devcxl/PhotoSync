@@ -20,6 +20,11 @@
 # ProGuard rules, so R8 must not rename or strip the library.
 -keep class com.google.mediapipe.** { *; }
 
+# ONNX Runtime's Android build documentation requires this keep rule: the Java API is
+# reached from JNI by name and the AAR ships no consumer rules, so a minified release
+# crashes at the first `OrtEnvironment.getEnvironment()` call without it.
+-keep class ai.onnxruntime.** { *; }
+
 # MediaPipe 0.10.x references optional accelerators it does not bundle: the LiteRT-LM image
 # embedder backend, AutoValue's compile-time annotation and the graph-profiler protos. The editor
 # only uses FaceLandmarker and ImageSegmenter, so these code paths are never reached; R8 still

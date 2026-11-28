@@ -24,18 +24,24 @@ import cn.devcxl.photosync.editor.domain.EditValidator
  *
  * When a saved [EditGraph] is identity (all sliders at neutral defaults), any existing row
  * for that photo is deleted and [onClearPhotoEditCache] is invoked so no identity rows or
- * stale preview files remain.
+ * stale preview files remain. The same delete path invokes [onClearPhotoExternalAssets] so the
+ * content-addressed AI payloads under `filesDir/edits/<photoId>/` are removed with the row; wire it
+ * to `AiAssetStore::deletePhotoAssets` (or an equivalent lambda) at the composition root.
  *
  * The active `LiveTetherPreset` lives in [liveTetherPrefs] rather than a table: it is a single
  * process-wide choice, and reading it must be synchronous because the USB download callback decides
- * whether to render a preview before it commits a row.
+ * whether to render a preview before it commits a row. [livePresetEnabled] is the master switch:
+ * while it is off the id stays stored (so re-enabling restores it) but is never handed to the ingest
+ * path.
  */
 class RoomEditStore(
     private val photoEditDao: PhotoEditDao,
     private val userPresetDao: UserPresetDao,
     private val liveTetherPrefs: SharedPreferences,
     private val onClearPhotoEditCache: (Long) -> Unit,
-    private val builtinNameResolver: (String) -> String = { it }
+    private val builtinNameResolver: (String) -> String = { it },
+    private val onClearPhotoExternalAssets: (Long) -> Unit = {},
+    private val livePresetEnabled: () -> Boolean = { true }
 ) : EditStore {
 
     private val liveTetherPresetId = MutableStateFlow(readLiveTetherPresetId())
@@ -54,11 +60,14 @@ class RoomEditStore(
             deleteEditForPhoto(photoId)
             return
         }
+        // Migration-on-write: a v1 row loaded into the editor is persisted back as a v2 document
+        // even when the user only touched a v1 axis, so every new row advertises the current schema.
+        val upgraded = sanitized.copy(schema = EditGraph.CURRENT_SCHEMA_VERSION)
         val entity = PhotoEditEntity(
             id = 0L,
             photoId = photoId,
-            schemaVersion = sanitized.schema,
-            graphJson = EditGraphJsonCodec.encode(sanitized),
+            schemaVersion = upgraded.schema,
+            graphJson = EditGraphJsonCodec.encode(upgraded),
             previewCachePath = previewCachePath,
             updatedAt = System.currentTimeMillis()
         )
@@ -68,6 +77,7 @@ class RoomEditStore(
     override suspend fun deleteEditForPhoto(photoId: Long) {
         photoEditDao.deleteByPhotoId(photoId)
         onClearPhotoEditCache(photoId)
+        onClearPhotoExternalAssets(photoId)
     }
 
     override fun observeEditedPhotoMap(): Flow<Map<Long, PhotoEditRecord>> {
@@ -132,7 +142,15 @@ class RoomEditStore(
         }
     }
 
-    override fun getLiveTetherPresetId(): String? = liveTetherPresetId.value
+    /**
+     * The remembered `LiveTetherPreset` id, or `null` while the master switch is off.
+     *
+     * Disabling the switch only hides the id from the ingest path and the preset strip; the stored
+     * preference keeps its value, so enabling it again restores the exact same preset without the
+     * user having to pick it again.
+     */
+    override fun getLiveTetherPresetId(): String? =
+        liveTetherPresetId.value.takeIf { livePresetEnabled() }
 
     override fun setLiveTetherPresetId(presetId: String?) {
         val sanitized = presetId?.takeIf { it.isNotBlank() }
@@ -140,7 +158,9 @@ class RoomEditStore(
         liveTetherPresetId.value = sanitized
     }
 
-    override fun observeLiveTetherPresetId(): Flow<String?> = liveTetherPresetId.asStateFlow()
+    /** Mirrors [getLiveTetherPresetId]: a disabled switch emits `null`, never a stale preset. */
+    override fun observeLiveTetherPresetId(): Flow<String?> =
+        liveTetherPresetId.asStateFlow().map { id -> id.takeIf { livePresetEnabled() } }
 
     /**
      * Seeds the curated [BuiltinPresets] library and refreshes localized names on existing rows.

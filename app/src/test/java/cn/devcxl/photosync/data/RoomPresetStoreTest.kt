@@ -40,7 +40,7 @@ class RoomPresetStoreTest {
         val builtins = store.listPresets().filter { it.isBuiltin }
         assertEquals(BuiltinPresets.specs().size, builtins.size)
         assertEquals(5, builtins.size)
-        assertTrue(builtins.all { it.graphSubsetJson.contains("\"schema\":1") })
+        assertTrue(builtins.all { it.graphSubsetJson.contains("\"schema\":2") })
     }
 
     @Test

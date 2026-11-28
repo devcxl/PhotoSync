@@ -13,6 +13,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 import timber.log.Timber
 
+import cn.devcxl.photosync.editor.domain.AiAssetStore
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.Lut3dSamples
 import cn.devcxl.photosync.editor.domain.WarpDisplacementField
@@ -32,6 +33,9 @@ import cn.devcxl.photosync.editor.export.SurfacelessEglContext
  * @property skinMask `256 x 256` portrait mask, or `null` when the portrait group is unused.
  * @property lut Imported 3D LUT samples referenced by [graph], or `null` when none.
  * @property outDir Directory that receives one new, uniquely named JPEG.
+ * @property inpaint Pre-Pass A overlay composed into a private copy of [source], or `null`.
+ * @property jpegQuality JPEG quality of the published preview; defaults to
+ *   [PreviewCacheWriter.DEFAULT_PREVIEW_JPEG_QUALITY] and is overridden by the user setting.
  */
 internal data class OffscreenPreviewRequest(
     val source: EditorSource,
@@ -39,7 +43,17 @@ internal data class OffscreenPreviewRequest(
     val warpField: WarpDisplacementField? = null,
     val skinMask: FloatArray? = null,
     val lut: Lut3dSamples? = null,
-    val outDir: File
+    val outDir: File,
+    /** Source-space subject composite of `graph.subject`; `null` when no mask effect is active. */
+    val subject: SubjectComposite? = null,
+    /** Repair patches of `graph.inpaint`; blended before the source is uploaded. */
+    val inpaint: InpaintOverlay? = null,
+    /** Asset store the Post-Pass A cloud layer is read from; `null` disables the cloud stage. */
+    val cloudAssets: AiAssetStore? = null,
+    /** Decoded P3 sky layer, or `null` to render the original sky. */
+    val sky: SkyLayerPixels? = null,
+    /** JPEG quality of the published cache file. */
+    val jpegQuality: Int = PreviewCacheWriter.DEFAULT_PREVIEW_JPEG_QUALITY
 )
 
 /**

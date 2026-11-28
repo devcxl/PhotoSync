@@ -1,0 +1,1373 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PROTOTYPE — PhotoSync AI 工具交互与状态机原型</title>
+<style>
+  :root {
+    --bg: #000000;
+    --shell-bg: #090b0f;
+    --surface: #14161c;
+    --elevated: #1b1e26;
+    --glass: rgba(14, 16, 20, 0.84);
+    --border: rgba(255, 255, 255, 0.12);
+    --border-strong: rgba(255, 255, 255, 0.22);
+    --text: #f4f5f7;
+    --text-2: #a1a7b3;
+    --muted: #6c7382;
+    --blue: #3b82f6;
+    --blue-pill: rgba(37, 99, 235, 0.86);
+    --amber: #f59e0b;
+    --red: #ef4444;
+    --green: #22c55e;
+  }
+
+  * { box-sizing: border-box; user-select: none; }
+
+  body {
+    margin: 0;
+    background: var(--shell-bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .proto-banner {
+    background: #17130a;
+    border-bottom: 1px solid rgba(245, 158, 11, 0.35);
+    padding: 8px 18px;
+    font-size: 12px;
+    color: #fcd34d;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .proto-banner strong { color: var(--amber); }
+
+  .workspace {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 392px minmax(340px, 1fr);
+    gap: 24px;
+    padding: 20px 24px 28px;
+    max-width: 1320px;
+    width: 100%;
+    margin: 0 auto;
+    align-items: start;
+  }
+
+  @media (max-width: 900px) {
+    .workspace { grid-template-columns: 1fr; justify-items: center; padding: 14px; }
+  }
+
+  /* Phone viewport simulating 390x820 Android EditorActivity */
+  .phone-frame {
+    width: 390px;
+    height: 800px;
+    background: var(--bg);
+    border-radius: 28px;
+    border: 2px solid #262a35;
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.65);
+  }
+
+  .canvas-stage {
+    flex: 1;
+    position: relative;
+    background: #000;
+    overflow: hidden;
+    cursor: crosshair;
+  }
+
+  canvas#photoCanvas, canvas#maskCanvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  .top-bar {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    padding: 12px 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    z-index: 10;
+    pointer-events: none;
+  }
+
+  .top-bar > * { pointer-events: auto; }
+  .spacer { flex: 1; }
+
+  .icon-btn {
+    width: 36px; height: 36px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--glass);
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 600;
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+  }
+
+  .icon-btn.primary { background: var(--blue-pill); border-color: rgba(147, 197, 253, 0.5); }
+  .icon-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+  .icon-btn.active { border-color: var(--blue); color: #93c5fd; }
+
+  .status-pill {
+    position: absolute;
+    top: 58px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--glass);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 5px 12px;
+    font-size: 11px;
+    color: var(--text);
+    z-index: 12;
+    display: none;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+  }
+
+  .status-pill.show { display: inline-flex; }
+  .status-pill.warn { border-color: rgba(245, 158, 11, 0.55); color: #fde68a; }
+
+  /* Non-blocking inference bar docked at top of bottom panel */
+  .inference-bar {
+    background: #101829;
+    border-top: 1px solid rgba(59, 130, 246, 0.35);
+    padding: 8px 14px;
+    display: none;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+  }
+
+  .inference-bar.show { display: flex; }
+
+  .progress-track {
+    flex: 1;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--blue);
+    transition: width 120ms linear;
+  }
+
+  .mini-btn {
+    padding: 4px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--elevated);
+    color: var(--text);
+    font-size: 11px;
+    cursor: pointer;
+  }
+
+  .mini-btn.blue { background: var(--blue-pill); border-color: rgba(147, 197, 253, 0.5); }
+  .mini-btn.danger { border-color: rgba(239, 68, 68, 0.45); color: #fca5a5; }
+
+  /* Bottom 3-tier drawer matching activity_editor.xml */
+  .bottom-panel {
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    padding: 10px 14px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .tier1-box {
+    min-height: 118px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  .control-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
+  }
+
+  .control-header .title { font-weight: 600; color: var(--text); }
+  .control-header .hint { color: var(--muted); font-size: 11px; }
+  .control-header .val { color: var(--blue); font-family: ui-monospace, monospace; font-weight: 600; }
+
+  .slider-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--text-2);
+  }
+
+  .slider-row label { width: 52px; flex-shrink: 0; }
+  .slider-row input[type="range"] { flex: 1; accent-color: var(--blue); }
+  .slider-row .num { width: 38px; text-align: right; font-family: ui-monospace, monospace; color: var(--blue); }
+
+  .chip-row {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+  }
+  .chip-row::-webkit-scrollbar { display: none; }
+
+  .chip {
+    padding: 5px 11px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--elevated);
+    color: var(--text-2);
+    font-size: 11px;
+    white-space: nowrap;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .chip.active {
+    background: rgba(59, 130, 246, 0.2);
+    border-color: var(--blue);
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  .chip .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--amber);
+  }
+
+  .swatch {
+    width: 24px; height: 24px;
+    border-radius: 6px;
+    border: 1px solid var(--border-strong);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .swatch.active { outline: 2px solid var(--blue); outline-offset: 1px; }
+
+  .tier3-tabs {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    height: 36px;
+    margin-top: 2px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    padding-top: 4px;
+  }
+
+  .tab-btn {
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    font-size: 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    padding: 0;
+  }
+
+  .tab-btn.active {
+    background: var(--elevated);
+    color: var(--text);
+    font-weight: 700;
+  }
+
+  /* Overlay modal inside phone for downloads / model manager / cloud confirm / geometry conflict */
+  .phone-modal-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.72);
+    display: none;
+    align-items: flex-end;
+    z-index: 30;
+  }
+
+  .phone-modal-backdrop.show { display: flex; }
+
+  .phone-sheet {
+    width: 100%;
+    background: var(--surface);
+    border-top: 1px solid var(--border-strong);
+    border-radius: 18px 18px 0 0;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-height: 82%;
+    overflow-y: auto;
+  }
+
+  .sheet-title { font-size: 14px; font-weight: 700; margin: 0; }
+  .sheet-desc { font-size: 12px; color: var(--text-2); line-height: 1.5; margin: 0; }
+
+  .model-item {
+    background: var(--elevated);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 12px;
+  }
+
+  .model-meta { display: flex; flex-direction: column; gap: 3px; }
+  .model-meta span { color: var(--muted); font-size: 11px; }
+
+  .prompt-input {
+    width: 100%;
+    background: var(--elevated);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 7px 10px;
+    font-size: 12px;
+    font-family: inherit;
+  }
+
+  /* Right-side inspector & guided walkthrough console */
+  .console {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .panel-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px;
+  }
+
+  .panel-card h2 {
+    margin: 0 0 10px;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  .mode-tabs {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+
+  .walkthrough-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .step-card {
+    background: var(--elevated);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 12px;
+    line-height: 1.5;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .step-card.current { border-color: var(--blue); }
+
+  .toggles-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
+  }
+
+  .toggle-box {
+    background: var(--elevated);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px;
+    font-size: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .toggle-box label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    cursor: pointer;
+    color: var(--text);
+  }
+
+  .toggle-box small { color: var(--muted); font-size: 11px; line-height: 1.4; }
+
+  pre.state-dump {
+    margin: 0;
+    background: #0b0d12;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px;
+    font-size: 11px;
+    line-height: 1.55;
+    color: #cbd5e1;
+    overflow-x: auto;
+    max-height: 280px;
+    user-select: text;
+  }
+
+  .log-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: 11px;
+    font-family: ui-monospace, monospace;
+    color: var(--text-2);
+    max-height: 140px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+</style>
+</head>
+<body>
+
+<div class="proto-banner">
+  <div><strong>PROTOTYPE（一次性交互验证原型）</strong> — 工单 06：AI 工具底栏收纳、涂抹消除节奏、模型按需下载/管理与 P4 云端开关状态机</div>
+  <div>在左侧手机画布上可直接拖拽涂抹、长按「对比」或切换触发模式；右侧可运行引导走查并实时观测状态。</div>
+</div>
+
+<div class="workspace">
+  <!-- LEFT: Simulated Android EditorActivity -->
+  <div class="phone-frame" id="phoneFrame">
+    <div class="canvas-stage" id="canvasStage">
+      <canvas id="photoCanvas" width="390" height="580"></canvas>
+      <canvas id="maskCanvas" width="390" height="580"></canvas>
+
+      <div class="top-bar">
+        <button class="icon-btn primary" id="btnDone" title="保存退出">✓</button>
+        <button class="icon-btn" id="btnModels" title="AI 模型管理">模</button>
+        <div class="spacer"></div>
+        <button class="icon-btn" id="btnUndo" title="撤销" disabled>↶</button>
+        <button class="icon-btn" id="btnPinch" title="模拟双指缩放（强制优先于画笔）">⤢</button>
+        <button class="icon-btn" id="btnCompare" title="按住对比未编辑原图">对比</button>
+      </div>
+
+      <div class="status-pill" id="statusPill">未编辑原图 (Before)</div>
+    </div>
+
+    <!-- Non-blocking async inference bar -->
+    <div class="inference-bar" id="inferenceBar">
+      <span id="inferenceLabel">正在分析人像发丝 (MODNet)...</span>
+      <div class="progress-track"><div class="progress-fill" id="inferenceFill"></div></div>
+      <button class="mini-btn danger" id="btnCancelInference">取消</button>
+    </div>
+
+    <!-- Bottom 3-tier drawer -->
+    <div class="bottom-panel">
+      <div class="tier1-box" id="tier1Box"></div>
+
+      <!-- Tier 2: Sub-tool chips -->
+      <div class="chip-row" id="tier2Chips"></div>
+
+      <!-- Tier 3: 7 fixed tabs (6 existing + 1 AI) -->
+      <div class="tier3-tabs" id="tier3Tabs"></div>
+    </div>
+
+    <!-- In-phone modal sheet -->
+    <div class="phone-modal-backdrop" id="modalBackdrop">
+      <div class="phone-sheet" id="modalSheet"></div>
+    </div>
+  </div>
+
+  <!-- RIGHT: Controls, Guided Walkthrough & Live State Surface -->
+  <div class="console">
+    <div class="panel-card">
+      <h2>环境与交互变体对比（可实时切换体验）</h2>
+      <div class="toggles-grid">
+        <div class="toggle-box">
+          <label>
+            <span>消除触发节奏</span>
+            <select id="selEraseTrigger" style="background:#14161c;color:#f4f5f7;border:1px solid rgba(255,255,255,.2);border-radius:6px;padding:3px 6px;font-size:11px;">
+              <option value="confirm" selected>A: 涂抹后点「确认消除」</option>
+              <option value="release">B: 单笔松手即推理</option>
+            </select>
+          </label>
+          <small>A 模式支持多笔微调与橡皮修边、防误触多次推理；B 模式更快捷但容易一笔误触。</small>
+        </div>
+
+        <div class="toggle-box">
+          <label>
+            <span>设备内存档位</span>
+            <select id="selRamTier" style="background:#14161c;color:#f4f5f7;border:1px solid rgba(255,255,255,.2);border-radius:6px;padding:3px 6px;font-size:11px;">
+              <option value="standard" selected>标准档 (&gt;4GB)</option>
+              <option value="low">低端档 (≤4GB)</option>
+            </select>
+          </label>
+          <small>≤4GB 档自动降级提示并在推理后即刻释放会话。</small>
+        </div>
+
+        <div class="toggle-box">
+          <label>
+            <span>启用 P4 云端能力（默认关）</span>
+            <input type="checkbox" id="chkCloudEnabled" />
+          </label>
+          <small>关闭时编辑器内彻底隐藏「云端」子工具，维持纯离线体验。</small>
+        </div>
+
+        <div class="toggle-box">
+          <label>
+            <span>模拟镜像下载失败</span>
+            <input type="checkbox" id="chkMirrorFail" />
+          </label>
+          <small>勾选后点击下载模型将触发双镜像回退并弹出 SAF 本地导入 `.onnx` 兜底。</small>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-card">
+      <h2>引导走查（Guided Walkthrough）</h2>
+      <div class="walkthrough-steps">
+        <div class="step-card">
+          <div><strong>场景 1：首次点「AI → 主体」按需下载与多镜像回退</strong><br/>验证未下载模型时内联引导、镜像失败切换 SAF 本地导入。</div>
+          <button class="mini-btn blue" onclick="runScenario(1)">演示</button>
+        </div>
+        <div class="step-card">
+          <div><strong>场景 2：涂抹消除（支持橡皮 + 超出 256×256 px 提示 + 取消推理）</strong><br/>在画布涂抹一块超大区域，观察面积告警、双指缩放优先中止笔刷。</div>
+          <button class="mini-btn blue" onclick="runScenario(2)">演示</button>
+        </div>
+        <div class="step-card">
+          <div><strong>场景 3：开启 P4 云端并触发 Pass A 几何修改冲突守卫</strong><br/>验证首次开启告知、云端生成落入中置层、后续裁剪弹出锁定/重置确认。</div>
+          <button class="mini-btn blue" onclick="runScenario(3)">演示</button>
+        </div>
+        <div class="step-card">
+          <div><strong>场景 4：打开「AI 模型管理」清理与重下</strong><br/>查看各按需模型体积（MODNet 25.9MB / MI-GAN 28.1MB）并释放存储。</div>
+          <button class="mini-btn blue" onclick="runScenario(4)">演示</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-card">
+      <h2>实时状态机（State Surface）</h2>
+      <pre class="state-dump" id="stateDump"></pre>
+    </div>
+
+    <div class="panel-card">
+      <h2>事件追踪日志</h2>
+      <ul class="log-list" id="eventLog"></ul>
+    </div>
+  </div>
+</div>
+
+<script>
+const state = {
+  activeTab: 'AI',
+  activeSubTool: 'SUBJECT', // SUBJECT | ERASE | SKY | CLOUD
+  eraseTriggerMode: 'confirm', // confirm | release
+  ramTier: 'standard',
+  cloudEnabled: false,
+  cloudConsentAccepted: false,
+  simulateMirrorFail: false,
+  zoomScale: 1.0,
+  comparingOriginal: false,
+  models: {
+    modnet: { name: '人像发丝抠图 (MODNet)', sizeMB: 25.9, status: 'not_downloaded', sha256: 'apache-2.0' },
+    migan: { name: '智能消除 (MI-GAN-512)', sizeMB: 28.1, status: 'not_downloaded', sha256: 'mit' }
+  },
+  ortSession: { loadedModel: null, idleTtlSec: 30 },
+  inference: { running: false, label: '', progress: 0, timer: null },
+  editGraph: {
+    schema: 2,
+    geometryDigest: 'geo_v1_identity',
+    subject: { maskReady: false, bgMode: 'original', bgColor: '#2563eb', blur: 0, fgExp: 0, bgExp: 0 },
+    inpaintPatches: [],
+    sky: { activeId: 'none', relight: 45, horizon: 0 },
+    cloudLayer: null // { prompt, opacity, geometryDigest }
+  },
+  brush: { mode: 'paint', size: 28, strokes: [], bboxPx: { w: 0, h: 0 }, oversized: false },
+  undoStack: [],
+  logs: []
+};
+
+const TABS = [
+  { id: 'PRESET', label: '预设' },
+  { id: 'GEOMETRY', label: '几何' },
+  { id: 'TONE', label: '影调' },
+  { id: 'COLOR', label: '色彩' },
+  { id: 'DETAIL', label: '细节' },
+  { id: 'PORTRAIT', label: '人像' },
+  { id: 'AI', label: 'AI' }
+];
+
+function log(msg) {
+  const ts = new Date().toTimeString().slice(0, 8);
+  state.logs.unshift(`[${ts}] ${msg}`);
+  if (state.logs.length > 24) state.logs.pop();
+  renderInspector();
+}
+
+function pushUndo(desc) {
+  state.undoStack.push(JSON.stringify(state.editGraph));
+  if (state.undoStack.length > 20) state.undoStack.shift();
+  document.getElementById('btnUndo').disabled = state.undoStack.length === 0;
+  log(`记录撤销事务: ${desc}`);
+}
+
+function showPill(text, warn = false, duration = 0) {
+  const pill = document.getElementById('statusPill');
+  pill.textContent = text;
+  pill.className = 'status-pill show' + (warn ? ' warn' : '');
+  if (duration > 0) {
+    setTimeout(() => { if (!state.comparingOriginal) pill.classList.remove('show'); }, duration);
+  }
+}
+
+function hidePill() {
+  document.getElementById('statusPill').classList.remove('show');
+}
+
+function startInference(modelKey, label, durationMs, onDone) {
+  if (state.inference.running) return;
+  if (modelKey && state.ortSession.loadedModel && state.ortSession.loadedModel !== modelKey) {
+    log(`单活互斥：释放旧 OrtSession (${state.ortSession.loadedModel})`);
+  }
+  if (modelKey) state.ortSession.loadedModel = modelKey;
+  state.inference.running = true;
+  state.inference.label = label;
+  state.inference.progress = 8;
+  const bar = document.getElementById('inferenceBar');
+  const fill = document.getElementById('inferenceFill');
+  document.getElementById('inferenceLabel').textContent = label;
+  bar.classList.add('show');
+  fill.style.width = '8%';
+  log(`启动异步推理: ${label} (${state.ramTier === 'low' ? '≤4GB 降档模式' : '标准档'})`);
+
+  const step = 100 / (durationMs / 100);
+  state.inference.timer = setInterval(() => {
+    state.inference.progress = Math.min(100, state.inference.progress + step);
+    fill.style.width = `${state.inference.progress}%`;
+    if (state.inference.progress >= 100) {
+      clearInterval(state.inference.timer);
+      state.inference.running = false;
+      bar.classList.remove('show');
+      if (state.ramTier === 'low' && modelKey) {
+        state.ortSession.loadedModel = null;
+        log(`低端机内存策略：推理结束立即释放 OrtSession (${modelKey})`);
+      }
+      onDone();
+      renderAll();
+    }
+  }, 100);
+  renderInspector();
+}
+
+function cancelInference() {
+  if (!state.inference.running) return;
+  clearInterval(state.inference.timer);
+  state.inference.running = false;
+  document.getElementById('inferenceBar').classList.remove('show');
+  log(`用户取消推理: ${state.inference.label}`);
+  showPill('已取消本次 AI 处理', false, 1800);
+  renderAll();
+}
+
+function openModal(html) {
+  document.getElementById('modalSheet').innerHTML = html;
+  document.getElementById('modalBackdrop').classList.add('show');
+}
+
+function closeModal() {
+  document.getElementById('modalBackdrop').classList.remove('show');
+}
+
+function openDownloadModal(modelKey, onReady) {
+  const m = state.models[modelKey];
+  openModal(`
+    <h3 class="sheet-title">需要按需下载模型</h3>
+    <p class="sheet-desc">「${m.name}」未内置于安装包中，首次使用需下载 <strong>${m.sizeMB} MB</strong>（SHA-256 校验，支持断点续传，不占用云端流量）。</p>
+    <div class="model-item">
+      <div class="model-meta">
+        <strong>${m.name}</strong>
+        <span>主源：GitHub Releases → 自动回退国内镜像</span>
+      </div>
+      <span>${m.sizeMB} MB</span>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <button class="mini-btn" onclick="closeModal()">暂不下载</button>
+      <button class="mini-btn" onclick="importLocalModel('${modelKey}')">导入本地 .onnx</button>
+      <button class="mini-btn blue" onclick="downloadModel('${modelKey}')">开始下载</button>
+    </div>
+  `);
+  window._pendingModelCallback = onReady;
+}
+
+window.downloadModel = function(modelKey) {
+  const m = state.models[modelKey];
+  if (state.simulateMirrorFail) {
+    log(`下载 ${modelKey}：GitHub Releases 超时 → 回退镜像站失败`);
+    openModal(`
+      <h3 class="sheet-title">镜像下载失败</h3>
+      <p class="sheet-desc">主下载源与备用镜像均无法连接。已保留断点缓存，你可以稍后重试或通过系统文件选择器导入本地 .onnx 文件（自动校验 SHA-256）。</p>
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <button class="mini-btn" onclick="closeModal()">取消</button>
+        <button class="mini-btn blue" onclick="importLocalModel('${modelKey}')">选择本地 .onnx 文件</button>
+      </div>
+    `);
+    return;
+  }
+  closeModal();
+  m.status = 'downloading';
+  startInference(null, `下载 ${m.name} (${m.sizeMB} MB)...`, 1200, () => {
+    m.status = 'ready';
+    log(`模型校验通过并就绪: ${modelKey} (SHA-256 OK)`);
+    if (window._pendingModelCallback) {
+      const cb = window._pendingModelCallback;
+      window._pendingModelCallback = null;
+      cb();
+    }
+  });
+};
+
+window.importLocalModel = function(modelKey) {
+  closeModal();
+  state.models[modelKey].status = 'ready';
+  log(`SAF 本地导入成功并经 SHA-256 校验通过: ${modelKey}`);
+  showPill('本地模型导入成功', false, 1800);
+  if (window._pendingModelCallback) {
+    const cb = window._pendingModelCallback;
+    window._pendingModelCallback = null;
+    cb();
+  }
+  renderAll();
+};
+
+function openModelManager() {
+  const rows = Object.entries(state.models).map(([k, m]) => `
+    <div class="model-item">
+      <div class="model-meta">
+        <strong>${m.name}</strong>
+        <span>${m.sizeMB} MB · 许可 ${m.sha256.toUpperCase()} · ${m.status === 'ready' ? '已缓存（可离线）' : '未下载'}</span>
+      </div>
+      ${m.status === 'ready'
+        ? `<button class="mini-btn danger" onclick="deleteModel('${k}')">删除</button>`
+        : `<button class="mini-btn blue" onclick="openDownloadModal('${k}')">下载</button>`}
+    </div>
+  `).join('');
+  const used = Object.values(state.models).filter(m => m.status === 'ready').reduce((a, b) => a + b.sizeMB, 0).toFixed(1);
+  openModal(`
+    <h3 class="sheet-title">AI 模型存储管理</h3>
+    <p class="sheet-desc">已占用本机存储：<strong>${used} MB</strong>。删除后不影响已保存的编辑结果，下次使用工具时可重新按需下载或本地导入。</p>
+    ${rows}
+    <div class="model-item">
+      <div class="model-meta">
+        <strong>经典天空分割 + GuidedFilter</strong>
+        <span>0 MB · 零模型内置离线算法</span>
+      </div>
+      <span style="color:#22c55e;">始终可用</span>
+    </div>
+    <div style="display:flex;justify-content:flex-end;">
+      <button class="mini-btn blue" onclick="closeModal()">关闭</button>
+    </div>
+  `);
+}
+
+window.deleteModel = function(k) {
+  state.models[k].status = 'not_downloaded';
+  if (state.ortSession.loadedModel === k) state.ortSession.loadedModel = null;
+  log(`已删除本地模型文件并释放会话: ${k}`);
+  openModelManager();
+  renderInspector();
+};
+
+function ensureSubjectMask(cb) {
+  if (state.editGraph.subject.maskReady) return cb();
+  if (state.models.modnet.status !== 'ready') {
+    return openDownloadModal('modnet', () => ensureSubjectMask(cb));
+  }
+  startInference('modnet', 'MODNet 人像发丝分割 + GuidedFilter...', 1100, () => {
+    state.editGraph.subject.maskReady = true;
+    log('SubjectMask 生成完成（512 代理 + 边缘精修就绪）');
+    cb();
+  });
+}
+
+function executeInpaint() {
+  if (state.brush.strokes.length === 0) return;
+  if (state.models.migan.status !== 'ready') {
+    return openDownloadModal('migan', executeInpaint);
+  }
+  const patchSummary = {
+    id: `patch_${state.editGraph.inpaintPatches.length + 1}`,
+    bbox: { ...state.brush.bboxPx },
+    tiled: state.brush.oversized
+  };
+  const label = state.brush.oversized
+    ? '区域较大，自动 256px 网格切块消除 (MI-GAN)...'
+    : 'MI-GAN-512 局部消除与羽化融合...';
+  startInference('migan', label, state.brush.oversized ? 2200 : 1400, () => {
+    pushUndo('智能消除');
+    state.editGraph.inpaintPatches.push(patchSummary);
+    state.brush.strokes = [];
+    state.brush.bboxPx = { w: 0, h: 0 };
+    state.brush.oversized = false;
+    log(`写入 Pre-Pass A InpaintPatch: ${patchSummary.id} (${patchSummary.bbox.w}×${patchSummary.bbox.h}px)`);
+    showPill('消除完成（长按对比可查看原图）', false, 2000);
+  });
+}
+
+function triggerCloudEdit(promptText) {
+  if (!state.cloudConsentAccepted) {
+    openModal(`
+      <h3 class="sheet-title">首次使用云端生成式编辑</h3>
+      <p class="sheet-desc">照片将在<strong>剥离全部 EXIF / GPS 并缩至 ≤2048px</strong> 后，直接发往你自行配置的 BYOK 端点（OpenAI / Gemini / 自建 ComfyUI）。PhotoSync 不经手、不存储你的照片或 API Key。</p>
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <button class="mini-btn" onclick="closeModal()">取消</button>
+        <button class="mini-btn blue" onclick="acceptCloudConsent('${promptText.replace(/'/g, '')}')">我已了解，继续发送</button>
+      </div>
+    `);
+    return;
+  }
+  startInference(null, '剥离 EXIF 并发送至 BYOK 端点...', 1600, () => {
+    pushUndo('云端生成式编辑');
+    state.editGraph.cloudLayer = {
+      prompt: promptText || '去除背景人群并保持自然光影',
+      opacity: 100,
+      geometryDigest: state.editGraph.geometryDigest
+    };
+    log(`云端回传已落盘为 Post-Pass A CloudEditLayer（可继续本地调色）`);
+    showPill('云端图层已应用（可继续调色）', false, 2200);
+  });
+}
+
+window.acceptCloudConsent = function(promptText) {
+  state.cloudConsentAccepted = true;
+  closeModal();
+  log('用户确认 P4 云端隐私与 BYOK 告知');
+  triggerCloudEdit(promptText);
+};
+
+function attemptGeometryCrop() {
+  if (state.editGraph.cloudLayer) {
+    openModal(`
+      <h3 class="sheet-title">几何修改将影响当前云端图层</h3>
+      <p class="sheet-desc">当前照片包含绑定于原裁剪画幅的 <strong>CloudEditLayer</strong>。继续修改裁剪/旋转/液化需要隐藏或清除该云端图层。</p>
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <button class="mini-btn" onclick="closeModal()">取消几何改动</button>
+        <button class="mini-btn danger" onclick="confirmClearCloudForGeometry()">移除云端层并裁剪</button>
+      </div>
+    `);
+    return;
+  }
+  pushUndo('几何裁剪');
+  state.editGraph.geometryDigest = `geo_v${Date.now() % 1000}`;
+  log(`应用几何裁剪（Pre-Pass A 消除补丁与蒙版自动联动）`);
+  renderAll();
+}
+
+window.confirmClearCloudForGeometry = function() {
+  closeModal();
+  pushUndo('清除云端层并应用新几何');
+  state.editGraph.cloudLayer = null;
+  state.editGraph.geometryDigest = `geo_v${Date.now() % 1000}`;
+  log('已移除旧 CloudEditLayer 并应用新几何');
+  renderAll();
+};
+
+/* Render simulated photo canvas */
+function drawCanvas() {
+  const c = document.getElementById('photoCanvas');
+  const ctx = c.getContext('2d');
+  const w = c.width, h = c.height;
+  ctx.clearRect(0, 0, w, h);
+
+  ctx.save();
+  ctx.translate(w / 2, h / 2);
+  ctx.scale(state.zoomScale, state.zoomScale);
+  ctx.translate(-w / 2, -h / 2);
+
+  const orig = state.comparingOriginal;
+  const sub = state.editGraph.subject;
+  const sky = state.editGraph.sky;
+
+  // Sky / background
+  if (!orig && sub.maskReady && sub.bgMode === 'transparent') {
+    for (let y = 0; y < h; y += 16) {
+      for (let x = 0; x < w; x += 16) {
+        ctx.fillStyle = ((x / 16 + y / 16) % 2 === 0) ? '#272a33' : '#1b1d24';
+        ctx.fillRect(x, y, 16, 16);
+      }
+    }
+  } else if (!orig && sub.maskReady && sub.bgMode === 'solid') {
+    ctx.fillStyle = sub.bgColor;
+    ctx.fillRect(0, 0, w, h);
+  } else {
+    const grad = ctx.createLinearGradient(0, 0, 0, h * 0.62);
+    if (!orig && sky.activeId === 'sunset') {
+      grad.addColorStop(0, '#4c1d95');
+      grad.addColorStop(0.55, '#ea580c');
+      grad.addColorStop(1, '#fbbf24');
+    } else if (!orig && sky.activeId === 'alpine') {
+      grad.addColorStop(0, '#0f4c81');
+      grad.addColorStop(0.6, '#38bdf8');
+      grad.addColorStop(1, '#e0f2fe');
+    } else {
+      const bgLum = orig ? 0 : sub.bgExp * 1.4;
+      grad.addColorStop(0, `rgb(${44 + bgLum}, ${62 + bgLum}, ${88 + bgLum})`);
+      grad.addColorStop(1, `rgb(${95 + bgLum}, ${118 + bgLum}, ${142 + bgLum})`);
+    }
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+
+    // Horizon / city buildings
+    const blurPx = (!orig && sub.maskReady) ? Math.round(sub.blur / 12) : 0;
+    ctx.filter = blurPx > 0 ? `blur(${blurPx}px)` : 'none';
+    ctx.fillStyle = !orig && sky.activeId === 'sunset' ? '#2c1e2f' : '#242936';
+    ctx.fillRect(0, h * 0.56, w, h * 0.44);
+    ctx.fillStyle = '#32394a';
+    ctx.fillRect(28, h * 0.46, 54, 140);
+    ctx.fillRect(300, h * 0.44, 62, 160);
+
+    // Distracting street sign (erased if any inpaint patch exists)
+    if (orig || state.editGraph.inpaintPatches.length === 0) {
+      ctx.fillStyle = '#ef4444';
+      ctx.fillRect(286, h * 0.52, 22, 30);
+      ctx.fillStyle = '#9ca3af';
+      ctx.fillRect(295, h * 0.52 + 30, 4, 70);
+    }
+    ctx.filter = 'none';
+  }
+
+  // Portrait subject silhouette (always sharp foreground)
+  const fgShift = orig ? 0 : sub.fgExp * 1.2;
+  ctx.fillStyle = `rgb(${218 + fgShift}, ${180 + fgShift}, ${156 + fgShift})`;
+  ctx.beginPath();
+  ctx.arc(w * 0.48, h * 0.41, 44, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Hair halo
+  ctx.fillStyle = '#1f1a18';
+  ctx.beginPath();
+  ctx.arc(w * 0.48, h * 0.39, 48, Math.PI, Math.PI * 2);
+  ctx.fill();
+
+  // Shoulders / jacket
+  ctx.fillStyle = (!orig && state.editGraph.cloudLayer) ? '#1e3a5f' : '#2f3542';
+  ctx.beginPath();
+  ctx.ellipse(w * 0.48, h * 0.72, 86, 118, 0, Math.PI, Math.PI * 2);
+  ctx.fill();
+
+  if (!orig && state.editGraph.cloudLayer) {
+    ctx.fillStyle = 'rgba(59,130,246,0.18)';
+    ctx.fillRect(14, h - 42, 192, 26);
+    ctx.fillStyle = '#dbeafe';
+    ctx.font = '11px sans-serif';
+    ctx.fillText(`CloudLayer (${state.editGraph.cloudLayer.opacity}%)`, 22, h - 25);
+  }
+
+  ctx.restore();
+  drawMaskOverlay();
+}
+
+function drawMaskOverlay() {
+  const c = document.getElementById('maskCanvas');
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, c.width, c.height);
+  if (state.comparingOriginal || state.activeTab !== 'AI' || state.activeSubTool !== 'ERASE') return;
+
+  ctx.save();
+  ctx.strokeStyle = 'rgba(239, 68, 68, 0.55)';
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  for (const s of state.brush.strokes) {
+    if (s.points.length < 2) continue;
+    ctx.lineWidth = s.size;
+    ctx.beginPath();
+    ctx.moveTo(s.points[0].x, s.points[0].y);
+    for (let i = 1; i < s.points.length; i++) ctx.lineTo(s.points[i].x, s.points[i].y);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/* Render Tier 3, Tier 2, Tier 1 */
+function renderTabs() {
+  document.getElementById('tier3Tabs').innerHTML = TABS.map(t => `
+    <button class="tab-btn ${state.activeTab === t.id ? 'active' : ''}" onclick="selectTab('${t.id}')">${t.label}</button>
+  `).join('');
+}
+
+window.selectTab = function(tabId) {
+  state.activeTab = tabId;
+  log(`切换一级分组: ${tabId}`);
+  renderAll();
+};
+
+function renderTier2() {
+  const el = document.getElementById('tier2Chips');
+  if (state.activeTab === 'AI') {
+    const subTools = [
+      { id: 'SUBJECT', label: '主体', dot: state.editGraph.subject.maskReady },
+      { id: 'ERASE', label: '消除', dot: state.editGraph.inpaintPatches.length > 0 },
+      { id: 'SKY', label: '天空', dot: state.editGraph.sky.activeId !== 'none' }
+    ];
+    if (state.cloudEnabled) {
+      subTools.push({ id: 'CLOUD', label: '云端 ✦', dot: !!state.editGraph.cloudLayer });
+    }
+    el.innerHTML = subTools.map(st => `
+      <button class="chip ${state.activeSubTool === st.id ? 'active' : ''}" onclick="selectSubTool('${st.id}')">
+        ${st.label}${st.dot ? '<span class="dot"></span>' : ''}
+      </button>
+    `).join('');
+  } else if (state.activeTab === 'GEOMETRY') {
+    el.innerHTML = `<button class="chip active" onclick="attemptGeometryCrop()">裁剪（点此测试云端层冲突守卫）</button>`;
+  } else {
+    el.innerHTML = `<span style="font-size:11px;color:var(--muted);padding:4px 0;">既有传统面板（保持 v0.3.x 交互不变）</span>`;
+  }
+}
+
+window.selectSubTool = function(id) {
+  state.activeSubTool = id;
+  log(`切换 AI 子工具: ${id}`);
+  renderAll();
+};
+
+function renderTier1() {
+  const box = document.getElementById('tier1Box');
+  if (state.activeTab !== 'AI') {
+    box.innerHTML = `<div class="control-header"><span class="title">${state.activeTab} 面板</span><span class="hint">已有面板，切回「AI」体验新工具</span></div>`;
+    return;
+  }
+
+  if (state.activeSubTool === 'SUBJECT') {
+    const s = state.editGraph.subject;
+    box.innerHTML = `
+      <div class="control-header">
+        <span class="title">主体蒙版（MODNet 人像发丝）</span>
+        <span class="val">${s.maskReady ? (s.bgMode === 'transparent' ? '导出 PNG' : '已抠图') : '按需触发'}</span>
+      </div>
+      <div class="chip-row">
+        <button class="chip ${s.bgMode === 'original' ? 'active' : ''}" onclick="setBgMode('original')">原背景</button>
+        <button class="chip ${s.bgMode === 'transparent' ? 'active' : ''}" onclick="setBgMode('transparent')">透明去背</button>
+        <button class="chip ${s.bgMode === 'solid' ? 'active' : ''}" onclick="setBgMode('solid')">纯色换底</button>
+        ${s.bgMode === 'solid' ? ['#2563eb', '#f8fafc', '#dc2626', '#18181b'].map(col =>
+          `<div class="swatch ${s.bgColor === col ? 'active' : ''}" style="background:${col}" onclick="setBgColor('${col}')"></div>`
+        ).join('') : ''}
+      </div>
+      <div class="slider-row">
+        <label>背景虚化</label>
+        <input type="range" min="0" max="100" value="${s.blur}" oninput="updateSubjectSlider('blur', this.value)" />
+        <span class="num">${s.blur}</span>
+      </div>
+      <div class="slider-row">
+        <label>前景曝光</label>
+        <input type="range" min="-50" max="50" value="${s.fgExp}" oninput="updateSubjectSlider('fgExp', this.value)" />
+        <span class="num">${s.fgExp > 0 ? '+' + s.fgExp : s.fgExp}</span>
+      </div>
+      <div class="slider-row">
+        <label>背景曝光</label>
+        <input type="range" min="-50" max="50" value="${s.bgExp}" oninput="updateSubjectSlider('bgExp', this.value)" />
+        <span class="num">${s.bgExp > 0 ? '+' + s.bgExp : s.bgExp}</span>
+      </div>
+    `;
+  } else if (state.activeSubTool === 'ERASE') {
+    const b = state.brush;
+    const hasStrokes = b.strokes.length > 0;
+    box.innerHTML = `
+      <div class="control-header">
+        <span class="title">智能消除（MI-GAN-512）</span>
+        <span class="hint">${b.oversized ? '⚠ 超 256px 建议分次涂抹' : '直接涂抹画布上的红色路牌'}</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <button class="chip ${b.mode === 'paint' ? 'active' : ''}" onclick="setBrushMode('paint')">涂抹</button>
+        <button class="chip ${b.mode === 'eraser' ? 'active' : ''}" onclick="setBrushMode('eraser')">橡皮</button>
+        <button class="mini-btn" onclick="clearBrush()" ${hasStrokes ? '' : 'disabled'}>清空笔迹</button>
+        <div class="spacer"></div>
+        ${state.eraseTriggerMode === 'confirm'
+          ? `<button class="mini-btn blue" onclick="executeInpaint()" ${hasStrokes ? '' : 'disabled'}>确认消除</button>`
+          : `<span style="font-size:11px;color:var(--muted);">松手自动消除</span>`}
+      </div>
+      <div class="slider-row">
+        <label>笔刷大小</label>
+        <input type="range" min="10" max="60" value="${b.size}" oninput="setBrushSize(this.value)" />
+        <span class="num">${b.size}px</span>
+      </div>
+    `;
+  } else if (state.activeSubTool === 'SKY') {
+    const sk = state.editGraph.sky;
+    box.innerHTML = `
+      <div class="control-header">
+        <span class="title">换天空（零模型经典分割 + GuidedFilter）</span>
+        <span class="val">${sk.activeId === 'none' ? '关闭' : sk.activeId}</span>
+      </div>
+      <div class="chip-row">
+        <button class="chip ${sk.activeId === 'none' ? 'active' : ''}" onclick="setSky('none')">原天空</button>
+        <button class="chip ${sk.activeId === 'sunset' ? 'active' : ''}" onclick="setSky('sunset')">落日余晖</button>
+        <button class="chip ${sk.activeId === 'alpine' ? 'active' : ''}" onclick="setSky('alpine')">晴空卷云</button>
+        <button class="chip" onclick="setSky('alpine')">+ 导入自定义天空</button>
+      </div>
+      <div class="slider-row">
+        <label>前景协调</label>
+        <input type="range" min="0" max="100" value="${sk.relight}" oninput="setSkyRelight(this.value)" />
+        <span class="num">${sk.relight}%</span>
+      </div>
+    `;
+  } else if (state.activeSubTool === 'CLOUD') {
+    const cl = state.editGraph.cloudLayer;
+    box.innerHTML = `
+      <div class="control-header">
+        <span class="title">BYOK 云端生成（自动剥离 EXIF）</span>
+        <span class="val">${cl ? '已生成中置层' : '自定义端点'}</span>
+      </div>
+      <div style="display:flex;gap:6px;">
+        <input class="prompt-input" id="cloudPrompt" placeholder="例：把外套换成深蓝色风衣，保持现场光影" value="${cl ? cl.prompt : ''}" />
+        <button class="mini-btn blue" onclick="triggerCloudEdit(document.getElementById('cloudPrompt').value)">生成</button>
+      </div>
+      ${cl ? `
+      <div class="slider-row">
+        <label>图层透明</label>
+        <input type="range" min="0" max="100" value="${cl.opacity}" oninput="setCloudOpacity(this.value)" />
+        <span class="num">${cl.opacity}%</span>
+      </div>` : `<div style="font-size:11px;color:var(--muted);">支持 OpenAI / Gemini / 自建 ComfyUI，结果落为可继续调色的中置图层。</div>`}
+    `;
+  }
+}
+
+window.setBgMode = function(mode) {
+  if (mode === 'original') {
+    pushUndo('恢复原背景');
+    state.editGraph.subject.bgMode = 'original';
+    renderAll();
+    return;
+  }
+  ensureSubjectMask(() => {
+    pushUndo(`切换背景模式: ${mode}`);
+    state.editGraph.subject.bgMode = mode;
+    renderAll();
+  });
+};
+
+window.setBgColor = function(col) { state.editGraph.subject.bgColor = col; renderAll(); };
+window.updateSubjectSlider = function(field, val) {
+  ensureSubjectMask(() => {
+    state.editGraph.subject[field] = Number(val);
+    renderAll();
+  });
+};
+
+window.setBrushMode = function(m) { state.brush.mode = m; renderAll(); };
+window.setBrushSize = function(v) { state.brush.size = Number(v); renderTier1(); };
+window.clearBrush = function() {
+  state.brush.strokes = [];
+  state.brush.bboxPx = { w: 0, h: 0 };
+  state.brush.oversized = false;
+  renderAll();
+};
+window.setSky = function(id) { pushUndo(`切换天空: ${id}`); state.editGraph.sky.activeId = id; renderAll(); };
+window.setSkyRelight = function(v) { state.editGraph.sky.relight = Number(v); renderAll(); };
+window.setCloudOpacity = function(v) { if (state.editGraph.cloudLayer) state.editGraph.cloudLayer.opacity = Number(v); renderAll(); };
+
+/* Canvas brush interaction with oversized check */
+let drawing = false;
+const maskCanvas = document.getElementById('maskCanvas');
+function canvasPoint(e) {
+  const r = maskCanvas.getBoundingClientRect();
+  return { x: (e.clientX - r.left) * (maskCanvas.width / r.width), y: (e.clientY - r.top) * (maskCanvas.height / r.height) };
+}
+
+maskCanvas.addEventListener('pointerdown', (e) => {
+  if (state.activeTab !== 'AI' || state.activeSubTool !== 'ERASE' || state.inference.running) return;
+  drawing = true;
+  if (state.brush.mode === 'eraser') {
+    state.brush.strokes.pop();
+    recalcBrushBbox();
+    renderAll();
+    drawing = false;
+    return;
+  }
+  state.brush.strokes.push({ size: state.brush.size, points: [canvasPoint(e)] });
+  drawMaskOverlay();
+});
+
+maskCanvas.addEventListener('pointermove', (e) => {
+  if (!drawing) return;
+  const cur = state.brush.strokes[state.brush.strokes.length - 1];
+  cur.points.push(canvasPoint(e));
+  recalcBrushBbox();
+  drawMaskOverlay();
+});
+
+window.addEventListener('pointerup', () => {
+  if (!drawing) return;
+  drawing = false;
+  recalcBrushBbox();
+  renderAll();
+  if (state.eraseTriggerMode === 'release' && state.brush.strokes.length > 0) {
+    executeInpaint();
+  }
+});
+
+function recalcBrushBbox() {
+  let minX = 9999, minY = 9999, maxX = -1, maxY = -1;
+  for (const s of state.brush.strokes) {
+    for (const p of s.points) {
+      minX = Math.min(minX, p.x - s.size / 2);
+      minY = Math.min(minY, p.y - s.size / 2);
+      maxX = Math.max(maxX, p.x + s.size / 2);
+      maxY = Math.max(maxY, p.y + s.size / 2);
+    }
+  }
+  if (maxX < 0) {
+    state.brush.bboxPx = { w: 0, h: 0 };
+    state.brush.oversized = false;
+    return;
+  }
+  // Map preview px to 24MP-equivalent pixel estimate (~2.4x)
+  const w = Math.round((maxX - minX) * 2.4);
+  const h = Math.round((maxY - minY) * 2.4);
+  state.brush.bboxPx = { w, h };
+  state.brush.oversized = w > 256 || h > 256;
+  if (state.brush.oversized) showPill(`涂抹区 ${w}×${h}px 超出 256px 推荐上限`, true, 2200);
+}
+
+/* Top bar actions */
+document.getElementById('btnModels').addEventListener('click', openModelManager);
+document.getElementById('btnCancelInference').addEventListener('click', cancelInference);
+document.getElementById('btnUndo').addEventListener('click', () => {
+  if (state.undoStack.length === 0) return;
+  state.editGraph = JSON.parse(state.undoStack.pop());
+  document.getElementById('btnUndo').disabled = state.undoStack.length === 0;
+  log('执行撤销，恢复上一 EditGraph 快照');
+  renderAll();
+});
+
+document.getElementById('btnPinch').addEventListener('click', () => {
+  if (drawing) { drawing = false; state.brush.strokes.pop(); }
+  state.zoomScale = state.zoomScale > 1.0 ? 1.0 : 1.65;
+  log(`双指缩放触发 (${state.zoomScale}x)：强制优先于单指画笔，未确认笔触不被误提交`);
+  showPill(`双指缩放 ${state.zoomScale}x（画笔已让路）`, false, 1600);
+  renderAll();
+});
+
+const btnCompare = document.getElementById('btnCompare');
+btnCompare.addEventListener('pointerdown', () => {
+  state.comparingOriginal = true;
+  showPill('未编辑原图 (Before)');
+  drawCanvas();
+});
+window.addEventListener('pointerup', () => {
+  if (state.comparingOriginal) {
+    state.comparingOriginal = false;
+    hidePill();
+    drawCanvas();
+  }
+});
+
+/* Console bindings */
+document.getElementById('selEraseTrigger').addEventListener('change', (e) => {
+  state.eraseTriggerMode = e.target.value;
+  log(`切换消除触发模式: ${state.eraseTriggerMode}`);
+  renderAll();
+});
+document.getElementById('selRamTier').addEventListener('change', (e) => {
+  state.ramTier = e.target.value;
+  log(`切换设备内存档位: ${state.ramTier}`);
+  renderInspector();
+});
+document.getElementById('chkCloudEnabled').addEventListener('change', (e) => {
+  state.cloudEnabled = e.target.checked;
+  if (!state.cloudEnabled && state.activeSubTool === 'CLOUD') state.activeSubTool = 'SUBJECT';
+  log(`P4 云端总开关: ${state.cloudEnabled ? '开启（显示云端入口）' : '关闭（纯离线）'}`);
+  renderAll();
+});
+document.getElementById('chkMirrorFail').addEventListener('change', (e) => {
+  state.simulateMirrorFail = e.target.checked;
+  log(`模拟镜像失败: ${state.simulateMirrorFail}`);
+});
+
+/* Guided Walkthrough scenarios */
+window.runScenario = function(n) {
+  if (n === 1) {
+    state.models.modnet.status = 'not_downloaded';
+    state.simulateMirrorFail = true;
+    document.getElementById('chkMirrorFail').checked = true;
+    state.activeTab = 'AI';
+    state.activeSubTool = 'SUBJECT';
+    renderAll();
+    setBgMode('transparent');
+  } else if (n === 2) {
+    state.models.migan.status = 'ready';
+    state.activeTab = 'AI';
+    state.activeSubTool = 'ERASE';
+    state.brush.strokes = [{ size: 32, points: [{ x: 240, y: 260 }, { x: 345, y: 360 }] }];
+    recalcBrushBbox();
+    renderAll();
+  } else if (n === 3) {
+    state.cloudEnabled = true;
+    document.getElementById('chkCloudEnabled').checked = true;
+    state.activeTab = 'AI';
+    state.activeSubTool = 'CLOUD';
+    renderAll();
+    triggerCloudEdit('把外套换成深蓝色风衣');
+  } else if (n === 4) {
+    openModelManager();
+  }
+};
+
+function renderInspector() {
+  const snapshot = {
+    activeTab: state.activeTab,
+    activeSubTool: state.activeSubTool,
+    eraseTriggerMode: state.eraseTriggerMode,
+    ramTier: state.ramTier,
+    cloudEnabled: state.cloudEnabled,
+    ortSession: state.ortSession,
+    models: Object.fromEntries(Object.entries(state.models).map(([k, v]) => [k, `${v.status} (${v.sizeMB}MB)`])),
+    brushBbox24MP: state.brush.bboxPx,
+    editGraph: state.editGraph
+  };
+  document.getElementById('stateDump').textContent = JSON.stringify(snapshot, null, 2);
+  document.getElementById('eventLog').innerHTML = state.logs.map(l => `<li>${l}</li>`).join('');
+}
+
+function renderAll() {
+  renderTabs();
+  renderTier2();
+  renderTier1();
+  drawCanvas();
+  renderInspector();
+}
+
+log('原型已就绪：在左侧画布试玩或点击右侧「演示」走查 4 个关键交互场景');
+renderAll();
+</script>
+</body>
+</html>

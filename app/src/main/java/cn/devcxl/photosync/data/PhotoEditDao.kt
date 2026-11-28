@@ -21,6 +21,13 @@ interface PhotoEditDao {
     @Query("SELECT * FROM photo_edits")
     fun observeAllEditsFlow(): Flow<List<PhotoEditEntity>>
 
+    /**
+     * One-shot snapshot of every persisted edit row, used by the cold-start AI asset GC to decide
+     * which external payloads are still referenced.
+     */
+    @Query("SELECT * FROM photo_edits")
+    suspend fun getAllEdits(): List<PhotoEditEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(entity: PhotoEditEntity): Long
 

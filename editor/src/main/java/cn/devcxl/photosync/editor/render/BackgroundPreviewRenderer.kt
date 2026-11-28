@@ -15,6 +15,7 @@ import kotlinx.coroutines.withContext
 import timber.log.Timber
 
 import cn.devcxl.photosync.editor.contract.EditorCachePaths
+import cn.devcxl.photosync.editor.domain.AiAssetStore
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.LiquifyMesh
 import cn.devcxl.photosync.editor.domain.LiquifyMeshStore
@@ -23,7 +24,10 @@ import cn.devcxl.photosync.editor.domain.Lut3dSamples
 import cn.devcxl.photosync.editor.export.BakeConcurrencyGate
 import cn.devcxl.photosync.editor.export.BakePortraitSupport
 import cn.devcxl.photosync.editor.lut.CubeLutStore
+import cn.devcxl.photosync.editor.settings.EditorSettings
 import cn.devcxl.photosync.editor.vision.PortraitPreviewCache
+import cn.devcxl.photosync.editor.vision.SkyMask
+import cn.devcxl.photosync.editor.vision.SubjectMask
 
 /**
  * Renders the screen-sized preview JPEG of a graph that no editor session ever opened — used both
@@ -112,7 +116,9 @@ object BackgroundPreviewRenderer {
         outDir: File,
         sourcePath: String,
         isRaw: Boolean,
-        graph: EditGraph
+        graph: EditGraph,
+        subjectMaskOverride: SubjectMask? = null,
+        skyMaskOverride: SkyMask? = null
     ): File? {
         if (sourcePath.isBlank() || graph.isIdentity()) return null
         if (!outDir.isDirectory && !outDir.mkdirs()) {
@@ -125,7 +131,10 @@ object BackgroundPreviewRenderer {
         val produced = AtomicReference<File?>(null)
         return try {
             withContext(Dispatchers.IO) {
-                val rendered = renderInDir(context, filesDir, outDir, sourcePath, isRaw, graph)
+                val rendered = renderInDir(
+                    context, filesDir, outDir, sourcePath, isRaw, graph,
+                    subjectMaskOverride, skyMaskOverride
+                )
                 produced.set(rendered)
                 rendered
             }
@@ -141,7 +150,9 @@ object BackgroundPreviewRenderer {
         outDir: File,
         sourcePath: String,
         isRaw: Boolean,
-        graph: EditGraph
+        graph: EditGraph,
+        subjectMaskOverride: SubjectMask?,
+        skyMaskOverride: SkyMask?
     ): File? {
         val startedAt = SystemClock.elapsedRealtime()
         var acquireMs = 0L
@@ -173,7 +184,10 @@ object BackgroundPreviewRenderer {
             // Preparation owns the lease until the GPU dispatch takes it over.
             val prepStartedAt = SystemClock.elapsedRealtime()
             val request = PreviewFailurePolicy.prepareOrRelease(lease) {
-                buildRequest(context, filesDir, outDir, sourcePath, isRaw, graph, lease.source)
+                buildRequest(
+                    context, filesDir, outDir, sourcePath, isRaw, graph, lease.source,
+                    subjectMaskOverride, skyMaskOverride
+                )
             }
             prepareMs = SystemClock.elapsedRealtime() - prepStartedAt
             if (request == null) return null
@@ -359,16 +373,39 @@ object BackgroundPreviewRenderer {
         sourcePath: String,
         isRaw: Boolean,
         graph: EditGraph,
-        source: EditorSource
+        source: EditorSource,
+        subjectMaskOverride: SubjectMask?,
+        skyMaskOverride: SkyMask?
     ): OffscreenPreviewRequest {
         val portrait = resolvePortrait(context, filesDir, sourcePath, isRaw, graph, source)
+        val inpaint = InpaintOverlay.of(filesDir, graph)
+        val subject = subjectMaskOverride?.let { SubjectCompositeLoader.fromSource(source, it) }
+            ?: SubjectCompositeLoader.resolve(graph, source, filesDir, inpaint)
+        val (outWidth, outHeight) = OffscreenPreviewFrames.outputSize(graph, source.width, source.height)
+        val sky = if (graph.sky.isIdentity()) {
+            null
+        } else {
+            SkyPreparer.prepare(
+                source = source,
+                graph = graph,
+                filesDir = filesDir,
+                outputWidth = outWidth,
+                outputHeight = outHeight,
+                maskOverride = skyMaskOverride
+            )
+        }
         return OffscreenPreviewRequest(
             source = source,
             graph = graph,
             warpField = portrait.warpField,
             skinMask = portrait.skinMask,
             lut = loadLut(filesDir, graph),
-            outDir = outDir
+            outDir = outDir,
+            subject = subject,
+            inpaint = inpaint,
+            cloudAssets = AiAssetStore(filesDir),
+            sky = sky,
+            jpegQuality = EditorSettings(context).previewCacheJpegQuality
         )
     }
 
@@ -385,7 +422,12 @@ object BackgroundPreviewRenderer {
                 outDir = outDir,
                 warpField = request.warpField,
                 lut = request.lut,
-                skinMask = request.skinMask
+                skinMask = request.skinMask,
+                subject = request.subject,
+                inpaint = request.inpaint,
+                cloudAssets = request.cloudAssets,
+                sky = request.sky,
+                jpegQuality = request.jpegQuality
             )
             is EditorSource.BitmapSource -> PreviewCacheWriter.writeBitmapPreviewTo(
                 source = source.full,
@@ -393,7 +435,12 @@ object BackgroundPreviewRenderer {
                 outDir = outDir,
                 warpField = request.warpField,
                 lut = request.lut,
-                skinMask = request.skinMask
+                skinMask = request.skinMask,
+                subject = request.subject,
+                inpaint = request.inpaint,
+                cloudAssets = request.cloudAssets,
+                sky = request.sky,
+                jpegQuality = request.jpegQuality
             )
         }
         written?.let(::File)

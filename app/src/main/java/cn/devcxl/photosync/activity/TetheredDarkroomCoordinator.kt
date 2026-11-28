@@ -17,6 +17,8 @@ import cn.devcxl.photosync.data.PhotoDao
 import cn.devcxl.photosync.databinding.ActivityMainBinding
 import cn.devcxl.photosync.editor.contract.PhotoEditRecord
 import cn.devcxl.photosync.editor.domain.EditGraph
+import cn.devcxl.photosync.editor.render.TetheredSkyPresetPreparer
+import cn.devcxl.photosync.editor.render.TetheredSubjectPresetPreparer
 
 /**
  * Wires the tethered darkroom controls of `MainActivity`: the unified collapsible preset strip
@@ -35,7 +37,9 @@ internal class TetheredDarkroomCoordinator(
     private val editedMap: () -> Map<Long, PhotoEditRecord>,
     private val decodeOriginal: (String) -> Bitmap?,
     private val onEditPersisted: (Long) -> Unit,
-    private val onFeedback: (String) -> Unit
+    private val onFeedback: (String) -> Unit,
+    private val subjectPresetPreparer: TetheredSubjectPresetPreparer? = null,
+    private val skyPresetPreparer: TetheredSkyPresetPreparer? = null
 ) {
 
     private lateinit var quickStrip: TetheredQuickStripController
@@ -61,7 +65,9 @@ internal class TetheredDarkroomCoordinator(
             currentIndex = currentIndex,
             editedMap = editedMap,
             onGraphPersisted = onEditPersisted,
-            onFeedback = onFeedback
+            onFeedback = onFeedback,
+            subjectPresetPreparer = subjectPresetPreparer,
+            skyPresetPreparer = skyPresetPreparer
         )
         quickStrip.refresh(EditGraph())
     }

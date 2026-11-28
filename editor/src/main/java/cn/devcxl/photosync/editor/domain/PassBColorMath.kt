@@ -76,24 +76,34 @@ object PassBColorMath {
         linear: FloatArray,
         outSrgb: FloatArray,
         edgeGradient: Float = 0.0f,
-        scratch: Scratch = Scratch()
+        scratch: Scratch = Scratch(),
+        subject: SubjectOps? = null,
+        subjectWeight: Float = 0.0f
     ) {
+        if (subject != null) SubjectRelightMath.apply(subject, subjectWeight, linear)
         ToneShaderMath.apply(toneParams, linear, outSrgb)
         if (!colorParams.isIdentity) {
             applyDisplayColor(colorParams, curveLut, outSrgb, outSrgb, edgeGradient, scratch)
         }
     }
 
-    /** Public convenience overload for tests and single-sample callers. */
+    /**
+     * Public convenience overload for tests and single-sample callers.
+     *
+     * @param subject Optional foreground/background relative grade applied before Pass B1.
+     * @param subjectWeight Refined subject alpha used to mix the foreground and background offsets.
+     */
     fun apply(
         toneParams: ToneShaderParams,
         colorParams: ColorGradingParams,
         curveLut: FloatArray?,
         linear: FloatArray,
         outSrgb: FloatArray,
-        edgeGradient: Float = 0.0f
+        edgeGradient: Float = 0.0f,
+        subject: SubjectOps? = null,
+        subjectWeight: Float = 0.0f
     ) {
-        apply(toneParams, colorParams, curveLut, linear, outSrgb, edgeGradient, Scratch())
+        apply(toneParams, colorParams, curveLut, linear, outSrgb, edgeGradient, Scratch(), subject, subjectWeight)
     }
 
     /** Runs only Pass B2 (display-domain color) on an sRGB `[0, 1]` sample. */

@@ -17,7 +17,13 @@ enum class SpatialDetailStage {
     CLARITY_TEXTURE,
 
     /** Y-channel edge-gated unsharp mask with the `(1 - skinMask)` suppression slot. */
-    SHARPEN
+    SHARPEN,
+
+    /**
+     * Terminal simulated background bokeh: a background-weighted disc blur mixed back by
+     * `1 - subjectAlpha`, so the subject (and its hair) keeps the sharp Pass C output.
+     */
+    SUBJECT_BOKEH
 }
 
 /**
@@ -60,11 +66,13 @@ object SpatialDetailPlanner {
     /**
      * @param prepassAvailable True once the 1024px Pre-pass texture for the current graph exists.
      * @param skinMaskAvailable True when the portrait analysis produced a `skinMask` for this photo.
+     * @param subjectMaskAvailable True when a refined subject alpha is bound for the bokeh stage.
      */
     fun plan(
         params: SpatialDetailParams,
         prepassAvailable: Boolean,
-        skinMaskAvailable: Boolean = true
+        skinMaskAvailable: Boolean = true,
+        subjectMaskAvailable: Boolean = false
     ): SpatialDetailPlan {
         val stages = mutableListOf<SpatialDetailStage>()
         if (params.hasSkinFrequencySeparation && skinMaskAvailable) {
@@ -76,6 +84,7 @@ object SpatialDetailPlanner {
             stages += SpatialDetailStage.CLARITY_TEXTURE
         }
         if (params.hasSharpen) stages += SpatialDetailStage.SHARPEN
+        if (params.hasSubjectBokeh && subjectMaskAvailable) stages += SpatialDetailStage.SUBJECT_BOKEH
         val skipped = mutableListOf<SpatialDetailStage>()
         if (params.hasSkinFrequencySeparation && !skinMaskAvailable) {
             skipped += SpatialDetailStage.SKIN_SMOOTHING
@@ -83,6 +92,9 @@ object SpatialDetailPlanner {
         if (params.hasDehaze && !prepassAvailable) skipped += SpatialDetailStage.DEHAZE
         if (params.hasClarityTexture && !prepassAvailable) {
             skipped += SpatialDetailStage.CLARITY_TEXTURE
+        }
+        if (params.hasSubjectBokeh && !subjectMaskAvailable) {
+            skipped += SpatialDetailStage.SUBJECT_BOKEH
         }
         return SpatialDetailPlan(
             stages = stages,

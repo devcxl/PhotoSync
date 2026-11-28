@@ -1,5 +1,6 @@
 package cn.devcxl.photosync.editor.vision
 
+import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -19,12 +20,19 @@ import timber.log.Timber
  * @property statusCode HTTP status; `206` means [body] starts at the requested offset, `200` means
  *   the server ignored the `Range` header and [body] starts at zero.
  * @property totalBytes Value of `Content-Length` for this response.
+ * @property body Response stream; for a non-2xx status it is the error stream (possibly empty), so
+ *   the caller can classify the status instead of receiving a folded `IOException`.
  */
 class ModelHttpResponse(
     val statusCode: Int,
     val totalBytes: Long,
     val body: InputStream
-)
+) {
+
+    /** True when [statusCode] is in the 2xx range. */
+    val isSuccessful: Boolean
+        get() = statusCode in 200..299
+}
 
 /**
  * Transport seam of [ModelDownloadManager].
@@ -34,7 +42,12 @@ class ModelHttpResponse(
  */
 interface ModelHttpSource {
 
-    /** Opens [url] asking for bytes starting at [rangeStart] (`0` requests the whole file). */
+    /**
+     * Opens [url] asking for bytes starting at [rangeStart] (`0` requests the whole file).
+     *
+     * HTTP error statuses are returned in [ModelHttpResponse.statusCode] so callers can classify
+     * 404/410 and 401/403; only transport failures (DNS, timeout, reset) are thrown as exceptions.
+     */
     fun open(url: String, rangeStart: Long): ModelHttpResponse
 
     /** Releases any transport resources. */
@@ -43,6 +56,10 @@ interface ModelHttpSource {
 
 /**
  * [ModelHttpSource] backed by `HttpURLConnection`, the only HTTP stack that ships with `minSdk 24`.
+ *
+ * The response object carries the real HTTP status for error responses too; the classes above map
+ * 404/410 and 401/403 to their own failure reasons instead of collapsing every non-2xx into a
+ * generic transport error.
  */
 class HttpUrlConnectionSource(
     private val connectTimeoutMs: Int = CONNECT_TIMEOUT_MS,
@@ -56,8 +73,11 @@ class HttpUrlConnectionSource(
         connection.instanceFollowRedirects = true
         if (rangeStart > 0L) connection.setRequestProperty("Range", "bytes=$rangeStart-")
         val status = connection.responseCode
-        val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-            ?: throw IOException("HTTP $status while downloading the portrait model")
+        val stream = if (status in 200..299) {
+            connection.inputStream
+        } else {
+            connection.errorStream ?: ByteArrayInputStream(ByteArray(0))
+        }
         return ModelHttpResponse(
             statusCode = status,
             totalBytes = connection.contentLengthLong,

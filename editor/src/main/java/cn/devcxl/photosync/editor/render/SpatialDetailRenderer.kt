@@ -65,13 +65,15 @@ internal class SpatialDetailRenderer(private val capabilities: GlCapabilities) {
         fullResolutionShortEdge: Int,
         skinMaskTextureId: Int = 0,
         allowHalfFloat: Boolean,
+        subjectBokeh: SubjectBokehDrawParams? = null,
         drawPassB: (OffscreenColorTarget) -> Boolean
     ): Int {
         lastDrawCalls = 0
         val requested = SpatialDetailPlanner.plan(
             params,
             prepassAvailable = true,
-            skinMaskAvailable = skinMaskTextureId != 0
+            skinMaskAvailable = skinMaskTextureId != 0,
+            subjectMaskAvailable = subjectBokeh != null
         )
         if (requested.stages.isEmpty() || !isReady) return 0
         val prepassReady = !requested.prepassRequired ||
@@ -81,7 +83,8 @@ internal class SpatialDetailRenderer(private val capabilities: GlCapabilities) {
         val resolved = SpatialDetailPlanner.plan(
             params,
             prepassAvailable = prepassReady,
-            skinMaskAvailable = skinMaskTextureId != 0
+            skinMaskAvailable = skinMaskTextureId != 0,
+            subjectMaskAvailable = subjectBokeh != null
         )
         if (resolved.stages.isEmpty()) return 0
         passBTarget.ensureSize(targetWidth, targetHeight, allowHalfFloat)
@@ -95,7 +98,8 @@ internal class SpatialDetailRenderer(private val capabilities: GlCapabilities) {
             plan = resolved,
             prepassTextureId = analyzer.textureId,
             skinMaskTextureId = skinMaskTextureId,
-            atmosphericLight = analyzer.atmosphericLight
+            atmosphericLight = analyzer.atmosphericLight,
+            subjectBokeh = subjectBokeh
         )
         lastDrawCalls = chain.lastDrawCalls
         return output

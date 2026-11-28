@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- AI subject panel (P1) -->
+    <string name="editor_tool_ai_subject">主体</string>
+    <string name="editor_tool_ai_subject_modified">主体 •</string>
+    <string name="editor_subject_panel_title">端侧主体蒙版 · 人像发丝精修</string>
+    <string name="editor_subject_mode_original">原背景</string>
+    <string name="editor_subject_mode_transparent">透明去背</string>
+    <string name="editor_subject_mode_solid">纯色换底</string>
+    <string name="editor_subject_blur">背景虚化</string>
+    <string name="editor_subject_fg_exposure">前景曝光</string>
+    <string name="editor_subject_fg_temp">前景色温</string>
+    <string name="editor_subject_fg_sat">前景饱和</string>
+    <string name="editor_subject_bg_exposure">背景曝光</string>
+    <string name="editor_subject_bg_temp">背景色温</string>
+    <string name="editor_subject_bg_sat">背景饱和</string>
+    <string name="editor_subject_wave3_hint">拖动滑杆会按需生成主体蒙版；跨图复制只搬参数，不搬蒙版文件</string>
+    <string name="editor_subject_swatch_description">换底色 %1$s</string>
+    <string name="editor_subject_inference_label">正在生成主体蒙版（MODNet）…</string>
+    <string name="editor_subject_refine_label">正在精修发丝与去色溢…</string>
+    <string name="editor_subject_mask_missing">主体蒙版不可用，请重新生成</string>
+    <string name="editor_subject_inference_failed">主体蒙版生成失败，请重试</string>
+    <string name="editor_subject_model_dialog_title">下载端侧 AI 模型</string>
+    <string name="editor_subject_model_dialog_message">%1$s\n体积约 %2$.1f MB，将从 %3$d 个镜像依次尝试，下载后按 SHA-256 校验。也可以从本地选择已下载的 .onnx 文件。</string>
+    <string name="editor_subject_model_download">下载</string>
+    <string name="editor_subject_model_download_may_fail">下载（可能不可用）</string>
+    <string name="editor_subject_model_import">本地导入</string>
+    <string name="editor_subject_model_cancel">取消</string>
+    <string name="editor_subject_model_downloading">正在下载模型…</string>
+    <string name="editor_subject_model_importing">正在校验本地模型…</string>
+    <string name="editor_subject_model_unavailable">模型安装失败，可从「AI 模型管理」重试或导入本地文件</string>
+</resources>

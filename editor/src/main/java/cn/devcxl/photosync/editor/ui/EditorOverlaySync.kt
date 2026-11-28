@@ -13,22 +13,23 @@ import cn.devcxl.photosync.editor.ui.gesture.EditorTool
 import cn.devcxl.photosync.editor.ui.panels.EditorPanelController
 
 /**
- * Pushes the current edit state into the two canvas overlays.
+ * Pushes the current edit state into the canvas overlays.
  *
  * The crop overlay needs the crop rectangle, the perspective pins and the frame aspect the GL pass
- * is letterboxing; the liquify overlay needs the same frame aspect plus the brush radius and mode.
- * Keeping that projection in one place means the overlays can never disagree with the shader about
- * where a UV coordinate landed.
+ * is letterboxing; the liquify and inpainting overlays need the same frame aspect plus their brush
+ * settings. Keeping that projection in one place means the overlays can never disagree with the
+ * shader about where a UV coordinate landed.
  */
 internal class EditorOverlaySync(
     private val binding: ActivityEditorBinding,
     private val panel: EditorPanelController,
     private val liquifySession: LiquifySession,
     private val previewAspect: () -> Float,
-    private val guides: () -> BodyGuides
+    private val guides: () -> BodyGuides,
+    private val sourceSize: () -> Pair<Int, Int>?
 ) {
 
-    /** Refreshes both overlays for [graph]. */
+    /** Refreshes every overlay for [graph]. */
     fun sync(graph: EditGraph) {
         val aspect = previewAspect()
         val cropOverlay = binding.cropOverlayView
@@ -39,6 +40,7 @@ internal class EditorOverlaySync(
         cropOverlay.tool = panel.currentTool
         cropOverlay.group = panel.currentGroup
         syncBrush()
+        syncInpaint()
         syncBodyGuides(graph)
     }
 
@@ -69,10 +71,27 @@ internal class EditorOverlaySync(
         overlay.canvasTransform = binding.cropOverlayView.canvasTransform
     }
 
-    /** Mirrors a pinch/pan gesture into both overlays. */
+    /**
+     * Positions the inpainting brush over the same frame the GL pass renders.
+     *
+     * The painted strokes are normalized against the *source* pixels, so the overlay also needs the
+     * source dimensions the mask will be rasterized at.
+     */
+    fun syncInpaint() {
+        val overlay = binding.inpaintBrushOverlayView
+        overlay.frameAspect = previewAspect()
+        overlay.canvasTransform = binding.cropOverlayView.canvasTransform
+        sourceSize()?.let { (width, height) ->
+            overlay.sourceWidth = width
+            overlay.sourceHeight = height
+        }
+    }
+
+    /** Mirrors a pinch/pan gesture into every overlay. */
     fun syncCanvasTransform(transform: CanvasTransform) {
         binding.cropOverlayView.canvasTransform = transform
         binding.liquifyBrushOverlayView.canvasTransform = transform
         binding.bodyGuideOverlayView.canvasTransform = transform
+        binding.inpaintBrushOverlayView.canvasTransform = transform
     }
 }

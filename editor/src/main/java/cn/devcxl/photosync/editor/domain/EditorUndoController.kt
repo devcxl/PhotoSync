@@ -43,6 +43,10 @@ enum class EditParameterKey {
     PORTRAIT_SKIN,
     PORTRAIT_RESHAPE,
     PORTRAIT_BODY,
+    AI_SUBJECT,
+    AI_INPAINT,
+    AI_SKY,
+    AI_CLOUD,
     PRESET
 }
 
@@ -62,6 +66,15 @@ class EditorUndoController(
         private set
 
     var onStepPushed: (() -> Unit)? = null
+
+    /**
+     * Veto hook consulted before any graph change is recorded.
+     *
+     * Returning `false` leaves the current graph untouched, which is how the P4 geometry guard keeps
+     * a cloud layer bound to the framing it was generated for. It is invoked on the caller's thread
+     * and must not mutate the controller.
+     */
+    var parameterGuard: ((EditGraph, EditParameterKey) -> Boolean)? = null
 
     private var activeTransactionKey: EditParameterKey? = null
     private var lastDragTimestampMs: Long = 0L
@@ -101,6 +114,9 @@ class EditorUndoController(
         if (sanitized == currentGraph) {
             return currentGraph
         }
+        if (parameterGuard?.invoke(sanitized, parameterKey) == false) {
+            return currentGraph
+        }
         val withinWindow = activeTransactionKey == parameterKey &&
             (timestampMs - lastDragTimestampMs) in 0..coalesceWindowMs
         if (!withinWindow) {
@@ -119,9 +135,12 @@ class EditorUndoController(
      * undo step, because stroke undo/redo is owned by [LiquifyHistory].
      */
     fun replaceLiquifyRefInPlace(liquify: LiquifyRef?) {
-        currentGraph = currentGraph.copy(
+        val updated = currentGraph.copy(
             geometry = currentGraph.geometry.copy(liquify = liquify)
         )
+        if (updated.geometry == currentGraph.geometry) return
+        if (parameterGuard?.invoke(updated, EditParameterKey.GEOMETRY_LIQUIFY) == false) return
+        currentGraph = updated
     }
 
     /**

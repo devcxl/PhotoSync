@@ -10,16 +10,14 @@ import android.view.View
 import android.widget.Toast
 
 import androidx.appcompat.app.AppCompatActivity
-import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
-import androidx.lifecycle.repeatOnLifecycle
-import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 
 import cn.devcxl.photosync.editor.R
 import cn.devcxl.photosync.editor.contract.EditorHostRegistry
 import cn.devcxl.photosync.editor.contract.EditorLaunchArgs
 import cn.devcxl.photosync.editor.databinding.ActivityEditorBinding
+import cn.devcxl.photosync.editor.domain.ActivePhotoEditRegistry
 import cn.devcxl.photosync.editor.domain.BaseLook
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.EditParameterKey
@@ -27,9 +25,15 @@ import cn.devcxl.photosync.editor.domain.EditorUndoController
 import cn.devcxl.photosync.editor.domain.LiquifyBrushSettings
 import cn.devcxl.photosync.editor.domain.LiquifyMeshStore
 import cn.devcxl.photosync.editor.domain.LiquifySession
+import cn.devcxl.photosync.editor.domain.SkyCustomAsset
+import cn.devcxl.photosync.editor.domain.SkyOps
+import cn.devcxl.photosync.editor.domain.SubjectBackgroundMode
 import cn.devcxl.photosync.editor.lut.CubeLutStore
 import cn.devcxl.photosync.editor.render.EditorGlRenderer
 import cn.devcxl.photosync.editor.render.EditorPreviewSession
+import cn.devcxl.photosync.editor.settings.DisplaySettings
+import cn.devcxl.photosync.editor.settings.EditorRenderSettings
+import cn.devcxl.photosync.editor.settings.EditorSettings
 import cn.devcxl.photosync.editor.ui.gesture.CanvasTransform
 import cn.devcxl.photosync.editor.ui.gesture.EditorGroup
 import cn.devcxl.photosync.editor.ui.gesture.EditorTool
@@ -61,8 +65,11 @@ class EditorActivity : AppCompatActivity(),
     private lateinit var portraitHost: EditorPortraitHost
     private lateinit var renderCoordinator: EditorRenderCoordinator
     private lateinit var gestureHost: EditorGestureHost
+    private lateinit var aiTools: EditorAiToolHost
+    private val modelImport = EditorModelImportLauncher(this)
     private val renderer = EditorGlRenderer()
-    private val undoController = EditorUndoController()
+    private lateinit var renderSettings: EditorRenderSettings
+    private lateinit var undoController: EditorUndoController
     private val mainHandler = Handler(Looper.getMainLooper())
     private val lutStore by lazy { CubeLutStore(filesDir) }
 
@@ -71,17 +78,21 @@ class EditorActivity : AppCompatActivity(),
     private var isRaw: Boolean = false
     private var preferLinearSource: Boolean = false
 
-    /** Photos that synced while this activity was in front, shown as `+N 新照片`. */
-    private var syncedPhotoCount: Int = 0
-
     private val settleFullQualityRunnable = Runnable { renderCoordinator.renderCurrentGraph(useProxy = false) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityEditorBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        applyScreenOnPolicy()
+        // One coherent settings snapshot per editor session: preview resolution, quality and undo
+        // depth all take effect now and stay stable for the lifetime of this activity.
+        renderSettings = EditorRenderSettings.from(EditorSettings(this))
+        undoController = EditorUndoController(maxDepth = renderSettings.undoDepth)
 
         photoId = intent.getLongExtra(EXTRA_PHOTO_ID, 0L)
+        // Keep the photo's AI assets out of the offline GC sweep for the whole editor session.
+        ActivePhotoEditRegistry.acquire(photoId)
         sourcePath = intent.getStringExtra(EXTRA_SOURCE_PATH).orEmpty()
         isRaw = intent.getBooleanExtra(EXTRA_IS_RAW, false)
         initCoordinators()
@@ -95,19 +106,28 @@ class EditorActivity : AppCompatActivity(),
             panel = panel,
             liquifySession = liquifySession,
             previewAspect = ::previewAspect,
-            guides = { portraitHost.guides() }
+            guides = { portraitHost.guides() },
+            sourceSize = { previewSession.source?.let { source -> source.width to source.height } }
         )
         overlaySync.syncBrush()
         initActionHosts()
         panel.selectGroup(EditorGroup.TONE)
         loadInitialPhotoAndEditState()
-        observeTetheredPhotoEvents()
     }
 
     private fun initCoordinators() {
         val meshStore = LiquifyMeshStore(filesDir)
         liquifySession = LiquifySession(meshStore)
-        previewSession = EditorPreviewSession(renderer, cacheDir, photoId, lutStore)
+        previewSession = EditorPreviewSession(
+            renderer = renderer,
+            cacheDir = cacheDir,
+            photoId = photoId,
+            lutStore = lutStore,
+            filesDir = filesDir,
+            previewMaxEdgePx = renderSettings.previewMaxEdgePx,
+            skyPreviewMaxEdgePx = renderSettings.skyPreviewMaxEdgePx,
+            previewCacheJpegQuality = renderSettings.previewCacheJpegQuality
+        )
         sessionLoader = EditorSessionLoader(photoId, previewSession, liquifySession)
         historyCoordinator = EditorHistoryCoordinator(
             photoId = photoId,
@@ -129,6 +149,13 @@ class EditorActivity : AppCompatActivity(),
     }
 
     private fun initActionHosts() {
+        initPortraitAndRenderHosts()
+        initGestureHost()
+        initAiHost()
+        initMediaHosts()
+    }
+
+    private fun initPortraitAndRenderHosts() {
         portraitHost = EditorPortraitHost(
             context = this,
             filesDir = filesDir,
@@ -138,7 +165,7 @@ class EditorActivity : AppCompatActivity(),
             panelProvider = { panel },
             sourceProvider = { previewSession.source },
             onWarpsPublished = { binding.glSurfaceView.requestRender() },
-            onPreviewStatus = ::renderPortraitPreviewStatus,
+            onPreviewStatus = { EditorPortraitStatusBinder.render(binding, it) },
             onGraphEdited = { renderCoordinator.renderCurrentGraph(useProxy = true) },
             onGraphCommitted = {
                 renderCoordinator.renderCurrentGraph(useProxy = false)
@@ -158,6 +185,9 @@ class EditorActivity : AppCompatActivity(),
             panelProvider = { panel },
             overlaySyncProvider = { overlaySync }
         )
+    }
+
+    private fun initGestureHost() {
         gestureHost = EditorGestureHost(
             binding = binding,
             renderer = renderer,
@@ -167,6 +197,40 @@ class EditorActivity : AppCompatActivity(),
             renderCoordinatorProvider = { renderCoordinator },
             cancelSettle = { mainHandler.removeCallbacks(settleFullQualityRunnable) }
         )
+    }
+
+    private fun initAiHost() {
+        aiTools = EditorAiToolHost(
+            context = this,
+            binding = binding,
+            filesDir = filesDir,
+            photoId = photoId,
+            sourcePath = sourcePath,
+            isRaw = isRaw,
+            undoController = undoController,
+            previewSession = previewSession,
+            scope = lifecycleScope,
+            liquifySession = liquifySession,
+            analysisProvider = { portraitHost.analysis() },
+            onCanvasTransform = ::onCanvasTransformChanged,
+            onGraphChanged = {
+                renderCoordinator.renderCurrentGraph(useProxy = false)
+                renderCoordinator.updateHistoryButtons()
+            },
+            onRepaintRequested = { binding.glSurfaceView.requestRender() },
+            launchImport = modelImport::launch,
+            panelProvider = { panel },
+            onPreviewGraph = renderCoordinator::renderTransientGraph
+        )
+        EditorSyncPhotoPill(
+            binding = binding,
+            scope = lifecycleScope,
+            lifecycle = lifecycle,
+            events = EditorHostRegistry.tetheredPhotoEvents
+        ).observe()
+    }
+
+    private fun initMediaHosts() {
         lutImporter = EditorLutImportCoordinator(this, lutStore, undoController, previewSession) {
             renderCoordinator.renderCurrentGraph(useProxy = false)
             renderCoordinator.updateHistoryButtons()
@@ -180,38 +244,13 @@ class EditorActivity : AppCompatActivity(),
         )
     }
 
-    /**
-     * Counts photos the camera synced while the editor was in front.
-     *
-     * Only `RESUMED` collects: an editor in the background must not accumulate a pill the user never
-     * saw, and the ingest itself never touches this activity's window, so an active slider drag or a
-     * liquify stroke keeps its focus.
-     */
-    private fun observeTetheredPhotoEvents() {
-        val events = EditorHostRegistry.tetheredPhotoEvents ?: emptyFlow()
-        lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.RESUMED) {
-                events.collect { incrementSyncedPhotoPill() }
-            }
-        }
-        binding.newSyncedPhotoPill.setOnClickListener { resetSyncedPhotoPill() }
-    }
-
-    private fun incrementSyncedPhotoPill() {
-        syncedPhotoCount++
-        binding.newSyncedPhotoPill.text =
-            getString(R.string.editor_new_photos_pill, syncedPhotoCount)
-        binding.newSyncedPhotoPill.visibility = View.VISIBLE
-    }
-
-    private fun resetSyncedPhotoPill() {
-        syncedPhotoCount = 0
-        binding.newSyncedPhotoPill.visibility = View.GONE
-    }
-
     override fun onResume() {
         super.onResume()
+        applyScreenOnPolicy()
         binding.glSurfaceView.onResume()
+        // The P4 switch may have changed on the settings screen; re-read it so the cloud chip and
+        // the cloud panel follow immediately.
+        aiTools.refreshCloudAvailability()
     }
 
     override fun onPause() {
@@ -222,6 +261,8 @@ class EditorActivity : AppCompatActivity(),
 
     override fun onDestroy() {
         mainHandler.removeCallbacks(settleFullQualityRunnable)
+        if (::aiTools.isInitialized) aiTools.release()
+        ActivePhotoEditRegistry.release(photoId)
         canvas.detachOverlays()
         portraitHost.release()
         // A save may still be resampling the staged source on a worker thread; recycling it here
@@ -230,12 +271,26 @@ class EditorActivity : AppCompatActivity(),
         super.onDestroy()
     }
 
+    /**
+     * Applies the shared "keep the screen on" preference to the whole editor window.
+     *
+     * The attribute is no longer hard-coded in `activity_editor.xml`; reading the `:app`-owned key
+     * keeps the gallery and the editor on one switch.
+     */
+    private fun applyScreenOnPolicy() {
+        binding.root.keepScreenOn = DisplaySettings.isKeepScreenOn(this)
+    }
+
     override fun onEditorToolChanged(tool: EditorTool) {
         val liquifyActive = panel.currentGroup == EditorGroup.GEOMETRY && tool == EditorTool.LIQUIFY
-        binding.cropOverlayView.visibility = if (liquifyActive) View.GONE else View.VISIBLE
+        val inpaintActive = panel.currentGroup == EditorGroup.AI && tool == EditorTool.AI_ERASE
+        val canvasOwned = liquifyActive || inpaintActive
+        binding.cropOverlayView.visibility = if (canvasOwned) View.GONE else View.VISIBLE
         binding.liquifyBrushOverlayView.visibility = if (liquifyActive) View.VISIBLE else View.GONE
+        binding.inpaintBrushOverlayView.visibility = if (inpaintActive) View.VISIBLE else View.GONE
         overlaySync.sync(undoController.currentGraph)
         portraitHost.onToolChanged()
+        aiTools.onToolChanged(tool)
         renderCoordinator.renderCurrentGraph(useProxy = false)
         renderCoordinator.updateHistoryButtons()
     }
@@ -250,6 +305,10 @@ class EditorActivity : AppCompatActivity(),
         mainHandler.removeCallbacks(settleFullQualityRunnable)
         renderCoordinator.renderCurrentGraph(useProxy = false)
         renderCoordinator.updateHistoryButtons()
+        if (parameterKey == EditParameterKey.PRESET) {
+            aiTools.ensureSubjectMaskForPreset(graph)
+            aiTools.ensureSkyMaskForPreset(graph)
+        }
     }
 
     override fun onResetAllRequested(): Boolean = historyCoordinator.requestResetAll()
@@ -271,6 +330,27 @@ class EditorActivity : AppCompatActivity(),
     }
 
     override fun onLutImportRequested() = lutImporter.launch()
+
+    override fun onSubjectModeRequested(mode: SubjectBackgroundMode) =
+        aiTools.requestSubjectMode(mode)
+
+    override fun onSubjectColorRequested(argb: Int) = aiTools.requestSubjectColor(argb)
+
+    override fun onSkySelected(sky: SkyOps) = aiTools.requestSkySelected(sky)
+
+    override fun onSkyAdjusted(sky: SkyOps) = aiTools.requestSkyAdjusted(sky)
+
+    override fun onSkyAdjustmentStopped() = aiTools.endSkyAdjustment()
+
+    override fun onSkyImportRequested() = modelImport.launch(aiTools::importSky)
+
+    override fun onSkyDeleteRequested(sha256: String) = aiTools.requestSkyDelete(sha256)
+
+    override fun skyCustomAssets(): List<SkyCustomAsset> = aiTools.skyCustomAssets()
+
+    override fun skyHasSky(): Boolean = aiTools.skyHasSky()
+
+    override fun isCloudToolAvailable(): Boolean = aiTools.isCloudEnabled()
     override fun onPreviewDragStarted() = gestureHost.onDragStarted()
     override fun onPreviewDragFinished() = gestureHost.onDragFinished()
     override fun onLiquifyMeshChanged() = gestureHost.onLiquifyMeshChanged()
@@ -342,18 +422,9 @@ class EditorActivity : AppCompatActivity(),
             renderCoordinator.publishLiquifyMesh()
             renderCoordinator.renderCurrentGraph(useProxy = false)
             renderCoordinator.updateHistoryButtons()
+            aiTools.restoreSubject(loaded.graph)
+            aiTools.restoreSky(loaded.graph)
         }
-    }
-
-    private fun renderPortraitPreviewStatus(status: PortraitPreviewStatus) {
-        val row = binding.portraitPreviewStatus
-        row.root.visibility = if (status == PortraitPreviewStatus.Idle) View.GONE else View.VISIBLE
-        row.portraitPreviewSpinner.visibility =
-            if (status == PortraitPreviewStatus.Analyzing) View.VISIBLE else View.GONE
-        row.portraitPreviewMessage.setText(
-            if (status == PortraitPreviewStatus.Unavailable) R.string.editor_portrait_preview_unavailable
-            else R.string.editor_portrait_analyzing
-        )
     }
 
     companion object {

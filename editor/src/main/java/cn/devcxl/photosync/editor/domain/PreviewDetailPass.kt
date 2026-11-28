@@ -28,6 +28,7 @@ object PreviewDetailPass {
      *   radius physically identical to a full-resolution bake.
      * @param skinMask Optional portrait analysis mask; skin smoothing is a no-op without it, exactly
      *   like the GLES chain, which drops the stage when no mask texture is bound.
+     * @param subjectWeight Optional frame-aligned subject alpha; enables the terminal bokeh stage.
      * @return The same array when Pass C is short-circuited, otherwise a new pixel array.
      */
     fun apply(
@@ -36,14 +37,16 @@ object PreviewDetailPass {
         height: Int,
         graph: EditGraph,
         fullResolutionShortEdge: Int = min(width, height),
-        skinMask: FloatArray? = null
+        skinMask: FloatArray? = null,
+        subjectWeight: FloatArray? = null
     ): IntArray {
         require(argb.size == width * height) { "Pixels must match the ${width}x$height frame" }
         val params = SpatialDetailParams.from(graph)
         val plan = SpatialDetailPlanner.plan(
             params,
             prepassAvailable = params.needsPrepass,
-            skinMaskAvailable = skinMask != null
+            skinMaskAvailable = skinMask != null,
+            subjectMaskAvailable = subjectWeight != null
         )
         if (plan.isZeroDrawCallShortCircuit) return argb
         val srgb = FloatArray(argb.size * CHANNELS)
@@ -64,7 +67,8 @@ object PreviewDetailPass {
             params = params,
             analysis = analysis,
             skinMask = skinMask,
-            resolutionScale = scale.coerceIn(MIN_RESOLUTION_SCALE, 1.0f)
+            resolutionScale = scale.coerceIn(MIN_RESOLUTION_SCALE, 1.0f),
+            subjectWeight = subjectWeight
         )
         return repack(srgb, argb, width, height)
     }

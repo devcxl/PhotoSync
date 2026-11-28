@@ -49,6 +49,41 @@ internal data class GlDriverInfo(
 }
 
 /**
+ * Last successful capability probe of any EGL context in this process.
+ *
+ * The settings diagnostics page cannot create a GL context of its own, so it reads this process-wide
+ * record instead. A `null` [lastReport] means "never probed" and is rendered honestly as
+ * "not probed yet"; the record is only ever written by a context that actually ran [GlCapabilities].
+ *
+ * @property renderer `GL_RENDERER` of the probing context.
+ * @property version `GL_VERSION` of the probing context.
+ * @property maxTextureSize `GL_MAX_TEXTURE_SIZE` of the probing context.
+ * @property supportsHalfFloatTargets True when the context proved RGBA16F attachments renderable.
+ * @property minimalFallbackStage Stage that failed to compile, or `null` when no fallback is active.
+ */
+data class GlCapabilityReport(
+    val renderer: String,
+    val version: String,
+    val maxTextureSize: Int,
+    val supportsHalfFloatTargets: Boolean,
+    val minimalFallbackStage: String?
+)
+
+/** Process-wide holder for the last [GlCapabilityReport]; written by [GlCapabilities]. */
+object GlCapabilityRegistry {
+
+    /** The most recent probe of any context, or `null` when nothing was probed yet. */
+    @Volatile
+    var lastReport: GlCapabilityReport? = null
+        private set
+
+    /** Records a fresh probe; called only from a GL thread that owns a current context. */
+    internal fun record(report: GlCapabilityReport) {
+        lastReport = report
+    }
+}
+
+/**
  * Capability probe and fallback tier of **one** EGL context.
  *
  * Fallback matrix (Tier 4, the MediaPipe delegate, belongs to the portrait pipeline and is not part
@@ -118,6 +153,18 @@ internal class GlCapabilities {
         get() = minimalFallbackStage != null
 
     /**
+     * True when this context may run Pass D.
+     *
+     * Pass D is the only stage that carries the AI composites (subject cut-out, background bokeh
+     * mix, sky replacement) together with the 3D LUT, grain and vignette. The Tier 3 fallback
+     * therefore drops all of them at once and keeps the basic geometry + tone pipeline, which is
+     * the documented degradation row of the AI matrix: a missing shader must never leave a
+     * half-composited frame on screen.
+     */
+    val allowsPassDEffects: Boolean
+        get() = !isMinimalFallback
+
+    /**
      * Re-probes the driver and logs the selected tier.
      *
      * Must run on the GL thread right after the EGL context is created and before any program is
@@ -129,6 +176,7 @@ internal class GlCapabilities {
         this.driver = driver
         halfFloatColorBufferSupported = driver.supportsHalfFloatColorBuffer
         minimalFallbackStage = null
+        publishReport()
         if (supportsHalfFloatTargets) {
             Timber.i(
                 "GlCapabilities: Tier 1 RGBA16F active, maxTex=%d, renderer=%s",
@@ -152,6 +200,7 @@ internal class GlCapabilities {
     fun markHalfFloatTargetsUnavailable(framebufferStatus: Int) {
         if (halfFloatColorBufferSupported == false) return
         halfFloatColorBufferSupported = false
+        publishReport()
         val current = driver
         Timber.w(
             "GlCapabilities: RGBA16F attachment rejected (status=%d) on renderer=%s version=%s; " +
@@ -171,6 +220,7 @@ internal class GlCapabilities {
     fun markMinimalFallback(stage: String) {
         if (minimalFallbackStage != null) return
         minimalFallbackStage = stage
+        publishReport()
         val current = driver
         Timber.e(
             "GlCapabilities: Tier 3 minimal fallback, %s failed on renderer=%s version=%s maxTex=%d",
@@ -186,6 +236,24 @@ internal class GlCapabilities {
         driver = null
         halfFloatColorBufferSupported = null
         minimalFallbackStage = null
+    }
+
+    /**
+     * Mirrors the current facts into [GlCapabilityRegistry] for the read-only diagnostics page.
+     *
+     * Called only from a GL thread; the registry is public but write-restricted to this class.
+     */
+    private fun publishReport() {
+        val current = driver ?: return
+        GlCapabilityRegistry.record(
+            GlCapabilityReport(
+                renderer = current.renderer,
+                version = current.version,
+                maxTextureSize = current.maxTextureSize,
+                supportsHalfFloatTargets = halfFloatColorBufferSupported == true,
+                minimalFallbackStage = minimalFallbackStage
+            )
+        )
     }
 
     private companion object {

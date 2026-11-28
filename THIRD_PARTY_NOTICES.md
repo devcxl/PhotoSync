@@ -43,6 +43,69 @@ LGPL-2.1 第 6 条要求：把该库组合进非 LGPL 应用分发二进制时�
 - **链接方式**：以静态库形式链接进 `libraw_wrapper.so`，仅启用编码器；符号通过
   `-Wl,--exclude-libs,ALL` 隐藏，避免与系统 `libjpeg.so` 冲突。
 
+## ONNX Runtime
+
+- **版本**：1.22.0（`com.microsoft.onnxruntime:onnxruntime-android`）
+- **源码**：https://github.com/microsoft/onnxruntime
+- **许可**：MIT
+- **产物**：`lib/<abi>/libonnxruntime.so` 与 Java/Kotlin 绑定，随安装包分发
+- **隐私**：Manifest 显式移除上游后加入的遥测 `ContentProvider`
+  （`ai.onnxruntime.TelemetryInitializer`），本应用不向 Microsoft 1DS 发送任何数据。
+
+## MODNet
+
+- **版本**：ONNX FP32 导出（`Xenova/modnet`，512×512）
+- **源码**：https://github.com/ZHKKKe/MODNet
+- **许可**：Apache-2.0（代码与权重）
+- **分发方式**：**不内置于安装包**。设置页「AI 模型管理」按需下载（HuggingFace 上游 →
+  `hf-mirror.com` 镜像回退），或由用户通过 SAF 导入本地 `.onnx` 文件；两种路径都先校验固化
+  的精确字节数与 SHA-256 才会启用模型。旧的 GitHub Releases 主源（`ai-models-v1`）已返回
+  404，不再作为镜像。
+- **用途**：生成人像主体蒙版，用于主体虚化与透明 PNG 导出。
+
+## MI-GAN
+
+- **版本**：MI-GAN-512 pipeline ONNX 导出（`migan_pipeline_512_v1.onnx`，28,079,181 B）
+- **源码**：https://github.com/Picsart-AI-Research/MI-GAN
+- **导出来源**：上游社区导出的 pipeline 变体（`andraniksargsyan/migan` 的
+  `migan_pipeline_v2.onnx`），由上游仓库发布，**非本仓库自产**；输入为 uint8 `image` + uint8
+  `mask`（H/W 动态），输出为 uint8 RGB，掩码语义为 `255 = 保留 / 0 = 待修复`。
+- **许可**：MIT（代码 `LICENSE` 与权重 `LICENSE-WEIGHTS` 均为 MIT）；上游模型卡标注
+  `license: mit`。第三方镜像 `anyisalin/migan-onnx` 与主源字节一致，但没有许可元数据，因此
+  只作为第三兜底，不作首选。
+- **分发方式**：**不内置于安装包**。设置页「AI 模型管理」按需下载（HuggingFace 上游 →
+  `hf-mirror.com` 同域镜像 → 字节一致的第三方镜像），或由用户通过 SAF 导入本地 `.onnx`
+  文件；两条路径都先校验固化的精确字节数与 SHA-256
+  （`6f1f3530a1a2324b19752018ce756088b07973cda8d7d890034ace5c8a48c40b`）才会启用模型。
+- **兼容识别**：旧的生成器-only 导出（`migan_generator_512_v1.onnx`，28,026,303 B /
+  `522048b4fc3fae7adff3af48859cd8d19412d02a8a9420614f3d4474a0901bfe`）从未发布，但仍保留为
+  只读目录条目，供本地导入识别与运行时变体探测使用；它不出现在下载按钮上。
+- **运行时变体**：安装或首次使用时按 ONNX 输入签名判定执行形态——`PIPELINE_UINT8`（本节的
+  uint8 `image` + `mask`）或 `GENERATOR_FIXED_512`（旧 generator 的 float32 `[1,4,512,512]`）；
+  目录条目的提示不参与判定，文件签名才是判据。
+- **用途**：涂抹区域内容感知修复（智能消除）。
+- **合规说明**：仓库自身以 MIT 分发，随应用分发的声明保留在上游仓库
+  `LICENSE-WEIGHTS` 与本文件；若上游权重许可发生变化，删除该按需模型即可，不影响安装包其余部分。
+
+## 程序化天空（P3）
+
+- **实现**：`editor/src/main/java/cn/devcxl/photosync/editor/domain/ProceduralSky.kt` 与
+  `editor/src/main/java/cn/devcxl/photosync/editor/render/SkyShaderSources.kt`
+- **许可**：项目自研，随本仓库以 MIT 发布
+- **分发方式**：随应用**内置** 4 组 0 KB 程序化大气基准（`clear_blue`、`sunset_glow`、
+  `blue_hour`、`warm_dusk`）。它们由 Shader 按解析式实时生成，不包含任何第三方位图或权重，
+  不产生额外署名义务。
+
+## 可选 CC0 高清云彩包（P3）
+
+- **分发方式**：**不内置**。仅在用户主动从「AI 模型管理」下载并启用时按需获取，存放于
+  `<filesDir>/models/sky-pack-cc0-clouds/`，与 ONNX 模型共享多镜像下载与 SHA-256 校验路径。
+- **许可要求**：只接受 **CC0-1.0 / Public Domain** 素材。每个包的作者、原始 URL、许可文本与
+  CC0 声明必须在发布说明和本节逐条记录，并固化精确字节数与 SHA-256 之后才可发布。
+- **当前清单**：当前版本尚未发布任何 CC0 天空包（`SkyModelCatalog.CC0_CLOUD_PACK` 是未固化
+  的预留槽位，`isPinned == false`，安装会以 `NOT_AVAILABLE` 干净失败），因此本节暂无条目。
+  新增包时必须先补齐上述出处与校验值。
+
 ## Android NDK 运行时
 
 - **libc++_shared**（`lib/<abi>/libc++_shared.so`）：Apache-2.0 with LLVM exceptions。

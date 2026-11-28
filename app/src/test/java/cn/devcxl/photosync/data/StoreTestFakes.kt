@@ -19,6 +19,8 @@ internal class FakePhotoEditDao : PhotoEditDao {
 
     override fun observeAllEditsFlow(): Flow<List<PhotoEditEntity>> = flow
 
+    override suspend fun getAllEdits(): List<PhotoEditEntity> = editsByPhotoId.values.toList()
+
     override suspend fun upsert(entity: PhotoEditEntity): Long {
         val existing = editsByPhotoId[entity.photoId]
         val id = existing?.id?.takeIf { it != 0L } ?: (editsByPhotoId.size + 1L)

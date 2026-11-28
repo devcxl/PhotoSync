@@ -14,13 +14,15 @@ import cn.devcxl.photosync.editor.domain.Lut16fCache
 import cn.devcxl.photosync.editor.domain.Lut3dSamples
 
 /** One imported `.cube` LUT as it exists on disk, pre-compiled into a `.lut16f` cache. */
-internal data class CubeLutInfo(
+data class CubeLutInfo(
     /** Stable identifier persisted in `EditGraph.color.lut.id`. */
     val id: String,
     /** Human readable name shown on the LUT chips. */
     val displayName: String,
     /** Pre-compiled cache file the renderer and preview writer read. */
-    val cacheFile: File
+    val cacheFile: File,
+    /** Size of the pre-compiled cache on disk. */
+    val byteSize: Long
 )
 
 /**
@@ -31,7 +33,7 @@ internal data class CubeLutInfo(
  * [MEMORY_CACHE_CAPACITY] recently used LUTs in memory so tapping between LUT chips never drops
  * an already-loaded LUT on the canvas.
  */
-internal class CubeLutStore(rootDir: File) {
+class CubeLutStore(rootDir: File) {
 
     private val lutsDir = File(rootDir, LUTS_DIR_NAME)
 
@@ -55,7 +57,7 @@ internal class CubeLutStore(rootDir: File) {
         } ?: return emptyList()
         val installed = files.mapNotNull { file ->
             val id = file.name.removeSuffix(CACHE_SUFFIX).takeIf { it.isNotBlank() } ?: return@mapNotNull null
-            CubeLutInfo(id = id, displayName = id, cacheFile = file)
+            CubeLutInfo(id = id, displayName = id, cacheFile = file, byteSize = file.length())
         }.sortedBy { it.displayName.lowercase() }
         installedCache = installed
         return installed
@@ -81,12 +83,17 @@ internal class CubeLutStore(rootDir: File) {
         return writeAtomically(id, cacheBytes).map { cacheFile ->
             installedCache = null
             Timber.i("Imported a 3D LUT with %d grid samples", lut.size)
-            CubeLutInfo(id = id, displayName = lut.title ?: id, cacheFile = cacheFile)
+            CubeLutInfo(
+                id = id,
+                displayName = lut.title ?: id,
+                cacheFile = cacheFile,
+                byteSize = cacheFile.length()
+            )
         }
     }
 
     /** Loads the decoded samples of [id], using the bounded LRU memory cache when warm. */
-    fun loadSamples(id: String): Result<Lut3dSamples> {
+    internal fun loadSamples(id: String): Result<Lut3dSamples> {
         cachedSamplesIf(id)?.let { return Result.success(it) }
         val file = cacheFile(id) ?: return Result.failure(FileNotFoundException(id))
         return try {
@@ -104,7 +111,7 @@ internal class CubeLutStore(rootDir: File) {
     }
 
     /** Returns the cached samples of [id] without touching disk, or `null` when not cached. */
-    fun cachedSamplesIf(id: String): Lut3dSamples? = synchronized(sampleCache) { sampleCache[id] }
+    internal fun cachedSamplesIf(id: String): Lut3dSamples? = synchronized(sampleCache) { sampleCache[id] }
 
     /** Returns the cache file of [id] when [id] is a safe, installed identifier. */
     fun cacheFile(id: String): File? {
@@ -112,6 +119,24 @@ internal class CubeLutStore(rootDir: File) {
         if (id.any { it == '/' || it == '\\' } || id == "." || id == "..") return null
         val file = File(lutsDir, id + CACHE_SUFFIX)
         return file.takeIf { it.isFile }
+    }
+
+    /**
+     * Deletes the installed LUT [id], leaving any `EditGraph` that references it untouched.
+     *
+     * The graph then simply fails to resolve its LUT and renders without it, exactly like a missing
+     * model file. Deleting the same id twice is a no-op.
+     *
+     * @return True when no cache file remains afterwards.
+     */
+    fun delete(id: String): Boolean {
+        val file = File(lutsDir, id + CACHE_SUFFIX)
+        installedCache = null
+        synchronized(sampleCache) { sampleCache.remove(id) }
+        if (!file.exists()) return true
+        val deleted = file.delete()
+        if (!deleted) Timber.w("Imported 3D LUT could not be deleted")
+        return deleted
     }
 
     private fun writeAtomically(id: String, cacheBytes: ByteArray): Result<File> {

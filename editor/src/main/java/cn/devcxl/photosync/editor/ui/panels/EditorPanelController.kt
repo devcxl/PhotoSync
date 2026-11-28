@@ -16,6 +16,9 @@ import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.EditParameterKey
 import cn.devcxl.photosync.editor.domain.EditorUndoController
 import cn.devcxl.photosync.editor.domain.LiquifyBrushSettings
+import cn.devcxl.photosync.editor.domain.SkyCustomAsset
+import cn.devcxl.photosync.editor.domain.SkyOps
+import cn.devcxl.photosync.editor.domain.SubjectBackgroundMode
 import cn.devcxl.photosync.editor.lut.CubeLutStore
 import cn.devcxl.photosync.editor.ui.gesture.CropHandleMath
 import cn.devcxl.photosync.editor.ui.gesture.EditorGroup
@@ -23,9 +26,12 @@ import cn.devcxl.photosync.editor.ui.gesture.EditorTool
 import cn.devcxl.photosync.editor.ui.widgets.DialSeekBar
 
 /**
- * Binds the three-tier bottom drawer to the edit graph: six category tabs, the sub-tool chips of the
- * active category, the tier-1 control slot (`DialSeekBar`, color, spatial-detail, effect or liquify
- * panels), the crop aspect chips and the value read-out.
+ * Binds the three-tier bottom drawer to the edit graph: seven category tabs, the sub-tool chips of
+ * the active category, the tier-1 control slot (`DialSeekBar`, color, spatial-detail, effect,
+ * liquify, subject or inpaint panels), the crop aspect chips and the value read-out.
+ *
+ * The seventh `AI` tab hosts the subject cut-out, the MI-GAN erase tool and the P3 sky tool inside
+ * one chip container.
  */
 internal class EditorPanelController(
     private val context: Context,
@@ -54,6 +60,36 @@ internal class EditorPanelController(
         fun onLiquifyResetRequested()
         /** The user asked to import a `.cube` LUT through the system file chooser. */
         fun onLutImportRequested()
+
+        /** The user selected a subject background mode; may start model download/inference. */
+        fun onSubjectModeRequested(mode: SubjectBackgroundMode)
+
+        /** The user picked a solid subject background colour. */
+        fun onSubjectColorRequested(argb: Int)
+
+        /** True when the P4 cloud switch is on, so the AI group may offer the cloud sub-tool. */
+        fun isCloudToolAvailable(): Boolean
+
+        /** The user selected a sky asset (or the original sky). */
+        fun onSkySelected(sky: SkyOps)
+
+        /** A sky slider moved; the graph is updated as a transient edit. */
+        fun onSkyAdjusted(sky: SkyOps)
+
+        /** The sky slider was released; the undo transaction can be sealed. */
+        fun onSkyAdjustmentStopped()
+
+        /** The user asked to import a sky photograph through SAF. */
+        fun onSkyImportRequested()
+
+        /** The user long-pressed an imported sky and asked to delete it. */
+        fun onSkyDeleteRequested(sha256: String)
+
+        /** Imported skies offered by the sky panel. */
+        fun skyCustomAssets(): List<SkyCustomAsset>
+
+        /** True when the current segmentation found a usable sky area. */
+        fun skyHasSky(): Boolean
     }
 
     var currentGroup: EditorGroup = EditorGroup.TONE
@@ -104,6 +140,27 @@ internal class EditorPanelController(
         onEdited = ::handleSubPanelEdited,
         onCommitted = ::handleSubPanelCommitted
     )
+    private val skyPanels = SkyPanelBinder(
+        binding = binding,
+        host = object : SkyPanelBinder.Host {
+            override fun onSkySelected(sky: SkyOps) = host.onSkySelected(sky)
+            override fun onSkyAdjusted(sky: SkyOps) = host.onSkyAdjusted(sky)
+            override fun onSkyAdjustmentStopped() = host.onSkyAdjustmentStopped()
+            override fun onSkyImportRequested() = host.onSkyImportRequested()
+            override fun onSkyDeleteRequested(sha256: String) = host.onSkyDeleteRequested(sha256)
+            override fun skyCustomAssets(): List<SkyCustomAsset> = host.skyCustomAssets()
+            override fun skyHasSky(): Boolean = host.skyHasSky()
+        }
+    )
+    private val subjectPanels = SubjectPanelBinder(
+        binding = binding,
+        host = object : SubjectPanelBinder.Host {
+            override fun onSubjectModeRequested(mode: SubjectBackgroundMode) =
+                host.onSubjectModeRequested(mode)
+
+            override fun onSubjectColorRequested(argb: Int) = host.onSubjectColorRequested(argb)
+        }
+    )
     private val presetPanels = PresetPanelBinder(
         context = context,
         binding = binding,
@@ -131,7 +188,8 @@ internal class EditorPanelController(
         EditorGroup.TONE to binding.tabTone,
         EditorGroup.COLOR to binding.tabColor,
         EditorGroup.DETAIL to binding.tabDetail,
-        EditorGroup.PORTRAIT to binding.tabPortrait
+        EditorGroup.PORTRAIT to binding.tabPortrait,
+        EditorGroup.AI to binding.tabAi
     )
     private val chipRow = SubToolChipRow(
         context = context,
@@ -143,6 +201,7 @@ internal class EditorPanelController(
         }
     )
     private var dialTool: EditorTool? = null
+    private var cloudPanelVisible = false
 
     init {
         tabViews.forEach { (group, view) -> view.setOnClickListener { selectGroup(group) } }
@@ -152,6 +211,11 @@ internal class EditorPanelController(
         detailPanels.showFor(null)
         effectsPanels.showFor(null)
         portraitPanels.showFor(null)
+        subjectPanels.setVisible(false)
+        skyPanels.setVisible(false)
+        binding.inpaintPanelView.visibility = View.GONE
+        cloudPanelVisible = false
+        applyCloudPanelVisibility()
         presetPanels.setVisible(false)
         aspectRow.setVisible(false)
     }
@@ -167,18 +231,21 @@ internal class EditorPanelController(
         detailPanels.refresh(graph)
         effectsPanels.refresh(graph)
         portraitPanels.refresh(graph)
+        subjectPanels.refresh(graph)
+        skyPanels.refresh(graph.sky)
         presetPanels.refresh(graph)
         rotateFlipPanel.refresh(graph)
         refreshHeaderReadout(graph)
         aspectRow.setVisible(currentTool == EditorTool.CROP)
         aspectRow.refresh(lockedAspect, host.previewAspect())
+        applyCloudPanelVisibility()
     }
 
     /** Selects a category tab and, when it has tools, its first sub-tool. */
     fun selectGroup(group: EditorGroup) {
         currentGroup = group
         tabViews.forEach { (candidate, view) -> bindTab(view, candidate == group) }
-        val tools = EditorToolCatalog.toolsFor(group)
+        val tools = availableTools(group)
         if (tools.isEmpty()) {
             enterUnavailableGroup(group)
             return
@@ -217,6 +284,52 @@ internal class EditorPanelController(
         refresh()
     }
 
+    /**
+     * Returns the sub-tools of [group] the host may currently offer.
+     *
+     * The cloud chip is filtered out while the P4 switch is off, so a disabled cloud feature never
+     * leaks into the AI group's chip row.
+     */
+    private fun availableTools(group: EditorGroup): List<EditorToolSpec> =
+        EditorToolCatalog.toolsFor(group).filter { spec ->
+            spec.tool != EditorTool.AI_CLOUD || host.isCloudToolAvailable()
+        }
+
+    /**
+     * Shows or hides the tier-1 cloud panel.
+     *
+     * Called by [cn.devcxl.photosync.editor.ui.EditorCloudController] on every refresh, where `false`
+     * means the P4 switch is off; the panel only becomes visible when the cloud tool is also the
+     * active sub-tool.
+     */
+    fun setCloudPanelVisible(visible: Boolean) {
+        cloudPanelVisible = visible
+        applyCloudPanelVisibility()
+    }
+
+    /**
+     * Re-reads the P4 switch, for example after the user returns from the settings screen.
+     *
+     * When cloud was switched off while its tool was active, the AI group falls back to the first
+     * tool the host still offers so the drawer never shows an empty chip row.
+     */
+    fun refreshCloudAvailability() {
+        if (currentTool == EditorTool.AI_CLOUD && !host.isCloudToolAvailable()) {
+            selectGroup(EditorGroup.AI)
+        } else if (currentGroup == EditorGroup.AI) {
+            chipRow.build(availableTools(EditorGroup.AI))
+        }
+        cloudPanelVisible = currentTool == EditorTool.AI_CLOUD && host.isCloudToolAvailable()
+        refresh()
+    }
+
+    private fun applyCloudPanelVisibility() {
+        val visible = cloudPanelVisible &&
+            currentTool == EditorTool.AI_CLOUD &&
+            host.isCloudToolAvailable()
+        binding.cloudPanelView.visibility = if (visible) View.VISIBLE else View.GONE
+    }
+
     private fun handleSubPanelEdited(graph: EditGraph, key: EditParameterKey) {
         refreshHeaderReadout(graph)
         host.onGraphEdited(graph, key)
@@ -243,6 +356,11 @@ internal class EditorPanelController(
         detailPanels.showFor(null)
         effectsPanels.showFor(null)
         portraitPanels.showFor(null)
+        subjectPanels.setVisible(false)
+        skyPanels.setVisible(false)
+        binding.inpaintPanelView.visibility = View.GONE
+        cloudPanelVisible = false
+        applyCloudPanelVisibility()
         presetPanels.setVisible(false)
         rotateFlipPanel.setVisible(false)
         aspectRow.setVisible(false)
@@ -287,11 +405,17 @@ internal class EditorPanelController(
     }
 
     private fun configureTierOneControl(spec: EditorToolSpec) {
+        cloudPanelVisible = spec.controlStyle == EditorControlStyle.CLOUD
+        applyCloudPanelVisibility()
         liquifyPanel.setVisible(spec.controlStyle == EditorControlStyle.LIQUIFY)
         colorPanels.showFor(spec.controlStyle)
         detailPanels.showFor(spec.controlStyle)
         effectsPanels.showFor(spec.controlStyle)
         portraitPanels.showFor(spec.controlStyle)
+        subjectPanels.setVisible(spec.controlStyle == EditorControlStyle.SUBJECT)
+        skyPanels.setVisible(spec.controlStyle == EditorControlStyle.SKY)
+        binding.inpaintPanelView.visibility =
+            if (spec.controlStyle == EditorControlStyle.INPAINT) View.VISIBLE else View.GONE
         presetPanels.setVisible(spec.controlStyle == EditorControlStyle.PRESET)
         rotateFlipPanel.setVisible(spec.controlStyle == EditorControlStyle.ROTATE_FLIP)
         val dial = spec.dial

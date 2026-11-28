@@ -6,8 +6,7 @@
     android:id="@+id/editorRoot"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/editor_bg"
-    android:keepScreenOn="true">
+    android:background="@color/editor_bg">
 
     <!-- Central GLES 3.0 preview canvas -->
     <android.opengl.GLSurfaceView
@@ -43,6 +42,17 @@
     <!-- Body guide overlay: draggable waist / hip lines for Body Reshaping -->
     <cn.devcxl.photosync.editor.ui.widgets.BodyGuideOverlayView
         android:id="@+id/bodyGuideOverlayView"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone"
+        app:layout_constraintBottom_toTopOf="@id/bottomPanel"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <!-- P2 inpainting brush overlay: single-finger mask, two-finger zoom/pan -->
+    <cn.devcxl.photosync.editor.ui.widgets.InpaintBrushOverlayView
+        android:id="@+id/inpaintBrushOverlayView"
         android:layout_width="0dp"
         android:layout_height="0dp"
         android:visibility="gone"
@@ -227,6 +237,56 @@
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent">
 
+        <!-- Non-blocking async AI inference bar: label, determinate progress and cancel -->
+        <LinearLayout
+            android:id="@+id/aiInferenceBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:visibility="gone"
+            tools:visibility="visible">
+
+            <TextView
+                android:id="@+id/aiInferenceLabel"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:text="@string/editor_ai_inference_running"
+                android:textColor="@color/editor_text_secondary"
+                android:textSize="11sp"
+                tools:text="正在分析人像发丝 (MODNet)…" />
+
+            <ProgressBar
+                android:id="@+id/aiInferenceProgress"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="72dp"
+                android:layout_height="4dp"
+                android:layout_marginStart="8dp"
+                android:layout_marginEnd="8dp"
+                android:max="100"
+                android:progress="0"
+                android:progressBackgroundTint="@color/editor_text_muted"
+                android:progressTint="@color/editor_accent_blue" />
+
+            <TextView
+                android:id="@+id/aiInferenceCancel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_editor_icon_btn"
+                android:clickable="true"
+                android:focusable="true"
+                android:paddingStart="10dp"
+                android:paddingTop="4dp"
+                android:paddingEnd="10dp"
+                android:paddingBottom="4dp"
+                android:text="@string/editor_ai_inference_cancel"
+                android:textColor="@color/editor_text_primary"
+                android:textSize="11sp" />
+        </LinearLayout>
+
         <include android:id="@+id/portraitPreviewStatus" layout="@layout/editor_portrait_preview_status" />
 
         <!-- Tier 1: Parameter Header & DialSeekBar -->
@@ -270,6 +330,28 @@
             android:layout_width="match_parent"
             android:layout_height="40dp"
             android:layout_marginTop="4dp" />
+
+        <include
+            android:id="@+id/subjectPanel"
+            layout="@layout/editor_subject_panel" />
+
+        <include
+            android:id="@+id/skyPanel"
+            layout="@layout/editor_sky_panel" />
+
+        <cn.devcxl.photosync.editor.ui.widgets.InpaintPanelView
+            android:id="@+id/inpaintPanelView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:visibility="gone" />
+
+        <cn.devcxl.photosync.editor.ui.widgets.CloudPanelView
+            android:id="@+id/cloudPanelView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:visibility="gone" />
 
         <include
             android:id="@+id/rotateFlipPanel"
@@ -407,7 +489,7 @@
             </LinearLayout>
         </LinearLayout>
 
-        <!-- Tier 3: 6 fixed category tabs -->
+        <!-- Tier 3: 7 equal-width fixed category tabs (auto-sized so no label truncates) -->
         <LinearLayout
             android:id="@+id/categoryTabRow"
             android:layout_width="match_parent"
@@ -415,7 +497,7 @@
             android:layout_marginTop="10dp"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:weightSum="6">
+            android:weightSum="7">
 
             <TextView
                 android:id="@+id/tabPreset"
@@ -423,9 +505,14 @@
                 android:layout_height="match_parent"
                 android:layout_weight="1"
                 android:gravity="center"
+                android:maxLines="1"
                 android:text="@string/editor_tab_preset"
                 android:textColor="@color/editor_text_muted"
-                android:textSize="12sp" />
+                android:textSize="12sp"
+                app:autoSizeMaxTextSize="12sp"
+                app:autoSizeMinTextSize="8sp"
+                app:autoSizeStepGranularity="0.5sp"
+                app:autoSizeTextType="uniform" />
 
             <TextView
                 android:id="@+id/tabGeometry"
@@ -433,9 +520,14 @@
                 android:layout_height="match_parent"
                 android:layout_weight="1"
                 android:gravity="center"
+                android:maxLines="1"
                 android:text="@string/editor_tab_geometry"
                 android:textColor="@color/editor_text_muted"
-                android:textSize="12sp" />
+                android:textSize="12sp"
+                app:autoSizeMaxTextSize="12sp"
+                app:autoSizeMinTextSize="8sp"
+                app:autoSizeStepGranularity="0.5sp"
+                app:autoSizeTextType="uniform" />
 
             <TextView
                 android:id="@+id/tabTone"
@@ -444,10 +536,15 @@
                 android:layout_weight="1"
                 android:background="@color/editor_surface_elevated"
                 android:gravity="center"
+                android:maxLines="1"
                 android:text="@string/editor_tab_tone"
                 android:textColor="@color/editor_text_primary"
                 android:textSize="12sp"
-                android:textStyle="bold" />
+                android:textStyle="bold"
+                app:autoSizeMaxTextSize="12sp"
+                app:autoSizeMinTextSize="8sp"
+                app:autoSizeStepGranularity="0.5sp"
+                app:autoSizeTextType="uniform" />
 
             <TextView
                 android:id="@+id/tabColor"
@@ -455,9 +552,14 @@
                 android:layout_height="match_parent"
                 android:layout_weight="1"
                 android:gravity="center"
+                android:maxLines="1"
                 android:text="@string/editor_tab_color"
                 android:textColor="@color/editor_text_muted"
-                android:textSize="12sp" />
+                android:textSize="12sp"
+                app:autoSizeMaxTextSize="12sp"
+                app:autoSizeMinTextSize="8sp"
+                app:autoSizeStepGranularity="0.5sp"
+                app:autoSizeTextType="uniform" />
 
             <TextView
                 android:id="@+id/tabDetail"
@@ -465,9 +567,14 @@
                 android:layout_height="match_parent"
                 android:layout_weight="1"
                 android:gravity="center"
+                android:maxLines="1"
                 android:text="@string/editor_tab_detail"
                 android:textColor="@color/editor_text_muted"
-                android:textSize="12sp" />
+                android:textSize="12sp"
+                app:autoSizeMaxTextSize="12sp"
+                app:autoSizeMinTextSize="8sp"
+                app:autoSizeStepGranularity="0.5sp"
+                app:autoSizeTextType="uniform" />
 
             <TextView
                 android:id="@+id/tabPortrait"
@@ -475,9 +582,29 @@
                 android:layout_height="match_parent"
                 android:layout_weight="1"
                 android:gravity="center"
+                android:maxLines="1"
                 android:text="@string/editor_tab_portrait"
                 android:textColor="@color/editor_text_muted"
-                android:textSize="12sp" />
+                android:textSize="12sp"
+                app:autoSizeMaxTextSize="12sp"
+                app:autoSizeMinTextSize="8sp"
+                app:autoSizeStepGranularity="0.5sp"
+                app:autoSizeTextType="uniform" />
+
+            <TextView
+                android:id="@+id/tabAi"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:maxLines="1"
+                android:text="@string/editor_tab_ai"
+                android:textColor="@color/editor_text_muted"
+                android:textSize="12sp"
+                app:autoSizeMaxTextSize="12sp"
+                app:autoSizeMinTextSize="8sp"
+                app:autoSizeStepGranularity="0.5sp"
+                app:autoSizeTextType="uniform" />
         </LinearLayout>
     </LinearLayout>
 

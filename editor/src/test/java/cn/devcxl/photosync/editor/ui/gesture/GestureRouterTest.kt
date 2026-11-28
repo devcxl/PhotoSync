@@ -54,6 +54,7 @@ class GestureRouterTest {
         for (group in EditorGroup.entries) {
             if (group == EditorGroup.GEOMETRY) continue
             for (tool in EditorTool.entries) {
+                if (group == EditorGroup.AI && tool == EditorTool.AI_ERASE) continue
                 assertEquals(
                     "group=$group tool=$tool",
                     GestureRoute.CANVAS_SINGLE_PAN_HOLD_COMPARE,
@@ -61,6 +62,24 @@ class GestureRouterTest {
                 )
             }
         }
+    }
+
+    @Test
+    fun shouldRouteToInpaintBrushStroke_whenAiEraseIsActive() {
+        assertEquals(
+            GestureRoute.INPAINT_BRUSH_STROKE,
+            GestureRouter.resolveGestureRoute(EditorGroup.AI, EditorTool.AI_ERASE, pointerCount = 1)
+        )
+        assertEquals(
+            "the erase brush must never claim a two-finger gesture",
+            GestureRoute.CANVAS_TWO_FINGER_PAN_ZOOM,
+            GestureRouter.resolveGestureRoute(EditorGroup.AI, EditorTool.AI_ERASE, pointerCount = 2)
+        )
+        assertEquals(
+            "the subject cut-out keeps the plain canvas",
+            GestureRoute.CANVAS_SINGLE_PAN_HOLD_COMPARE,
+            GestureRouter.resolveGestureRoute(EditorGroup.AI, EditorTool.AI_SUBJECT, pointerCount = 1)
+        )
     }
 
     @Test

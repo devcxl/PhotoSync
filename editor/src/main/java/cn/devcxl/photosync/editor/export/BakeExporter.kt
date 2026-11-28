@@ -16,7 +16,10 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 
+import cn.devcxl.photosync.editor.cloud.CloudGeometryDigest
 import cn.devcxl.photosync.editor.contract.GallerySink
+import cn.devcxl.photosync.editor.domain.ActivePhotoEditRegistry
+import cn.devcxl.photosync.editor.domain.AiAssetStore
 import cn.devcxl.photosync.editor.domain.ColumnBandTiling
 import cn.devcxl.photosync.editor.domain.DeviceGlBudget
 import cn.devcxl.photosync.editor.domain.EditGraph
@@ -27,8 +30,15 @@ import cn.devcxl.photosync.editor.domain.Lut3dSamples
 import cn.devcxl.photosync.editor.domain.SourceDimensions
 import cn.devcxl.photosync.editor.domain.SourceResidencyPlan
 import cn.devcxl.photosync.editor.domain.SourceResidencyPlanner
+import cn.devcxl.photosync.editor.domain.WarpDisplacementField
 import cn.devcxl.photosync.editor.lut.CubeLutStore
-import cn.devcxl.photosync.wrapper.JpegStreamWriter
+import cn.devcxl.photosync.editor.render.CloudLayerBlender
+import cn.devcxl.photosync.editor.render.CloudLayerLoad
+import cn.devcxl.photosync.editor.render.InpaintOverlay
+import cn.devcxl.photosync.editor.render.SkyPreparer
+import cn.devcxl.photosync.editor.render.SubjectCompositeLoader
+import cn.devcxl.photosync.editor.render.SubjectRenderContract
+import cn.devcxl.photosync.editor.render.SubjectRenderPlan
 
 /**
  * Process-wide concurrency gate for the full-resolution bake pipeline.
@@ -44,11 +54,13 @@ object BakeConcurrencyGate {
 
 /**
  * Full-resolution non-destructive bake: 1024px Pre-pass, three-tier source residency, column-band
- * streaming render and a `libjpeg-turbo` baseline encode written straight into a [GallerySink].
+ * streaming render and either a `libjpeg-turbo` baseline encode or a lossless RGBA8 PNG encode
+ * written straight into a [GallerySink].
  *
  * The GPU work runs on a headless [SurfacelessEglContext] so a bake never needs a visible window and
  * can run while the user keeps browsing. Peak memory stays inside 512MB because only one row strip
- * (`cropWidth x 512`) and one band FBO (`<= 2048 x 640`) exist at a time.
+ * (`cropWidth x 512`) and one band FBO (`<= 2048 x 640`) exist at a time; the PNG path keeps the
+ * encoder itself at `O(image width)`.
  */
 class BakeExporter(
     private val context: Context,
@@ -59,13 +71,23 @@ class BakeExporter(
     /**
      * Bakes [request] into the system gallery.
      *
-     * Cancellation is observed once per column band; a cancelled bake aborts the encoder and lets
-     * the sink delete its pending entry. RAW requests additionally wait for
+     * Cancellation is observed once per column band (and once per PNG row); a cancelled bake aborts
+     * the encoder and lets the sink delete its pending entry. RAW requests additionally wait for
      * [BakeConcurrencyGate.rawBakeMutex] so at most one RAW bake occupies memory at a time.
+     *
+     * When [BakeRequest.photoId] is set, the id stays registered in
+     * [cn.devcxl.photosync.editor.domain.ActivePhotoEditRegistry] for the whole bake, so the offline
+     * AI asset sweep skips the photo directory this bake is still reading.
      */
     suspend fun bake(request: BakeRequest): BakeResult {
-        if (!request.isRaw) return runBake(request)
-        return BakeConcurrencyGate.rawBakeMutex.withLock { runBake(request) }
+        val photoId = request.photoId
+        if (photoId != null) ActivePhotoEditRegistry.acquire(photoId)
+        try {
+            if (!request.isRaw) return runBake(request)
+            return BakeConcurrencyGate.rawBakeMutex.withLock { runBake(request) }
+        } finally {
+            if (photoId != null) ActivePhotoEditRegistry.release(photoId)
+        }
     }
 
     private suspend fun runBake(request: BakeRequest): BakeResult = withContext(Dispatchers.Default) {
@@ -132,7 +154,8 @@ class BakeExporter(
             sourcePath = request.sourcePath,
             isRaw = request.isRaw,
             plan = plan,
-            sourceLongEdge = sourceLongEdge
+            sourceLongEdge = sourceLongEdge,
+            inpaint = InpaintOverlay.of(filesDir, graph)
         ) ?: return BakeResult.Failure("source textures could not be created")
         val prepass = BakePrepass(chain, source)
         try {
@@ -151,8 +174,13 @@ class BakeExporter(
                 graphCurve = graph.color.curve,
                 lut = loadLut(graph)
             )
+            stageCloudLayer(chain, graph, outSize)
+            stageSkyLayer(chain, graph, request, outSize)
             val maxWarpUv = maxAbsWarpUv(portrait.warpField)
             val frame = BakeFrameFactory.create(graph, source, outSize.first, outSize.second, maxWarpUv)
+            val subject = resolveSubject(request, graph, portrait.warpField, source)
+                ?: return BakeResult.Failure("subject mask unavailable")
+            chain.setSubject(subject.support, subject.plan)
             prepass.prepare(frame, outSize.first, outSize.second)
             return publish(request, graph, chain, source, frame, outSize, coroutine)
         } finally {
@@ -173,32 +201,38 @@ class BakeExporter(
         var encoded = false
         val (outWidth, outHeight) = outSize
         val isActive = { coroutine.isActive }
+        val format = request.outputFormat
         val uri = gallerySink.save(
             displayName = request.displayName,
-            mime = GallerySink.JPEG_MIME,
+            mime = BakeOutputNaming.mimeType(format),
             write = { output ->
-                JpegStreamWriter(output, outWidth, outHeight).use { jpeg ->
-                    BakeBandEncoder(
-                        chain = chain,
-                        source = source,
-                        sink = JpegStripSink(jpeg),
-                        frameTemplate = frame,
-                        sourceToPostCropInverse = BakeFrameFactory.inverseMatrix(graph, source),
-                        cropWidth = outWidth,
-                        cropHeight = outHeight
-                    ).encode(isActive)
-                    jpeg.finish()
-                }
+                BakeStripWriter.write(
+                    output = output,
+                    request = request,
+                    graph = graph,
+                    chain = chain,
+                    source = source,
+                    frame = frame,
+                    outWidth = outWidth,
+                    outHeight = outHeight,
+                    isActive = isActive
+                )
                 encoded = true
             },
-            writeExif = { writer ->
-                BakeExifWriter.apply(
-                    sourcePath = request.sourcePath,
-                    isRaw = request.isRaw,
-                    width = outWidth,
-                    height = outHeight,
-                    target = writer
-                )
+            writeExif = if (format == BakeOutputFormat.JPEG) {
+                { writer ->
+                    BakeExifWriter.apply(
+                        sourcePath = request.sourcePath,
+                        isRaw = request.isRaw,
+                        width = outWidth,
+                        height = outHeight,
+                        target = writer
+                    )
+                }
+            } else {
+                // The PNG path embeds its eXIf chunk during the stream; rewriting the gallery
+                // entry afterwards would copy the whole file through a FUSE descriptor.
+                null
             }
         )
         if (!isActive()) {
@@ -210,7 +244,53 @@ class BakeExporter(
         return BakeResult.Success(uri, outWidth, outHeight, request.displayName)
     }
 
-    private fun maxAbsWarpUv(field: cn.devcxl.photosync.editor.domain.WarpDisplacementField?): Float {
+    /**
+     * Resolves the bake's subject support and Pass D plan.
+     *
+     * @return `null` only when the graph needs the subject mask (cut-out, bokeh or a
+     *   foreground/background grade) but the mask cannot be loaded; a neutral subject returns a
+     *   pair of `null`s so the normal bake proceeds unchanged.
+     */
+    private fun resolveSubject(
+        request: BakeRequest,
+        graph: EditGraph,
+        warpField: WarpDisplacementField?,
+        source: BakeSourceTextures
+    ): ResolvedBakeSubject? {
+        if (!graph.subject.requiresMaskProcessing()) {
+            return ResolvedBakeSubject(null, null)
+        }
+        val mask = SubjectCompositeLoader.loadMask(filesDir, graph) ?: return null
+        val plan = SubjectRenderContract.plan(graph, hasMask = true)
+        val initial = if (plan != null) {
+            SubjectCompositeLoader.resolveForFile(
+                graph = graph,
+                sourcePath = request.sourcePath,
+                isRaw = request.isRaw,
+                filesDir = filesDir,
+                inpaint = InpaintOverlay.of(filesDir, graph)
+            )
+        } else {
+            null
+        }
+        return ResolvedBakeSubject(
+            support = BakeSubjectSupport(
+                graph = graph,
+                mask = mask,
+                initial = initial,
+                warpField = warpField,
+                inverseMatrix = BakeFrameFactory.inverseMatrix(graph, source)
+            ),
+            plan = plan
+        )
+    }
+
+    private data class ResolvedBakeSubject(
+        val support: BakeSubjectSupport?,
+        val plan: SubjectRenderPlan?
+    )
+
+    private fun maxAbsWarpUv(field: WarpDisplacementField?): Float {
         if (field == null || field.isZero()) return 0.0f
         var maxDisp = 0.0f
         val count = field.gridSize * field.gridSize * 2
@@ -226,9 +306,72 @@ class BakeExporter(
         return LiquifyMeshStore(filesDir).read(reference)
     }
 
+    /**
+     * Decodes, digest-verifies and stages the Post-Pass A cloud layer for the whole bake.
+     *
+     * A layer that no longer matches the current framing, or whose asset fails its SHA-256 check,
+     * is skipped instead of failing the export: the bake then equals what the preview shows, which
+     * also refuses to blend a mismatched layer.
+     *
+     * The texture is capped at [CLOUD_TEXTURE_MAX_EDGE] px: a 50MP frame-sized RGBA texture would
+     * cost 200MB of GL memory for pixels a cloud endpoint never returns at that resolution. The
+     * band UV mapping is normalized, so the GL bilinear filter upscales without a seam.
+     */
+    private fun stageCloudLayer(chain: BakePassChain, graph: EditGraph, outSize: Pair<Int, Int>) {
+        val layer = graph.cloudLayer ?: return
+        if (!CloudGeometryDigest.matches(layer, graph.geometry)) {
+            Timber.w("Bake skips the cloud layer: its geometry digest does not match the graph")
+            return
+        }
+        val (width, height) = cloudTextureSize(outSize.first, outSize.second)
+        val blender = CloudLayerBlender(AiAssetStore(filesDir))
+        when (val loaded = blender.prepare(layer, graph.geometry, width, height)) {
+            is CloudLayerLoad.Ready -> chain.setCloudLayer(loaded.pixels)
+            is CloudLayerLoad.NotApplied ->
+                Timber.w("Bake skips the cloud layer: %s", loaded.status)
+        }
+    }
+
+    /**
+     * Decodes and stages the P3 sky for the whole bake.
+     *
+     * A missing mask or an unverifiable asset degrades to the original sky, exactly like the preview
+     * does; an export is never failed because a replacement image was deleted. The Pre-pass delta is
+     * computed once here and shared by every column band.
+     */
+    private fun stageSkyLayer(
+        chain: BakePassChain,
+        graph: EditGraph,
+        request: BakeRequest,
+        outSize: Pair<Int, Int>
+    ) {
+        val layer = SkyPreparer.prepareFromPath(
+            sourcePath = request.sourcePath,
+            isRaw = request.isRaw,
+            graph = graph,
+            filesDir = filesDir,
+            outputWidth = outSize.first,
+            outputHeight = outSize.second
+        ) ?: return
+        chain.setSky(layer)
+    }
+
+    private fun cloudTextureSize(outWidth: Int, outHeight: Int): Pair<Int, Int> {
+        val longEdge = maxOf(outWidth, outHeight)
+        if (longEdge <= CLOUD_TEXTURE_MAX_EDGE) return outWidth to outHeight
+        val scale = CLOUD_TEXTURE_MAX_EDGE.toFloat() / longEdge
+        return (outWidth * scale).toInt().coerceAtLeast(1) to
+            (outHeight * scale).toInt().coerceAtLeast(1)
+    }
+
     private fun loadLut(graph: EditGraph): Lut3dSamples? {
         val reference = graph.color.lut ?: return null
         return CubeLutStore(filesDir).loadSamples(reference.id).getOrNull()
+    }
+
+    private companion object {
+        /** Long edge of the cloud texture a bake samples; 2048 matches the BYOK upload budget. */
+        const val CLOUD_TEXTURE_MAX_EDGE = 2048
     }
 
     private fun totalRamBytes(): Long {

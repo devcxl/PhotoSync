@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Shared install failure copy for the AI settings page and the editor install prompt. -->
+    <string name="editor_ai_model_reason_not_available">This model has not been released yet</string>
+    <string name="editor_ai_model_reason_source_gone">The model source is offline and may have moved</string>
+    <string name="editor_ai_model_reason_source_denied">The model source denied access</string>
+    <string name="editor_ai_model_reason_transport">Transfer interrupted; the partial download was kept</string>
+    <string name="editor_ai_model_reason_size_mismatch">The file is incomplete or truncated</string>
+    <string name="editor_ai_model_reason_checksum_mismatch">File verification failed; it may be corrupted or
+        tampered with</string>
+    <string name="editor_ai_model_reason_incompatible">The model format does not match this app version</string>
+    <string name="editor_ai_model_reason_storage_failure">Not enough storage or the model directory is not
+        writable</string>
+    <string name="editor_ai_model_cancelled">Download cancelled; the partial file was kept for
+        resuming</string>
+</resources>

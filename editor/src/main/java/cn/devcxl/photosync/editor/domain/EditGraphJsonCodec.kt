@@ -3,16 +3,30 @@ package cn.devcxl.photosync.editor.domain
 import java.util.Locale
 
 /**
- * Pure-Kotlin JSON serializer and parser for [EditGraph] v1.
+ * Pure-Kotlin JSON serializer and parser for [EditGraph] v2.
+ *
+ * The encoder always writes every group, while the decoder treats missing fields as neutral
+ * defaults. A schema v1 document therefore decodes losslessly: its absent AI groups fall back to
+ * [SubjectOps], an empty inpaint list, [SkyOps] and no cloud layer.
  *
  * Avoids `android.jar`'s `org.json.JSONObject` stub so serialization round-trips work
  * identically in pure JVM unit tests and on Android devices without extra third-party jars.
  */
 object EditGraphJsonCodec {
 
+    /**
+     * Serializes [graph] into the compact schema v2 JSON document persisted in `photo_edits`.
+     *
+     * The graph is sanitized first, so the document never carries `NaN`/infinity or an escaping
+     * asset path regardless of where the graph came from. Every group is written, including the
+     * neutral AI defaults, which keeps decode symmetric for v2 rows.
+     *
+     * @param graph Graph to persist; it is sanitized, not mutated.
+     * @return The JSON document, safe to store as a Room text column.
+     */
     fun encode(graph: EditGraph): String {
         val clean = EditValidator.sanitize(graph)
-        val sb = StringBuilder(1024)
+        val sb = StringBuilder(2048)
         sb.append('{')
         sb.append("\"schema\":").append(clean.schema).append(',')
         sb.append("\"baseLook\":").append(quote(clean.baseLook.wireName)).append(',')
@@ -27,6 +41,14 @@ object EditGraphJsonCodec {
         encodeEffects(sb, clean.effects)
         sb.append(',')
         encodePortrait(sb, clean.portrait)
+        sb.append(',')
+        encodeSubject(sb, clean.subject)
+        sb.append(',')
+        encodeInpaint(sb, clean.inpaint)
+        sb.append(',')
+        encodeSky(sb, clean.sky)
+        sb.append(',')
+        encodeCloudLayer(sb, clean.cloudLayer)
         sb.append('}')
         return sb.toString()
     }
@@ -176,6 +198,65 @@ object EditGraphJsonCodec {
         sb.append("\"legs\":").append(p.body.legs).append(',')
         sb.append("\"waistY\":").append(p.body.waistY?.let { fmt(it) } ?: "null").append(',')
         sb.append("\"hipY\":").append(p.body.hipY?.let { fmt(it) } ?: "null").append("}}")
+    }
+
+    private fun encodeSubject(sb: StringBuilder, s: SubjectOps) {
+        sb.append("\"subject\":{")
+        sb.append("\"maskRef\":").append(quote(s.maskRef)).append(',')
+        sb.append("\"bgMode\":").append(quote(s.bgMode.wireName)).append(',')
+        sb.append("\"bgColorArgb\":").append(s.bgColorArgb).append(',')
+        sb.append("\"blur\":").append(s.blur).append(',')
+        sb.append("\"fgExposure\":").append(s.fgExposure).append(',')
+        sb.append("\"fgTemp\":").append(s.fgTemp).append(',')
+        sb.append("\"fgSat\":").append(s.fgSat).append(',')
+        sb.append("\"bgExposure\":").append(s.bgExposure).append(',')
+        sb.append("\"bgTemp\":").append(s.bgTemp).append(',')
+        sb.append("\"bgSat\":").append(s.bgSat)
+        sb.append('}')
+    }
+
+    private fun encodeInpaint(sb: StringBuilder, patches: List<InpaintPatchRef>) {
+        sb.append("\"inpaint\":[")
+        patches.forEachIndexed { index, patch ->
+            if (index > 0) sb.append(',')
+            sb.append("{\"bbox\":[")
+            sb.append(fmt(patch.bbox.left)).append(',')
+            sb.append(fmt(patch.bbox.top)).append(',')
+            sb.append(fmt(patch.bbox.right)).append(',')
+            sb.append(fmt(patch.bbox.bottom)).append("],")
+            sb.append("\"patchRelPath\":").append(quote(patch.patchRelPath)).append(',')
+            sb.append("\"maskRelPath\":").append(quote(patch.maskRelPath)).append(',')
+            sb.append("\"sha256\":").append(quote(patch.sha256)).append('}')
+        }
+        sb.append(']')
+    }
+
+    private fun encodeSky(sb: StringBuilder, sky: SkyOps) {
+        sb.append("\"sky\":{")
+        sb.append("\"maskRef\":").append(quote(sky.maskRef)).append(',')
+        sb.append("\"assetType\":").append(quote(sky.assetType.wireName)).append(',')
+        sb.append("\"assetIdOrRelPath\":").append(quote(sky.assetIdOrRelPath)).append(',')
+        sb.append("\"assetSha256\":").append(quote(sky.assetSha256)).append(',')
+        sb.append("\"relight\":").append(sky.relight).append(',')
+        sb.append("\"horizonOffset\":").append(fmt(sky.horizonOffset)).append(',')
+        sb.append("\"horizonFeather\":").append(sky.horizonFeather).append(',')
+        sb.append("\"edgeShift\":").append(sky.edgeShift)
+        sb.append('}')
+    }
+
+    private fun encodeCloudLayer(sb: StringBuilder, layer: CloudEditLayerRef?) {
+        sb.append("\"cloudLayer\":")
+        if (layer == null) {
+            sb.append("null")
+            return
+        }
+        sb.append("{\"imageRelPath\":").append(quote(layer.imageRelPath)).append(',')
+        sb.append("\"maskRelPath\":").append(layer.maskRelPath?.let(::quote) ?: "null").append(',')
+        sb.append("\"sha256\":").append(quote(layer.sha256)).append(',')
+        sb.append("\"opacity\":").append(layer.opacity).append(',')
+        sb.append("\"featherPx\":").append(fmt(layer.featherPx)).append(',')
+        sb.append("\"geometryDigest\":").append(quote(layer.geometryDigest)).append(',')
+        sb.append("\"providerTag\":").append(quote(layer.providerTag)).append('}')
     }
 
     private fun fmt(value: Float): String =

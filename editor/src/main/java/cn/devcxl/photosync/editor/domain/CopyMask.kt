@@ -7,6 +7,17 @@ package cn.devcxl.photosync.editor.domain
  * portrait skin) and exclude everything that describes *this* frame's composition: crop, straighten,
  * perspective, rotate/flip, liquify strokes and the face/body MLS warps. Pasting a graded look onto a
  * burst therefore never moves the next frame's crop.
+ *
+ * The pixel-level AI layers are **never** copy axes: `inpaint` and `cloudLayer` stay with the frame
+ * they were generated for, even when every copy checkbox is enabled, because a repaired region or a
+ * cloud result cannot be re-projected onto another photo's geometry.
+ *
+ * `subject` is different: its *parameters* (background mode, blur and the foreground/background
+ * relative grade) are a reusable look, so [includeAiSubject] carries them. The source's `maskRef`
+ * is **never** copied: the refined mask belongs to the source frame's pixels, and the target must
+ * either keep its own mask or recompute one from its own image. `sky` follows the same rule: its
+ * *parameters* are a reusable look, but the source's sky mask is dropped so the target computes its
+ * own from its own horizon.
  */
 data class CopyMask(
     val includeBaseLook: Boolean = true,
@@ -17,7 +28,9 @@ data class CopyMask(
     val includePortraitSkin: Boolean = true,
     val includeGeometryCropRotate: Boolean = false,
     val includeLiquify: Boolean = false,
-    val includePortraitReshapeBody: Boolean = false
+    val includePortraitReshapeBody: Boolean = false,
+    val includeAiSubject: Boolean = true,
+    val includeAiSky: Boolean = true
 ) {
 
     /**
@@ -34,15 +47,26 @@ data class CopyMask(
             color = pick(includeColor, source.color, target.color),
             detail = pick(includeDetail, source.detail, target.detail),
             effects = pick(includeEffects, source.effects, target.effects),
-            portrait = mergePortrait(source.portrait, target.portrait)
+            portrait = mergePortrait(source.portrait, target.portrait),
+            subject = mergeSubject(source.subject, target.subject),
+            sky = mergeSky(source.sky, target.sky)
         )
         return EditValidator.sanitize(merged)
     }
 
     /**
      * Extracts the masked axes of [source] as a standalone look, i.e. `apply(source, EditGraph())`.
+     *
+     * The result never carries a pixel-level asset reference: `subject.maskRef` is forced blank so a
+     * saved preset describes parameters only and can never point at one frame's mask file.
      */
-    fun extract(source: EditGraph): EditGraph = apply(source, EditGraph())
+    fun extract(source: EditGraph): EditGraph {
+        val extracted = apply(source, EditGraph())
+        return extracted.copy(
+            subject = extracted.subject.copy(maskRef = ""),
+            sky = extracted.sky.copy(maskRef = "")
+        )
+    }
 
     private fun mergeGeometry(source: GeometryOps, target: GeometryOps): GeometryOps = when {
         includeGeometryCropRotate && includeLiquify -> source
@@ -57,6 +81,31 @@ data class CopyMask(
         body = pick(includePortraitReshapeBody, source.body, target.body)
     )
 
+    /**
+     * Copies only the reusable [SubjectOps] parameters.
+     *
+     * The target's `maskRef` is preserved verbatim — never the source's — because a refined mask
+     * describes the source frame's pixels. A target without a mask falls back to recomputing one
+     * from its own image when the preset is applied (editor restore, quick strip or tethered sync).
+     */
+    private fun mergeSubject(source: SubjectOps, target: SubjectOps): SubjectOps =
+        if (!includeAiSubject) {
+            target
+        } else {
+            source.copy(maskRef = target.maskRef)
+        }
+
+    /**
+     * Copies only the reusable [SkyOps] parameters and deliberately **clears** the target's mask.
+     *
+     * A preset or a cross-photo paste describes a horizon relative to the source frame; carrying the
+     * target's old sky mask would pair the new horizon with the old sky boundary, and carrying the
+     * source's mask is impossible. Clearing it forces the target photo's own classic segmentation the
+     * next time the editor restores the graph.
+     */
+    private fun mergeSky(source: SkyOps, target: SkyOps): SkyOps =
+        if (!includeAiSky) target else source.copy(maskRef = "")
+
     /** Explicit `if` instead of `takeIf` so the generic type stays inferred without boxing. */
     private fun <T> pick(enabled: Boolean, fromSource: T, fromTarget: T): T =
         if (enabled) fromSource else fromTarget
@@ -64,7 +113,7 @@ data class CopyMask(
     companion object {
 
         /** Number of independently selectable axes in the copy checklist. */
-        const val AXIS_COUNT = 9
+        const val AXIS_COUNT = 11
 
         /**
          * Maps the `AXIS_COUNT` copy-checklist checkboxes onto a mask.
@@ -81,7 +130,9 @@ data class CopyMask(
             includePortraitSkin = checked.getOrElse(5) { true },
             includeGeometryCropRotate = checked.getOrElse(6) { false },
             includeLiquify = checked.getOrElse(7) { false },
-            includePortraitReshapeBody = checked.getOrElse(8) { false }
+            includePortraitReshapeBody = checked.getOrElse(8) { false },
+            includeAiSubject = checked.getOrElse(9) { true },
+            includeAiSky = checked.getOrElse(10) { true }
         )
     }
 }
@@ -109,16 +160,24 @@ object PresetGraphMerger {
     fun applyPreset(preset: EditGraph, target: EditGraph): EditGraph =
         PRESET_MASK.apply(preset, target)
 
-    /** Extracts the axes a preset stores from [graph]: the appearance, never the geometry. */
-    fun extractPreset(graph: EditGraph): EditGraph = PRESET_MASK.extract(graph)
+    /** Extracts the axes a preset stores from [graph]: the appearance, never the geometry or a mask. */
+    fun extractPreset(graph: EditGraph): EditGraph {
+        val preset = PRESET_MASK.extract(graph)
+        return preset.copy(
+            subject = preset.subject.copy(maskRef = ""),
+            sky = preset.sky.copy(maskRef = "")
+        )
+    }
 
     /**
-     * Returns [target] with every axis — grade, portrait and frame geometry — back at its neutral
-     * default, i.e. the state a freshly imported photo starts in.
+     * Returns [target] with every axis — grade, portrait, frame geometry and the AI groups — back at
+     * its neutral default, i.e. the state a freshly imported photo starts in.
      *
      * The liquify grid is referenced from `geometry` but lives outside the graph, so the editor must
      * additionally clear its [LiquifySession] mesh when it applies this reset; the history
-     * coordinator records both halves as one undoable step.
+     * coordinator records both halves as one undoable step. The external AI payloads referenced by
+     * `subject`, `inpaint` and `cloudLayer` become unreferenced and are reclaimed by the offline
+     * [AiAssetStore] collector.
      */
     fun resetToOriginal(target: EditGraph): EditGraph = EditValidator.sanitize(
         target.copy(
@@ -128,7 +187,11 @@ object PresetGraphMerger {
             color = ColorOps(),
             detail = DetailOps(),
             effects = EffectsOps(),
-            portrait = PortraitOps()
+            portrait = PortraitOps(),
+            subject = SubjectOps(),
+            inpaint = emptyList(),
+            sky = SkyOps(),
+            cloudLayer = null
         )
     )
 
@@ -145,7 +208,9 @@ object PresetGraphMerger {
             graph.color.isIdentity() &&
             graph.detail.isIdentity() &&
             graph.effects.isIdentity() &&
-            graph.portrait.isIdentity()
+            graph.portrait.isIdentity() &&
+            graph.subject.isIdentity() &&
+            graph.sky.isIdentity()
 
     /**
      * Returns the id of the first entry in [candidates] whose carried axes match [graph], or `null`

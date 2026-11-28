@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.IntentFilter
 import android.hardware.usb.UsbManager
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -27,11 +28,25 @@ import cn.devcxl.photosync.data.RoomEditStore
 import cn.devcxl.photosync.data.RoomTetheredPhotoCommitter
 import cn.devcxl.photosync.data.TetheredIngestResult
 import cn.devcxl.photosync.data.TetheredPhotoIngestor
+import cn.devcxl.photosync.data.settings.AppSettings
 import cn.devcxl.photosync.editor.R as EditorR
 import cn.devcxl.photosync.editor.contract.EditorHostRegistry
+import cn.devcxl.photosync.editor.domain.ActivePhotoEditRegistry
+import cn.devcxl.photosync.editor.domain.AiAssetStore
 import cn.devcxl.photosync.editor.domain.BuiltinPresets
+import cn.devcxl.photosync.editor.domain.EditGraph
+import cn.devcxl.photosync.editor.domain.EditGraphJsonCodec
 import cn.devcxl.photosync.editor.render.BackgroundPreviewRenderer
+import cn.devcxl.photosync.editor.render.ClassicTetheredSkyPresetPreparer
+import cn.devcxl.photosync.editor.render.ModnetTetheredSubjectPresetPreparer
 import cn.devcxl.photosync.editor.render.RecentEditorSourceCache
+import cn.devcxl.photosync.editor.render.TetheredSkyPresetPreparer
+import cn.devcxl.photosync.editor.render.TetheredSubjectPresetPreparer
+import cn.devcxl.photosync.editor.settings.EditorSettings
+import cn.devcxl.photosync.editor.vision.OrtSessionManager
+import cn.devcxl.photosync.editor.vision.OrtSessionRuntimeConfig
+import cn.devcxl.photosync.editor.vision.SkyMask
+import cn.devcxl.photosync.editor.vision.SubjectMask
 import cn.devcxl.photosync.export.MediaStoreGallerySink
 import cn.devcxl.photosync.ptp.manager.UsbPtpConnectionController
 import cn.devcxl.photosync.receiver.UsbPermissionReceiver
@@ -90,6 +105,59 @@ class App : Application() {
         UsbPtpConnectionController(this)
     }
 
+    /** Typed tether/gallery settings, shared by the ingest pipeline and the gallery. */
+    private val appSettings by lazy { AppSettings(this) }
+
+    /** Typed editor/AI settings; the single resolver for every AI runtime policy. */
+    private val editorSettings by lazy { EditorSettings(this) }
+
+    /**
+     * Process-wide ORT session owner shared with `:editor`.
+     *
+     * Construction is deliberately cheap: no model is loaded and no scheduler thread is started
+     * until the first AI tool calls `withSession`. `App.onCreate` injects the instance into
+     * [EditorHostRegistry] so every editor tool reuses one manager instead of creating its own.
+     *
+     * The policy closure re-reads [EditorSettings] before every inference, so a tier override,
+     * thread-count or idle-release change applies to the next AI action without a restart.
+     */
+    val ortSessionManager: OrtSessionManager by lazy {
+        OrtSessionManager(
+            tier = editorSettings.resolveMemoryTier(this),
+            runtimePolicy = {
+                OrtSessionRuntimeConfig(
+                    tier = editorSettings.resolveMemoryTier(this),
+                    intraOpThreads = editorSettings.intraOpThreads,
+                    idleTimeoutMs = editorSettings.idleRelease.timeoutMs
+                )
+            }
+        )
+    }
+
+    /**
+     * Computes a new photo's own subject mask for a `LiveTetherPreset` that carries `SubjectOps`.
+     *
+     * Shares the process-wide ORT manager, so a tethered ingest can never open a second native
+     * session next to an open editor. Construction is cheap; the first `prepare` touches ORT.
+     */
+    val tetheredSubjectPreparer: TetheredSubjectPresetPreparer by lazy {
+        ModnetTetheredSubjectPresetPreparer(
+            context = this,
+            filesDir = filesDir,
+            sessions = ortSessionManager
+        )
+    }
+
+    /**
+     * Computes a new photo's own sky mask for a `LiveTetherPreset` that carries `SkyOps`.
+     *
+     * The classic segmenter is the zero-model P3 implementation: no download and no ORT session, so
+     * it can run inside the serialized ingest queue even on a `<= 4 GiB` device.
+     */
+    val tetheredSkyPreparer: TetheredSkyPresetPreparer by lazy {
+        ClassicTetheredSkyPresetPreparer()
+    }
+
     /** Photo ids that arrived from the camera while the app was already running. */
     val syncedPhotoEvents: SharedFlow<Long> = tetheredPhotoEvents.asSharedFlow()
 
@@ -101,9 +169,7 @@ class App : Application() {
         /** Preferences file the editor's `LiveTetherPreset` lives in. */
         const val EDITOR_PREFS_NAME = "photosync_editor_prefs"
 
-        fun get(): App {
-            return instance!!
-        }
+        fun get(): App = checkNotNull(instance) { "App.get() was called before Application.onCreate" }
     }
 
     override fun onCreate() {
@@ -117,14 +183,22 @@ class App : Application() {
             userPresetDao = db.userPresetDao(),
             liveTetherPrefs = getSharedPreferences(EDITOR_PREFS_NAME, MODE_PRIVATE),
             onClearPhotoEditCache = { photoId -> clearPhotoEditCacheDir(cacheDir, photoId) },
-            builtinNameResolver = ::resolveBuiltinPresetName
+            builtinNameResolver = ::resolveBuiltinPresetName,
+            onClearPhotoExternalAssets = { photoId ->
+                AiAssetStore(filesDir).deletePhotoAssets(photoId)
+            },
+            livePresetEnabled = { appSettings.livePresetEnabled }
         )
         EditorHostRegistry.editStore = editStore
         EditorHostRegistry.gallerySink = MediaStoreGallerySink(contentResolver)
         EditorHostRegistry.tetheredPhotoEvents = syncedPhotoEvents
+        // Inject the singleton before any editor tool is constructed. Touching the lazy value only
+        // builds the lightweight wrapper; the manager loads no model until its first withSession.
+        EditorHostRegistry.ortSessionManager = ortSessionManager
         applicationScope.launch {
             File(cacheDir, TetheredPhotoIngestor.STAGING_DIR_NAME).deleteRecursively()
             seedPresets(editStore)
+            collectOrphanAiAssets(db)
         }
         tetheredIngestor = createIngestor(editStore)
 
@@ -150,6 +224,7 @@ class App : Application() {
         if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
             RecentEditorSourceCache.shared.onMemoryPressure()
             BackgroundPreviewRenderer.onMemoryPressure()
+            ortSessionManager.onMemoryPressure()
         }
     }
 
@@ -157,6 +232,7 @@ class App : Application() {
         super.onLowMemory()
         RecentEditorSourceCache.shared.onMemoryPressure()
         BackgroundPreviewRenderer.onMemoryPressure()
+        ortSessionManager.onMemoryPressure()
     }
 
     /**
@@ -224,25 +300,92 @@ class App : Application() {
     private fun createIngestor(editStore: RoomEditStore): TetheredPhotoIngestor =
         TetheredPhotoIngestor(
             editStore = editStore,
-            committer = RoomTetheredPhotoCommitter(AppDatabase.getInstance(this), cacheDir),
+            committer = RoomTetheredPhotoCommitter(
+                database = AppDatabase.getInstance(this),
+                cacheDir = cacheDir,
+                filesDir = filesDir
+            ),
             stagingDir = cacheDir,
             renderPreview = { sourcePath, isRaw, graph, outDir ->
-                BackgroundPreviewRenderer.renderToDir(
-                    context = this,
-                    filesDir = filesDir,
-                    outDir = outDir,
-                    sourcePath = sourcePath,
-                    isRaw = isRaw,
-                    graph = graph
-                )
-            }
+                renderTetheredPreview(sourcePath, isRaw, graph, outDir)
+            },
+            renderPreviewWithSubject = { sourcePath, isRaw, graph, subjectMask, outDir ->
+                renderTetheredPreview(sourcePath, isRaw, graph, outDir, subjectMask)
+            },
+            subjectPreparer = tetheredSubjectPreparer,
+            skyPreparer = tetheredSkyPreparer,
+            renderPreviewWithAi = { sourcePath, isRaw, graph, subjectMask, skyMask, outDir ->
+                renderTetheredPreview(sourcePath, isRaw, graph, outDir, subjectMask, skyMask)
+            },
+            livePresetApplyAi = { appSettings.livePresetApplyAi }
         )
+
+    private suspend fun renderTetheredPreview(
+        sourcePath: String,
+        isRaw: Boolean,
+        graph: EditGraph,
+        outDir: File,
+        subjectMask: SubjectMask? = null,
+        skyMask: SkyMask? = null
+    ): File? = BackgroundPreviewRenderer.renderToDir(
+        context = this,
+        filesDir = filesDir,
+        outDir = outDir,
+        sourcePath = sourcePath,
+        isRaw = isRaw,
+        graph = graph,
+        subjectMaskOverride = subjectMask,
+        skyMaskOverride = skyMask
+    )
 
     private suspend fun seedPresets(editStore: RoomEditStore) {
         try {
             editStore.seedBuiltinPresets()
         } catch (e: RuntimeException) {
             Timber.e(e, "Failed to seed the built-in preset library")
+        }
+    }
+
+    /**
+     * Sweeps AI payloads that no persisted edit row references any more.
+     *
+     * Cold start is the only moment when no editor session is expected to exist yet, but the sweep
+     * still runs asynchronously and an editor or bake can start while it is in flight. The
+     * [ActivePhotoEditRegistry] snapshot therefore exempts every photo that is actively held at the
+     * moment the sweep starts. A row that fails to decode aborts the sweep: an unreadable graph may
+     * still own its bytes, and a failed read must never be mistaken for "no references".
+     */
+    private suspend fun collectOrphanAiAssets(db: AppDatabase) {
+        try {
+            val rows = db.photoEditDao().getAllEdits()
+            val graphs = rows.mapNotNull { row ->
+                EditGraphJsonCodec.decode(row.graphJson).also { graph ->
+                    if (graph == null) {
+                        Timber.w("AI asset GC skipped: a persisted edit graph could not be decoded")
+                    }
+                }
+            }
+            if (graphs.size != rows.size) return
+            val store = AiAssetStore(filesDir)
+            val referenced = graphs.flatMapTo(HashSet()) { graph ->
+                store.referencedRelativePaths(graph)
+            }
+            val report = store.collectOrphanAssets(
+                referencedRelativePathsProvider = { referenced },
+                activePhotoIds = ActivePhotoEditRegistry.snapshot()
+            )
+            if (report.deletedFiles > 0) {
+                Timber.i(
+                    "AI asset GC removed %d orphan files (%d bytes) from %d photo directories",
+                    report.deletedFiles,
+                    report.reclaimedBytes,
+                    report.scannedPhotoDirectories
+                )
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: RuntimeException) {
+            Timber.e(e, "AI asset GC failed")
         }
     }
 

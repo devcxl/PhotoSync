@@ -103,6 +103,18 @@ class Mat3 internal constructor(private val values: DoubleArray) {
          */
         fun identity(): Mat3 = Mat3(doubleArrayOf(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0))
 
+        /** Rebuilds a transform from the column-major `FloatArray` used by the GL uniforms. */
+        fun fromColumnMajorFloatArray(values: FloatArray): Mat3 {
+            require(values.size == ELEMENT_COUNT) { "A 3x3 matrix needs $ELEMENT_COUNT elements" }
+            val rowMajor = DoubleArray(ELEMENT_COUNT)
+            for (row in 0..2) {
+                for (column in 0..2) {
+                    rowMajor[row * 3 + column] = values[column * 3 + row].toDouble()
+                }
+            }
+            return Mat3(rowMajor)
+        }
+
         internal fun ofRowMajor(values: DoubleArray): Mat3 = Mat3(values.copyOf())
     }
 }

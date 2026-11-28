@@ -47,6 +47,9 @@ internal object DetailShaderSources {
         uniform vec3 uSkinParams;
         uniform float uSkinBlurScale;
         uniform float uDitherAmp;
+        uniform int uHasSubjectMask;
+        uniform float uSubjectBokehRadius;
+        ${ColorShaderGlsl.SUBJECT_UNIFORMS}
 
         const vec3 LUMA_WEIGHTS = vec3(0.2126, 0.7152, 0.0722);
         const float HIGHPASS_LIMIT = 0.08;
@@ -61,6 +64,7 @@ internal object DetailShaderSources {
         const float SKIN_BLUR_STEP = 3.0;
         const float SKIN_CHROMA_STEP = 8.0;
         const float EVEN_TONE_CHROMA_GAIN = 0.5;
+        const float GOLDEN_ANGLE_RAD = 2.3999632;
 
         float luminance(vec3 color) {
             return dot(color, LUMA_WEIGHTS);
@@ -99,6 +103,10 @@ internal object DetailShaderSources {
 
         vec3 sampleAt(vec2 uv) {
             return texture(uTex0, uv).rgb;
+        }
+
+        vec4 sampleSubjectTex(sampler2D s, vec2 uv) {
+            return texture(s, uv);
         }
 
         vec2 guideUv() {
@@ -264,6 +272,9 @@ internal object DetailShaderSources {
             return clamp(srgb + vec3(amount * detail * gate * maskWeight * skin), 0.0, 1.0);
         }
 
+        // Stage 5: simulated background bokeh, weighted by the refined subject alpha.
+        ${DetailBokehShaderSources.FUNCTIONS}
+
         void main() {
             vec4 source = texture(uTex0, vTexCoord);
             vec3 result = source.rgb;
@@ -277,6 +288,8 @@ internal object DetailShaderSources {
                 result = clarityTexture(source.rgb);
             } else if (uStage == 5) {
                 result = unsharpMask(source.rgb);
+            } else if (uStage == 6) {
+                result = subjectBokeh(source.rgb);
             }
             float dither = triDither(gl_FragCoord.xy);
             fragColor = vec4(clamp(result + vec3(dither), 0.0, 1.0), source.a);

@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 
 import timber.log.Timber
 
+import cn.devcxl.photosync.editor.cloud.CloudGeometryDigest
 import cn.devcxl.photosync.editor.domain.ColorGradingParams
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.GeometryMath
@@ -58,6 +59,10 @@ internal class OffscreenPreviewChain(
     /**
      * Renders [request] and writes one new preview JPEG into its output directory.
      *
+     * A requested [OffscreenPreviewRequest.inpaint] overlay is composed into a private copy for the
+     * duration of this call, so the leased source the caller handed over is never mutated and the
+     * copy is reclaimed before this method returns.
+     *
      * @param guard Aborts the render when the caller went away or the context stopped being current.
      * @return The written file, or `null` when this context cannot reproduce the graph exactly.
      */
@@ -65,7 +70,19 @@ internal class OffscreenPreviewChain(
         request: OffscreenPreviewRequest,
         guard: PreviewRenderGuard = PreviewRenderGuard.NONE
     ): File? {
-        val source = request.source
+        val composed = request.inpaint?.let { EditorSourceComposer.compose(request.source, it) }
+        return try {
+            renderSource(composed ?: request.source, request, guard)
+        } finally {
+            composed?.release()
+        }
+    }
+
+    private fun renderSource(
+        source: EditorSource,
+        request: OffscreenPreviewRequest,
+        guard: PreviewRenderGuard
+    ): File? {
         val graph = request.graph
         val (outWidth, outHeight) = OffscreenPreviewFrames.outputSize(graph, source.width, source.height)
         if (outWidth <= 0 || outHeight <= 0) {
@@ -102,11 +119,15 @@ internal class OffscreenPreviewChain(
         val fullTexture = uploader.upload(source, fullFrame = true) ?: return null
         var proxyTexture = 0
         try {
+            val cloud = loadCloudLayer(graph, request, outWidth, outHeight)
             val staged = passes.stageGraph(
                 warpField = request.warpField,
                 skinMask = skinMask,
                 curve = graph.color.curve,
-                lut = request.lut
+                lut = request.lut,
+                subject = request.subject,
+                cloud = cloud,
+                sky = request.sky
             )
             if (!staged || !checkpoint(guard)) return null
 
@@ -131,7 +152,8 @@ internal class OffscreenPreviewChain(
                         autoBrightGain = autoBrightGain,
                         graph = graph,
                         toneParams = toneParams,
-                        colorParams = colorParams
+                        colorParams = colorParams,
+                        subjectUvMatrix = inverseMatrix
                     )
                 }
                 if (!analysed || !checkpoint(guard)) return null
@@ -156,7 +178,8 @@ internal class OffscreenPreviewChain(
                 autoBrightGain = autoBrightGain,
                 graph = graph,
                 toneParams = toneParams,
-                colorParams = colorParams
+                colorParams = colorParams,
+                subjectUvMatrix = inverseMatrix
             )
             if (!passB || !checkpoint(guard)) return null
 
@@ -164,24 +187,34 @@ internal class OffscreenPreviewChain(
                 width = outWidth,
                 height = outHeight,
                 spatialParams = spatialParams,
-                fullResolutionShortEdge = minOf(source.width, source.height)
+                fullResolutionShortEdge = minOf(source.width, source.height),
+                graph = graph,
+                subjectUvMatrix = inverseMatrix
             ) ?: return null
             if (!checkpoint(guard)) return null
 
             val effectsParams = PassDEffectsParams.from(graph, outWidth.toFloat() / outHeight.toFloat())
                 .withLutSize(passes.lutSampleSize)
+            val subjectPlan = SubjectRenderContract.plan(
+                graph = graph,
+                hasMask = request.subject != null && passes.isSubjectActive
+            )
             val passD = passes.drawPassD(
                 width = outWidth,
                 height = outHeight,
                 inputTextureId = if (passCTexture != 0) passCTexture else passes.passBTextureId,
-                effectsParams = effectsParams
+                effectsParams = effectsParams,
+                subjectMode = subjectPlan?.shaderMode ?: 0,
+                subjectColorRgb = subjectPlan?.solidColorRgb ?: 0xFFFFFF,
+                subjectUvMatrix = inverseMatrix,
+                subjectCheckerboard = true
             )
             if (!passD || !checkpoint(guard)) return null
 
             val argb = passes.readFrame(outWidth, outHeight) ?: return null
             // Last chance to abandon before a published file exists.
             if (!checkpoint(guard)) return null
-            return encode(argb, outWidth, outHeight, request.outDir)
+            return encode(argb, outWidth, outHeight, request.outDir, request.jpegQuality)
         } finally {
             EditorTextureUploader.releaseTexture(fullTexture)
             EditorTextureUploader.releaseTexture(proxyTexture)
@@ -191,13 +224,42 @@ internal class OffscreenPreviewChain(
     /** Releases every GL object of this render. Must run with the context still current. */
     override fun close() = passes.close()
 
+    /**
+     * Decodes and digest-verifies the graph's Post-Pass A cloud layer at the output frame size.
+     *
+     * Returns `null` — the frame is then published without the layer — when the graph has no layer,
+     * the asset store was not supplied, or the digest no longer matches the current framing. The
+     * preview therefore never pastes a layer generated for another crop.
+     */
+    private fun loadCloudLayer(
+        graph: EditGraph,
+        request: OffscreenPreviewRequest,
+        width: Int,
+        height: Int
+    ): CloudLayerPixels? {
+        val layer = graph.cloudLayer ?: return null
+        val assets = request.cloudAssets ?: return null
+        if (!CloudGeometryDigest.matches(layer, graph.geometry)) {
+            Timber.w("Offscreen preview skips the cloud layer: geometry digest mismatch")
+            return null
+        }
+        val blender = CloudLayerBlender(assets)
+        return when (val loaded = blender.prepare(layer, graph.geometry, width, height)) {
+            is CloudLayerLoad.Ready -> loaded.pixels
+            is CloudLayerLoad.NotApplied -> {
+                Timber.w("Offscreen preview skips the cloud layer: %s", loaded.status)
+                null
+            }
+        }
+    }
+
     private fun checkpoint(guard: PreviewRenderGuard): Boolean {
         if (guard.isStillValid()) return true
         previewUnavailable("the render was abandoned before publishing")
         return false
     }
 
-    private fun encode(argb: IntArray, width: Int, height: Int, outDir: File): File? {
+    private fun encode(argb: IntArray, width: Int, height: Int, outDir: File, jpegQuality: Int): File? {
         val bitmap = try {
             Bitmap.createBitmap(argb, width, height, Bitmap.Config.ARGB_8888)
         } catch (oom: OutOfMemoryError) {
@@ -207,7 +269,11 @@ internal class OffscreenPreviewChain(
         return try {
             try {
                 PreviewFileWriter.write(outDir) { stream ->
-                    bitmap.compress(Bitmap.CompressFormat.JPEG, PREVIEW_JPEG_QUALITY, stream)
+                    bitmap.compress(
+                        Bitmap.CompressFormat.JPEG,
+                        jpegQuality.coerceIn(MIN_JPEG_QUALITY, MAX_JPEG_QUALITY),
+                        stream
+                    )
                 }?.let(::File)
             } catch (io: IOException) {
                 // A full or evicted cache directory is a preview failure, not a crash.
@@ -220,6 +286,7 @@ internal class OffscreenPreviewChain(
     }
 
     private companion object {
-        const val PREVIEW_JPEG_QUALITY = 92
+        private const val MIN_JPEG_QUALITY = 1
+        private const val MAX_JPEG_QUALITY = 100
     }
 }

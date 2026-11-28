@@ -18,7 +18,7 @@ import timber.log.Timber
  */
 class MediaPipeDelegatePolicy(
     private val preferences: SharedPreferences,
-    private val glEsVersion: Int
+    val glEsVersion: Int
 ) {
 
     /** Convenience constructor that reads the device GLES level and the app preferences. */

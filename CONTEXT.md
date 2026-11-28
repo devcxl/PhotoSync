@@ -67,7 +67,7 @@ _Avoid_: 修图历史、滤镜配置、图层文件
 _Avoid_: 滤镜包、样式模板
 
 **LiveTetherPreset（联机自动预设）**:
-在 USB 同步期间激活的一份参数预设；每张新照片从相机同步入库时自动绑定该预设并生成编辑预览，实现联机拍摄边拍边看成片观感。激活状态持久化于 `SharedPreferences` 键 `pref_live_tether_preset_id`，`PhotoEntity` 与绑定后的 `PhotoEditEntity` 在同一 Room 事务内提交。
+在 USB 同步期间激活的一份参数预设；每张新照片从相机同步入库时自动绑定该预设并生成编辑预览，实现联机拍摄边拍边看成片观感。激活状态持久化于 `SharedPreferences` 键 `pref_live_tether_preset_id`，`PhotoEntity` 与绑定后的 `PhotoEditEntity` 在同一 Room 事务内提交。预设携带主体/换天参数时，低端档（≤4 GB RAM）或模型未下载会在入库串行队列中静默降级为仅套传统调色，不阻塞 USB 同步。
 _Avoid_: 默认滤镜、相机机内风格
 
 **BaseLook（RAW 基准观感）**:
@@ -75,7 +75,7 @@ RAW 照片在所有编辑滑杆为 0 时的起始影调基底，支持在对齐�
 _Avoid_: 相机配置文件、原始模式
 
 **Bake（烘焙导出）**:
-以原始照片文件和当前 EditGraph 为输入，经全分辨率分块渲染与拍摄 EXIF 写回，在系统相册中生成全新成片文件的过程。
+以原始照片文件和当前 EditGraph 为输入，经全分辨率分块渲染与拍摄 EXIF 写回，在系统相册中生成全新成片文件的过程。去背模式（`subject.bgMode = TRANSPARENT`）输出保留 Alpha 的流式 PNG，其余路径输出 Baseline JPEG。
 _Avoid_: 覆盖保存、另存为
 
 **CopyMask（复制参数掩码）**:
@@ -182,3 +182,51 @@ _Avoid_: 液化纹理、位移贴图（指代单项而非合成结果）
 **PortraitModel（人像模型包）**:
 随 APK 内置的 `face_landmarker.task` 与 `selfie_segmenter.tflite`，加上首次进入人像面板时按需下载并经 SHA-256 校验的 `selfie_multiclass_256x256.tflite`。
 _Avoid_: 插件、模型文件（指代整套分发方案时）
+
+### AI 工具
+
+**AiModel（按需 AI 模型）**:
+经多镜像下载器或 SAF 本地导入、按字节数与 SHA-256 校验后落盘于 `<filesDir>/models/` 的端侧推理权重包，绝不随安装包内置，只在用户进入对应工具并触发操作时创建会话。
+_Avoid_: 内置插件、缓存文件、随包模型
+
+**MirrorSource（镜像源）**:
+一个可提供**字节与摘要可校验**模型文件的具体 URL；只有通过字节数 + SHA-256 双校验后才算"可用源"，列表非空不代表可下载。
+_Avoid_: 备用下载、任意链接、镜像列表
+
+**SourceGone（源已下线）**:
+镜像返回 404/410 等永久性缺失状态；与网络故障区分，用户动作是"换镜像或本地导入"，不是"重试"。
+_Avoid_: 网络错误、下载失败
+
+**InpaintVariant（消除模型变体）**:
+由 ONNX 输入签名决定的执行形态：`GENERATOR_FIXED_512`（float32 `input` `[1,4,512,512]`，旧 generator 导出）或 `PIPELINE_UINT8`（uint8 动态 `image` + `mask`，上游 pipeline 导出）。判定只看文件签名，不看目录条目或文件名。
+_Avoid_: 模型版本、模型格式、模型大小
+
+**PaintBudget（涂抹预算）**:
+由设备档位与精细/快速档推导的单次运行上限——单 tile 裁切边长（`STANDARD` 1024 / `LOW` 768）与单批 tile 数（`STANDARD` 96 / `LOW` 24）。超过预算即自动切批，**永不作为拒绝理由**；大面积涂抹只会让批数与耗时增加。
+_Avoid_: 涂抹上限、大小限制、消除范围过大
+
+**ProgressiveCommit（渐进提交）**:
+每完成一批 tile 即把该批 patch 追加进 `EditGraph.inpaint` 并提交一次独立撤销事务（**一批 = 一个撤销步**）。取消或后续批次失败时保留已完成批次，画布只保留覆盖未完成 tile 的笔迹，用户重跑时无需补涂已修复区域。
+_Avoid_: 增量保存、自动保存、全局一次性提交
+
+**SubjectMask（主体蒙版）**:
+单张照片的主体前景概率图及其关联参数：原背景 / 透明去背 / 纯色换底 / 背景虚化 / 前后景独立调色；端侧 v1 由 MODNet + 分块 GuidedFilter + FMGE 驱动。
+_Avoid_: 人物贴纸、皮肤遮罩（`SkinMask` 专指美肤区域）
+
+**InpaintPatch（消除补丁）**:
+记录于原始图像空间（pre-crop）的有序局部涂抹修复资产：归一化外接框 + 无损局部 RGB 补丁 + 羽化掩码，独立于后续几何与调色，绝不进入 `Preset` 或 `CopyMask`。模型变体由运行时签名探测决定，并按 **单 tile 粒度**产出一个 patch（单 patch ≤ 单 tile 裁切边长），不再按连通域合并成大补丁。
+_Avoid_: 破坏性涂改、液化网格
+
+**SkyLayer（换天空层）**:
+天空区域概率图、天空素材引用（程序化基准 / 用户 SAF 导入 / CC0 下载包，对应 `SkyAssetType` 的 `PROCEDURAL` / `CUSTOM` / `PACK`）以及前景色彩协调与地平线融合参数的组合。程序化基准由 `ProceduralSkyPreset` 的四个解析式预设（`clear_blue`、`sunset_glow`、`blue_hour`、`warm_dusk`）提供，占 0 KB；重光照按 Pre-pass 一次性统计的 OKLab 均值差在 Pass B 执行。
+_Avoid_: 天空滤镜
+
+**CloudEditLayer（云端编辑层）**:
+由 P4 BYOK 云端端点返回的非破坏性像素结果层，挂载于 Post-Pass A / Pre-Pass B 空间并绑定 `geometryDigest`，支持不透明度与局部掩码羽化，绝不进入 `Preset` 或 `CopyMask`。
+_Avoid_: 云端原图、派生副本
+
+### 设置
+
+**SettingsGroup（设置分组）**:
+统一设置页的一级分区，按"用户想找什么"划分——联机与相册 / 编辑器 / AI 工具 / 云端增强 / 存储与缓存 / 关于与诊断——而不是按代码模块划分。
+_Avoid_: 设置分类、标签页、偏好页面

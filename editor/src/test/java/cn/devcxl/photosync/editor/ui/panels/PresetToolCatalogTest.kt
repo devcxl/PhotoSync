@@ -95,14 +95,14 @@ class PresetToolCatalogTest {
 
     @Test
     fun shouldMapDefaultChecklistToTheDefaultMask_whenAllLookBoxesAreChecked() {
-        val checked = BooleanArray(9) { index -> index < 6 }
+        val checked = BooleanArray(11) { index -> index < 6 || index >= 9 }
 
         assertEquals(CopyMask(), CopyMask.fromCheckboxState(checked))
     }
 
     @Test
     fun shouldIncludeEveryAxis_whenEveryBoxIsChecked() {
-        val mask = CopyMask.fromCheckboxState(BooleanArray(9) { true })
+        val mask = CopyMask.fromCheckboxState(BooleanArray(11) { true })
 
         assertTrue(mask.includeBaseLook)
         assertTrue(mask.includeTone)
@@ -117,7 +117,7 @@ class PresetToolCatalogTest {
 
     @Test
     fun shouldIncludeNothing_whenEveryBoxIsUnchecked() {
-        val mask = CopyMask.fromCheckboxState(BooleanArray(9) { false })
+        val mask = CopyMask.fromCheckboxState(BooleanArray(11) { false })
 
         assertFalse(mask.includeBaseLook)
         assertFalse(mask.includeTone)
