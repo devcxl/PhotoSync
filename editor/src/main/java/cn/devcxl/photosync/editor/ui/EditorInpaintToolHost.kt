@@ -94,15 +94,20 @@ internal class EditorInpaintToolHost(
                     srcAspect = sourceAspectProvider(),
                     warpField = warpFieldProvider()
                 )
-            }
+            },
+            initialBrushDiameterPx = inpaint.initialBrushDiameterPx,
+            initialQualityMode = inpaint.initialQualityMode,
+            memoryTier = inpaint.memoryTier(),
+            measuredTileMsProvider = { inpaint.measuredTileMs() }
         )
         brush.attach(binding.inpaintBrushOverlayView, binding.inpaintPanelView)
         binding.inpaintBrushOverlayView.visibility = View.GONE
     }
 
     /**
-     * Probes the true source size once the erase tool is opened, so the >256 px advice is measured
-     * in full-resolution pixels. The decode runs off the main thread and never blocks painting.
+     * Probes the true source size once the erase tool is opened, so the brush diameter is measured
+     * in full-resolution pixels and the workload estimate uses the real tile grid. The decode runs
+     * off the main thread and never blocks painting.
      */
     fun onToolOpened() {
         if (sizeProbed) return

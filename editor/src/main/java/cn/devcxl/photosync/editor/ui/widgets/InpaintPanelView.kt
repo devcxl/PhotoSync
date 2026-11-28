@@ -11,15 +11,20 @@ import android.widget.TextView
 import androidx.core.content.ContextCompat
 
 import cn.devcxl.photosync.editor.R
+import cn.devcxl.photosync.editor.domain.InpaintTileEta
+import cn.devcxl.photosync.editor.settings.InpaintQualityMode
 import cn.devcxl.photosync.editor.ui.InpaintBrushMode
+import cn.devcxl.photosync.editor.ui.InpaintBrushSize
 import cn.devcxl.photosync.editor.ui.InpaintPanelHost
 
 /**
- * Tier-1 panel of the AI > 消除 tool: paint/erase mode, brush size, clear and confirm.
+ * Tier-1 panel of the AI > 消除 tool: paint/erase mode, brush diameter, quality mode, workload,
+ * quick sizes, clear and confirm.
  *
  * The panel is a pure view. It reports user intent through [listener] and reflects controller state
- * through [InpaintPanelHost]; the amber >256 px advice is non-blocking and sits above the brush row
- * so it never covers the photo.
+ * through [InpaintPanelHost]. The brush is expressed in **source pixels** (`8..1200`, default `64`)
+ * with three quick presets (小 24 / 中 64 / 大 160), and the workload line is a live estimate that
+ * never blocks the confirmation button.
  */
 class InpaintPanelView @JvmOverloads constructor(
     context: Context,
@@ -34,8 +39,11 @@ class InpaintPanelView @JvmOverloads constructor(
         /** The user switched between the brush and the eraser. */
         fun onInpaintModeChanged(mode: InpaintBrushMode)
 
-        /** The user moved the brush-size dial. */
-        fun onInpaintBrushSizeChanged(radiusNorm: Float)
+        /** The user moved the brush dial or tapped a quick preset, in source pixels. */
+        fun onInpaintBrushDiameterChanged(diameterPx: Int)
+
+        /** The user switched between the fine and fast quality mode. */
+        fun onInpaintQualityChanged(mode: InpaintQualityMode)
 
         /** The user asked to clear every committed stroke. */
         fun onInpaintClearRequested()
@@ -51,29 +59,51 @@ class InpaintPanelView @JvmOverloads constructor(
     var brushMode: InpaintBrushMode = InpaintBrushMode.PAINT
         private set
 
-    /** Brush radius as a fraction of the source width. */
-    var brushRadiusNorm: Float = DEFAULT_RADIUS
+    /** Brush diameter in source pixels. */
+    var brushDiameterPx: Int = InpaintBrushSize.MEDIUM_PRESET_PX
+        private set
+
+    /** Armed fine/fast quality mode. */
+    var qualityMode: InpaintQualityMode = InpaintQualityMode.FINE
+        private set
+
+    /** Last workload shown above the brush row. */
+    var workload: InpaintTileEta? = null
         private set
 
     private val paintChip: TextView by lazy { findViewById(R.id.inpaintModePaintChip) }
     private val eraseChip: TextView by lazy { findViewById(R.id.inpaintModeEraseChip) }
+    private val fineChip: TextView by lazy { findViewById(R.id.inpaintQualityFineChip) }
+    private val fastChip: TextView by lazy { findViewById(R.id.inpaintQualityFastChip) }
+    private val workloadHint: TextView by lazy { findViewById(R.id.inpaintWorkloadHint) }
+    private val workloadNote: TextView by lazy { findViewById(R.id.inpaintWorkloadNote) }
     private val clearButton: TextView by lazy { findViewById(R.id.inpaintClearButton) }
     private val confirmButton: TextView by lazy { findViewById(R.id.inpaintConfirmButton) }
-    private val warningView: TextView by lazy { findViewById(R.id.inpaintOversizeWarning) }
     private val emptyHint: TextView by lazy { findViewById(R.id.inpaintEmptyHint) }
     private val brushDial: DialSeekBar by lazy { findViewById(R.id.inpaintBrushDial) }
     private val brushValue: TextView by lazy { findViewById(R.id.inpaintBrushValue) }
+    private val smallChip: TextView by lazy { findViewById(R.id.inpaintBrushSmallChip) }
+    private val mediumChip: TextView by lazy { findViewById(R.id.inpaintBrushMediumChip) }
+    private val largeChip: TextView by lazy { findViewById(R.id.inpaintBrushLargeChip) }
 
     init {
         orientation = VERTICAL
         LayoutInflater.from(context).inflate(R.layout.editor_inpaint_panel, this, true)
         paintChip.setOnClickListener { setBrushMode(InpaintBrushMode.PAINT) }
         eraseChip.setOnClickListener { setBrushMode(InpaintBrushMode.ERASE) }
+        fineChip.setOnClickListener { selectQuality(InpaintQualityMode.FINE) }
+        fastChip.setOnClickListener { selectQuality(InpaintQualityMode.FAST) }
+        smallChip.setOnClickListener { selectBrushDiameter(InpaintBrushSize.SMALL_PRESET_PX) }
+        mediumChip.setOnClickListener { selectBrushDiameter(InpaintBrushSize.MEDIUM_PRESET_PX) }
+        largeChip.setOnClickListener { selectBrushDiameter(InpaintBrushSize.LARGE_PRESET_PX) }
         clearButton.setOnClickListener { listener?.onInpaintClearRequested() }
         confirmButton.setOnClickListener { listener?.onInpaintConfirmRequested() }
         setupBrushDial()
         refreshModeChips()
+        refreshQualityChips()
         refreshBrushValue()
+        refreshPresetChips()
+        setWorkload(null)
     }
 
     override fun setBrushMode(mode: InpaintBrushMode) {
@@ -83,24 +113,33 @@ class InpaintPanelView @JvmOverloads constructor(
         listener?.onInpaintModeChanged(mode)
     }
 
-    override fun setBrushRadiusNorm(radiusNorm: Float) {
-        brushRadiusNorm = radiusNorm.coerceIn(MIN_RADIUS, MAX_RADIUS)
-        brushDial.setValue(brushRadiusNorm)
+    override fun setBrushDiameterPx(diameterPx: Int) {
+        brushDiameterPx = diameterPx.coerceIn(InpaintBrushSize.MIN_DIAMETER_PX, InpaintBrushSize.MAX_DIAMETER_PX)
+        brushDial.setValue(brushDiameterPx.toFloat())
         refreshBrushValue()
+        refreshPresetChips()
     }
 
-    override fun showOversizeWarning(widthPx: Int, heightPx: Int, suggestedSplits: Int) {
-        warningView.text = context.getString(
-            R.string.editor_inpaint_oversize_warning,
-            widthPx,
-            heightPx,
-            suggestedSplits.coerceAtLeast(2)
-        )
-        warningView.visibility = View.VISIBLE
+    override fun setQualityMode(mode: InpaintQualityMode) {
+        qualityMode = mode
+        refreshQualityChips()
     }
 
-    override fun hideOversizeWarning() {
-        warningView.visibility = View.GONE
+    override fun setWorkload(eta: InpaintTileEta?) {
+        workload = eta
+        if (eta == null || eta.tileCount <= 0) {
+            workloadHint.visibility = View.GONE
+            workloadNote.visibility = View.GONE
+            return
+        }
+        val seconds = eta.estimatedSeconds
+        workloadHint.text = if (seconds != null) {
+            context.getString(R.string.editor_inpaint_workload_fmt, eta.tileCount, seconds)
+        } else {
+            context.getString(R.string.editor_inpaint_workload_tiles_fmt, eta.tileCount)
+        }
+        workloadHint.visibility = View.VISIBLE
+        workloadNote.visibility = if (eta.isLongRunning) View.VISIBLE else View.GONE
     }
 
     override fun setBusy(busy: Boolean) {
@@ -116,26 +155,51 @@ class InpaintPanelView @JvmOverloads constructor(
     }
 
     private fun setupBrushDial() {
-        brushDial.minValue = MIN_RADIUS
-        brushDial.maxValue = MAX_RADIUS
-        brushDial.stepSize = RADIUS_STEP
+        brushDial.minValue = InpaintBrushSize.MIN_DIAMETER_PX.toFloat()
+        brushDial.maxValue = InpaintBrushSize.MAX_DIAMETER_PX.toFloat()
+        brushDial.stepSize = DIAMETER_STEP_PX
         brushDial.zeroSnapThreshold = 0.0f
-        brushDial.setValue(brushRadiusNorm)
+        brushDial.setValue(brushDiameterPx.toFloat())
         brushDial.listener = object : DialSeekBar.OnDialChangeListener {
             override fun onValueChanged(value: Float, fromUser: Boolean) {
                 if (!fromUser) return
-                brushRadiusNorm = value.coerceIn(MIN_RADIUS, MAX_RADIUS)
-                refreshBrushValue()
-                listener?.onInpaintBrushSizeChanged(brushRadiusNorm)
+                selectBrushDiameter(value.roundToInt())
             }
 
             override fun onStopTrackingTouch() = Unit
         }
     }
 
+    private fun selectBrushDiameter(diameterPx: Int) {
+        val clamped = diameterPx.coerceIn(InpaintBrushSize.MIN_DIAMETER_PX, InpaintBrushSize.MAX_DIAMETER_PX)
+        brushDiameterPx = clamped
+        brushDial.setValue(clamped.toFloat())
+        refreshBrushValue()
+        refreshPresetChips()
+        listener?.onInpaintBrushDiameterChanged(clamped)
+    }
+
+    private fun selectQuality(mode: InpaintQualityMode) {
+        if (qualityMode == mode) return
+        qualityMode = mode
+        refreshQualityChips()
+        listener?.onInpaintQualityChanged(mode)
+    }
+
     private fun refreshModeChips() {
         styleChip(paintChip, selected = brushMode == InpaintBrushMode.PAINT)
         styleChip(eraseChip, selected = brushMode == InpaintBrushMode.ERASE)
+    }
+
+    private fun refreshQualityChips() {
+        styleChip(fineChip, selected = qualityMode == InpaintQualityMode.FINE)
+        styleChip(fastChip, selected = qualityMode == InpaintQualityMode.FAST)
+    }
+
+    private fun refreshPresetChips() {
+        styleChip(smallChip, selected = brushDiameterPx == InpaintBrushSize.SMALL_PRESET_PX)
+        styleChip(mediumChip, selected = brushDiameterPx == InpaintBrushSize.MEDIUM_PRESET_PX)
+        styleChip(largeChip, selected = brushDiameterPx == InpaintBrushSize.LARGE_PRESET_PX)
     }
 
     private fun styleChip(chip: TextView, selected: Boolean) {
@@ -149,24 +213,21 @@ class InpaintPanelView @JvmOverloads constructor(
     }
 
     private fun refreshBrushValue() {
-        val diameterPercent = (brushRadiusNorm * 200.0f).roundToInt().coerceAtLeast(1)
-        brushValue.text = context.getString(
-            R.string.editor_inpaint_brush_value_fmt,
-            diameterPercent
-        )
+        brushValue.text = context.getString(R.string.editor_inpaint_brush_value_fmt, brushDiameterPx)
     }
 
     companion object {
-        /** Default radius: a 4% brush diameter, the MI-GAN sweet spot near 256 px at 24 MP. */
-        const val DEFAULT_RADIUS = 0.02f
 
-        /** Smallest radius exposed by the panel. */
-        const val MIN_RADIUS = 0.004f
+        /** Smallest brush the panel exposes, in source pixels. */
+        const val MIN_DIAMETER_PX: Int = InpaintBrushSize.MIN_DIAMETER_PX
 
-        /** Largest radius exposed by the panel. */
-        const val MAX_RADIUS = 0.08f
+        /** Largest brush the panel exposes, in source pixels. */
+        const val MAX_DIAMETER_PX: Int = InpaintBrushSize.MAX_DIAMETER_PX
 
-        private const val RADIUS_STEP = 0.002f
+        /** Default brush, in source pixels. */
+        const val DEFAULT_DIAMETER_PX: Int = InpaintBrushSize.MEDIUM_PRESET_PX
+
+        private const val DIAMETER_STEP_PX = 1.0f
         private const val DISABLED_ALPHA = 0.45f
     }
 }

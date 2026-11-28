@@ -6,6 +6,7 @@ import java.io.InputStream
 import android.content.Context
 import android.widget.Toast
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -21,17 +22,26 @@ import cn.devcxl.photosync.editor.domain.AiAssetStore
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.EditParameterKey
 import cn.devcxl.photosync.editor.domain.EditorUndoController
+import cn.devcxl.photosync.editor.domain.InpaintBatch
+import cn.devcxl.photosync.editor.domain.InpaintBatchPlanner
 import cn.devcxl.photosync.editor.domain.InpaintMaskBuffer
 import cn.devcxl.photosync.editor.domain.InpaintPatchRef
+import cn.devcxl.photosync.editor.domain.InpaintPixelRect
 import cn.devcxl.photosync.editor.domain.InpaintStroke
 import cn.devcxl.photosync.editor.domain.InpaintStrokeLayer
+import cn.devcxl.photosync.editor.domain.InpaintTilePlan
 import cn.devcxl.photosync.editor.domain.InpaintWorkRegion
 import cn.devcxl.photosync.editor.domain.WarpDisplacementField
 import cn.devcxl.photosync.editor.render.EditorSource
 import cn.devcxl.photosync.editor.render.InpaintSourceReader
+import cn.devcxl.photosync.editor.settings.EditorSettings
+import cn.devcxl.photosync.editor.settings.InpaintQualityMode
 import cn.devcxl.photosync.editor.ui.gesture.CanvasTransform
 import cn.devcxl.photosync.editor.ui.panels.AiInferenceBarController
+import cn.devcxl.photosync.editor.ui.panels.InpaintBatchCommit
 import cn.devcxl.photosync.editor.ui.panels.InpaintBrushController
+import cn.devcxl.photosync.editor.ui.panels.InpaintProgressiveOutcome
+import cn.devcxl.photosync.editor.ui.panels.InpaintProgressiveRunner
 import cn.devcxl.photosync.editor.vision.AiModelCatalog
 import cn.devcxl.photosync.editor.vision.AiModelDownloadCancellation
 import cn.devcxl.photosync.editor.vision.AiModelDownloadManager
@@ -39,10 +49,13 @@ import cn.devcxl.photosync.editor.vision.AiModelFailureUiCopy
 import cn.devcxl.photosync.editor.vision.AiModelInstallException
 import cn.devcxl.photosync.editor.vision.AiModelInstallUi
 import cn.devcxl.photosync.editor.vision.DeviceMemoryTier
+import cn.devcxl.photosync.editor.vision.InpaintVariant
 import cn.devcxl.photosync.editor.vision.InpaintVariantDetector
 import cn.devcxl.photosync.editor.vision.MiGanFailureReason
 import cn.devcxl.photosync.editor.vision.MiGanInpaintException
 import cn.devcxl.photosync.editor.vision.MiGanInpainter
+import cn.devcxl.photosync.editor.vision.MiGanModelSelection
+import cn.devcxl.photosync.editor.vision.MiGanTileOutcome
 import cn.devcxl.photosync.editor.vision.OrtSessionManager
 
 /**
@@ -57,11 +70,14 @@ import cn.devcxl.photosync.editor.vision.OrtSessionManager
  * 3. Without the MI-GAN artifact the run fails with [MiGanFailureReason.MODEL_MISSING]; this
  *    controller then shows the shared download/SAF-import sheet and re-runs the same strokes once the
  *    model verified, so nothing the user painted is lost.
- * 4. A successful run appends its ordered patches as **one** undo transaction, which the preview,
- *    the cache and the full-resolution bake all pick up through `graph.inpaint`.
+ * 4. The plan is cut into the device's `batchTiles` budget. Each batch appends its ordered patches
+ *    as **one** undo transaction ([commitBatch]); the measured per-tile time is written back to
+ *    [EditorSettings] so the next workload estimate uses the local baseline. Cancelling or failing
+ *    a later batch keeps every committed batch, and the brush is told which cores remain so only
+ *    the missing coverage has to be repainted (spec §7.3/§7.4).
  *
- * The inference bar is non-blocking and cancellable; a cancelled run keeps the strokes for a retry.
- * Every recoverable failure is a localized toast, never a crash.
+ * The inference bar is non-blocking and cancellable; every recoverable failure is a localized
+ * toast, never a crash.
  */
 internal class EditorInpaintController(
     private val context: Context,
@@ -83,6 +99,7 @@ internal class EditorInpaintController(
 ) : InpaintBrushController.Host {
 
     private val assets = AiAssetStore(filesDir)
+    private val settings = EditorSettings(context)
     private val downloads = AiModelDownloadManager(
         modelsRootDir = File(filesDir, AiModelCatalog.MODELS_DIR_NAME),
         variantCompatibility = InpaintVariantDetector().compatibility()
@@ -96,30 +113,47 @@ internal class EditorInpaintController(
      */
     private val sharedSessions = EditorHostRegistry.ortSessionManager
     private val sessions = sharedSessions ?: OrtSessionManager(
-        tier = DeviceMemoryTier.detect(context)
+        tier = settings.resolveMemoryTier(context)
     )
     private val ownsSessions = sharedSessions == null
-    private val inpainter = MiGanInpainter(
-        sessionManager = sessions,
-        downloadManager = downloads,
-        assetStore = assets,
-        memoryTier = DeviceMemoryTier.detect(context)
-    )
 
     private var installJob: Job? = null
     private var installCancellation: AiModelDownloadCancellation? = null
 
+    /** The initial values `EditorInpaintToolHost` pushes into the brush panel. */
+    val initialBrushDiameterPx: Int
+        get() = settings.inpaintBrushPx
+
+    /** Default quality mode read when the erase tool opens. */
+    val initialQualityMode: InpaintQualityMode
+        get() = settings.inpaintDefaultMode
+
+    /** Effective memory tier after the user override; every run and the panel estimate share it. */
+    fun memoryTier(): DeviceMemoryTier = settings.resolveMemoryTier(context)
+
+    /**
+     * Previous single-tile measurement of whichever MI-GAN variant may run, or `null`.
+     *
+     * The actual variant is only known after `resolveModel()`; the estimate therefore prefers the
+     * pipeline pin and falls back to the legacy generator, matching the resolver's candidate order.
+     */
+    fun measuredTileMs(): Long? {
+        val tier = memoryTier()
+        return settings.getMeasuredInpaintTileMs(tier, InpaintVariant.PIPELINE_UINT8.name)
+            ?: settings.getMeasuredInpaintTileMs(tier, InpaintVariant.GENERATOR_FIXED_512.name)
+    }
+
     /** The executor the brush controller drives; adapts [MiGanInpainter]. */
     fun executor(): InpaintBrushController.InpaintExecutor =
-        InpaintBrushController.InpaintExecutor { strokes, onProgress ->
-            runInpaint(strokes, onProgress)
+        InpaintBrushController.InpaintExecutor { strokes, mode, onProgress, onRemaining ->
+            runInpaint(strokes, mode, onProgress, onRemaining)
         }
 
     /**
      * Returns the upright full-resolution source size, or `null` when the file cannot be read.
      *
-     * The editor probes this once the erase tool is opened so the amber 256 px advice is evaluated
-     * on real source pixels instead of the 2048 px preview.
+     * The editor probes this once the erase tool is opened so the brush diameter and the workload
+     * estimate are evaluated on real source pixels instead of the 2048 px preview.
      */
     suspend fun probeSourceSize(): Pair<Int, Int>? =
         sourceReader.probeDimensions(sourcePath, isRaw)
@@ -163,8 +197,6 @@ internal class EditorInpaintController(
     override fun onInpaintCanvasTransformChanged(transform: CanvasTransform) =
         onCanvasTransform(transform)
 
-    override fun onInpaintBboxEstimated(widthPx: Int, heightPx: Int, isOversized: Boolean) = Unit
-
     override fun onInpaintInferenceStarted() {
         inferenceBar.show(context.getString(R.string.editor_inpaint_inference_running))
     }
@@ -178,19 +210,20 @@ internal class EditorInpaintController(
         inferenceBar.dismiss()
     }
 
-    override fun onInpaintPatchesReady(patches: List<InpaintPatchRef>) {
-        if (patches.isEmpty()) return
-        commitPatches(patches)
-    }
-
     override fun onInpaintFailed(cause: Throwable) {
-        when ((cause as? MiGanInpaintException)?.reason) {
-            MiGanFailureReason.MODEL_MISSING -> promptModelInstall()
-            null -> {
+        when (cause) {
+            is InpaintUserMessageException -> showToast(
+                cause.messageRes,
+                *cause.messageArgs.toTypedArray()
+            )
+            is MiGanInpaintException -> when (cause.reason) {
+                MiGanFailureReason.MODEL_MISSING -> promptModelInstall()
+                else -> showToast(R.string.editor_inpaint_failed)
+            }
+            else -> {
                 Timber.e(cause, "Inpainting failed")
                 showToast(R.string.editor_inpaint_failed)
             }
-            else -> showToast(R.string.editor_inpaint_failed)
         }
     }
 
@@ -202,8 +235,10 @@ internal class EditorInpaintController(
 
     private suspend fun runInpaint(
         strokes: List<InpaintStroke>,
-        onProgress: (Int) -> Unit
-    ): Result<List<InpaintPatchRef>> {
+        mode: InpaintQualityMode,
+        onProgress: (Int) -> Unit,
+        onRemainingCoverageChanged: (List<InpaintPixelRect>) -> Unit
+    ): Result<Unit> {
         if (sourceProvider() == null) return failure("The preview source is not ready")
         val dimensions = probeSourceSize() ?: return failure("The source dimensions are unavailable")
         val graph = undoController.currentGraph
@@ -234,18 +269,136 @@ internal class EditorInpaintController(
             return failure("The painted area is too large for this device")
         }
         currentCoroutineContext().ensureActive()
-        val result = inpainter.inpaint(
+        val tier = memoryTier()
+        val inpainter = inpainterFor(tier, mode)
+        val plan = withContext(Dispatchers.Default) { inpainter.plan(mask) }
+        if (plan.isEmpty) return failure(MiGanFailureReason.NO_STROKES, "nothing painted")
+        val selection = inpainter.resolveModel().getOrElse { return Result.failure(it) }
+        val batches = InpaintBatchPlanner.plan(plan)
+        val variantKey = selection.variant.name
+        val runner = InpaintProgressiveRunner(
+            batches = batches,
+            executeBatch = { tiles, onTileProgress ->
+                executeTiles(
+                    inpainter = inpainter,
+                    selection = selection,
+                    pixels = pixels,
+                    region = region,
+                    mask = mask,
+                    tiles = tiles,
+                    onTileProgress = onTileProgress
+                )
+            },
+            onBatchCommitted = { commit ->
+                commitBatch(commit, region)
+            },
+            onTileMeasured = { averageMs ->
+                settings.setMeasuredInpaintTileMs(tier, variantKey, averageMs)
+            },
+            onMemoryPressure = sessions::onMemoryPressure,
+            onBatchStarted = { batch, total ->
+                inferenceBar.updateLabel(
+                    context.getString(R.string.editor_inpaint_batch_progress, batch.index + 1, total)
+                )
+            },
+            onProgress = { percent -> onProgress(percent.coerceIn(0, 100)) }
+        )
+        return try {
+            when (val outcome = runner.run()) {
+                is InpaintProgressiveOutcome.Completed -> Result.success(Unit)
+                is InpaintProgressiveOutcome.Failed -> {
+                    val remaining = batches.batches.drop(outcome.failedBatch - 1)
+                    onRemainingCoverageChanged(sourceCores(remaining, region))
+                    Result.failure(partialFailure(outcome))
+                }
+            }
+        } catch (cancelled: CancellationException) {
+            val committed = runner.committedBatches.lastOrNull()?.batchIndex ?: -1
+            onRemainingCoverageChanged(sourceCores(batches.batches.drop(committed + 1), region))
+            throw cancelled
+        }
+    }
+
+    private suspend fun executeTiles(
+        inpainter: MiGanInpainter,
+        selection: MiGanModelSelection,
+        pixels: IntArray,
+        region: InpaintWorkRegion,
+        mask: InpaintMaskBuffer,
+        tiles: List<InpaintTilePlan>,
+        onTileProgress: (Int) -> Unit
+    ): Result<List<MiGanTileOutcome>> {
+        var completed = 0
+        return inpainter.inpaintTiles(
             photoId = photoId,
             sourceArgb = pixels,
             width = region.width,
             height = region.height,
             mask = mask,
-            onProgress = onProgress
-        )
-        return result.map { outcome ->
-            outcome.patches.map { patch -> patch.copy(bbox = region.toSourceBBox(patch.bbox)) }
+            tiles = tiles,
+            selection = selection,
+            onTile = {
+                completed++
+                onTileProgress(completed)
+            }
+        ).map { outcome -> outcome.tiles }
+    }
+
+    private fun commitBatch(commit: InpaintBatchCommit, region: InpaintWorkRegion) {
+        if (commit.patches.isEmpty()) return
+        val patches = commit.patches.map { patch ->
+            patch.copy(bbox = region.toSourceBBox(patch.bbox))
+        }
+        commitPatches(patches)
+    }
+
+    private fun sourceCores(
+        batches: List<InpaintBatch>,
+        region: InpaintWorkRegion
+    ): List<InpaintPixelRect> = batches.flatMap { batch ->
+        batch.tiles.map { tile ->
+            InpaintPixelRect(
+                left = region.originX + tile.coreRect.left,
+                top = region.originY + tile.coreRect.top,
+                right = region.originX + tile.coreRect.right,
+                bottom = region.originY + tile.coreRect.bottom
+            )
         }
     }
+
+    private fun partialFailure(outcome: InpaintProgressiveOutcome.Failed): Throwable {
+        val cause = outcome.cause
+        if (cause is MiGanInpaintException && cause.reason == MiGanFailureReason.MODEL_MISSING) {
+            return cause
+        }
+        val reason = context.getString(reasonCopy(cause, outcome.outOfMemory))
+        val messageRes = if (outcome.outOfMemory) {
+            R.string.editor_inpaint_batch_failed
+        } else {
+            R.string.editor_inpaint_batch_failed_retry
+        }
+        val args = listOf<Any>(outcome.failedBatch, outcome.totalBatches, reason)
+        return InpaintUserMessageException(messageRes, args, cause)
+    }
+
+    private fun reasonCopy(cause: Throwable, outOfMemory: Boolean): Int {
+        if (outOfMemory) return R.string.editor_inpaint_reason_out_of_memory
+        return when ((cause as? MiGanInpaintException)?.reason) {
+            MiGanFailureReason.ENCODING_FAILED -> R.string.editor_inpaint_reason_encode
+            MiGanFailureReason.INCOMPATIBLE -> R.string.editor_inpaint_reason_incompatible
+            MiGanFailureReason.RUNTIME_ERROR -> R.string.editor_inpaint_reason_runtime
+            else -> R.string.editor_inpaint_reason_unknown
+        }
+    }
+
+    private fun inpainterFor(tier: DeviceMemoryTier, mode: InpaintQualityMode): MiGanInpainter =
+        MiGanInpainter(
+            sessionManager = sessions,
+            downloadManager = downloads,
+            assetStore = assets,
+            memoryTier = tier,
+            qualityMode = mode
+        )
 
     private fun rasterize(strokes: List<InpaintStroke>, region: InpaintWorkRegion): InpaintMaskBuffer {
         val layer = InpaintStrokeLayer()
@@ -255,7 +408,7 @@ internal class EditorInpaintController(
 
     private fun commitPatches(patches: List<InpaintPatchRef>) {
         val graph = undoController.currentGraph
-        // One undo step per confirmation, even if two runs landed inside the coalescing window.
+        // One undo step per batch, even if two batches land inside the coalescing window.
         undoController.onParameterRelease()
         val applied = undoController.onParameterDrag(
             graph.copy(inpaint = graph.inpaint + patches),
@@ -317,16 +470,19 @@ internal class EditorInpaintController(
         installJob = scope.launch { block() }
     }
 
-    private fun failure(message: String): Result<List<InpaintPatchRef>> =
+    private fun failure(message: String): Result<Unit> =
         Result.failure(MiGanInpaintException(MiGanFailureReason.INVALID_INPUT, message))
+
+    private fun failure(reason: MiGanFailureReason, message: String): Result<Unit> =
+        Result.failure(MiGanInpaintException(reason, message))
 
     private fun showInstallFailure(error: Throwable) {
         val reason = (error as? AiModelInstallException)?.reason
         showToast(AiModelFailureUiCopy.of(reason).messageRes)
     }
 
-    private fun showToast(messageRes: Int) {
-        Toast.makeText(context, messageRes, Toast.LENGTH_SHORT).show()
+    private fun showToast(messageRes: Int, vararg args: Any) {
+        Toast.makeText(context, context.getString(messageRes, *args), Toast.LENGTH_SHORT).show()
     }
 
     private companion object {

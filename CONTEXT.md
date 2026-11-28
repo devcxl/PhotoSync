@@ -201,6 +201,14 @@ _Avoid_: 网络错误、下载失败
 由 ONNX 输入签名决定的执行形态：`GENERATOR_FIXED_512`（float32 `input` `[1,4,512,512]`，旧 generator 导出）或 `PIPELINE_UINT8`（uint8 动态 `image` + `mask`，上游 pipeline 导出）。判定只看文件签名，不看目录条目或文件名。
 _Avoid_: 模型版本、模型格式、模型大小
 
+**PaintBudget（涂抹预算）**:
+由设备档位与精细/快速档推导的单次运行上限——单 tile 裁切边长（`STANDARD` 1024 / `LOW` 768）与单批 tile 数（`STANDARD` 96 / `LOW` 24）。超过预算即自动切批，**永不作为拒绝理由**；大面积涂抹只会让批数与耗时增加。
+_Avoid_: 涂抹上限、大小限制、消除范围过大
+
+**ProgressiveCommit（渐进提交）**:
+每完成一批 tile 即把该批 patch 追加进 `EditGraph.inpaint` 并提交一次独立撤销事务（**一批 = 一个撤销步**）。取消或后续批次失败时保留已完成批次，画布只保留覆盖未完成 tile 的笔迹，用户重跑时无需补涂已修复区域。
+_Avoid_: 增量保存、自动保存、全局一次性提交
+
 **SubjectMask（主体蒙版）**:
 单张照片的主体前景概率图及其关联参数：原背景 / 透明去背 / 纯色换底 / 背景虚化 / 前后景独立调色；端侧 v1 由 MODNet + 分块 GuidedFilter + FMGE 驱动。
 _Avoid_: 人物贴纸、皮肤遮罩（`SkinMask` 专指美肤区域）
@@ -216,3 +224,9 @@ _Avoid_: 天空滤镜
 **CloudEditLayer（云端编辑层）**:
 由 P4 BYOK 云端端点返回的非破坏性像素结果层，挂载于 Post-Pass A / Pre-Pass B 空间并绑定 `geometryDigest`，支持不透明度与局部掩码羽化，绝不进入 `Preset` 或 `CopyMask`。
 _Avoid_: 云端原图、派生副本
+
+### 设置
+
+**SettingsGroup（设置分组）**:
+统一设置页的一级分区，按"用户想找什么"划分——联机与相册 / 编辑器 / AI 工具 / 云端增强 / 存储与缓存 / 关于与诊断——而不是按代码模块划分。
+_Avoid_: 设置分类、标签页、偏好页面

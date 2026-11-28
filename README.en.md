@@ -47,10 +47,14 @@ PhotoSync is an Android camera companion app for photographers and imaging enthu
 **AI tools (on-device, downloaded on demand)**
 - **Subject cut-out** — MODNet mask + banded GuidedFilter + FMGE decontamination; transparent PNG (alpha preserved), solid backdrop and background bokeh
 - **Independent foreground/background grading** — separate exposure, temperature and saturation offsets
-- **Smart erase** — MI-GAN-512 content-aware repair (brush + eraser, feathered blend after confirmation)
+- **Smart erase** — MI-GAN repair for any painted area: source-pixel brush (8–1200 px with small/medium/large presets), fine/fast modes, and progressive batch commits you can stop while keeping finished work
 - **Sky replacement** — model-free classic sky segmentation, four 0 KB procedural skies, optional CC0 cloud pack (not bundled) and OKLab foreground relighting
 - **On-demand model manager** — MODNet and MI-GAN never ship in the APK; the "AI models" page downloads from ordered mirrors or imports a local `.onnx`, verified by exact byte size and SHA-256
 - **Optional cloud enhancement (off by default)** — pure BYOK OpenAI-compatible / Gemini / self-hosted ComfyUI; HTTPS only, redirects disabled, every EXIF tag and embedded thumbnail stripped before upload
+
+**Settings and diagnostics**
+- **Unified settings page** — one gear entry with six groups: tethering and gallery, editor, AI tools, cloud enhancement, storage and cache, about and diagnostics
+- **Storage and diagnostics** — per-category usage and cleanup for models, AI edit assets, preview cache, LUTs and skies, plus a read-only summary of the effective settings
 
 **Tethered darkroom**
 - **User presets** — save/apply a look including portrait work, plus five built-in presets

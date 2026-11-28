@@ -23,7 +23,7 @@ import cn.devcxl.photosync.editor.ui.gesture.CanvasTransform
  * immediately **discards the in-flight stroke** and takes over zoom/pan, so "pinch, don't smear"
  * holds and an aborted stroke can never reach `EditGraph`. The view reports the visible stroke
  * capsules after every sample; the controller projects them onto the pre-crop source, where the
- * amber >256 px advice is evaluated in true source pixels.
+ * workload estimate and the progressive-commit stroke retention are evaluated in true source pixels.
  *
  * Only the inpainting tool installs this view; the committed strokes live in [strokeLayer] so the
  * controller and the inference run share one source of truth.
@@ -174,6 +174,18 @@ class InpaintBrushOverlayView @JvmOverloads constructor(
         notifyStrokes()
     }
 
+    /** Replaces the committed strokes after a partial commit kept only the uncommitted coverage. */
+    override fun replaceStrokes(strokes: List<InpaintStroke>) {
+        strokeLayer.clear()
+        strokes.forEach(strokeLayer::add)
+        committedStrokes = strokeLayer.snapshot()
+        activePoints = null
+        activeStrokeView = null
+        brushCentre = null
+        invalidate()
+        notifyStrokes()
+    }
+
     private fun onPointerDown(event: MotionEvent): Boolean {
         if (projection.imageRect.isEmpty || !projection.imageRect.contains(event.x, event.y)) {
             return false
@@ -284,11 +296,16 @@ class InpaintBrushOverlayView @JvmOverloads constructor(
         /** Brush radius as a fraction of the source width: a 4% diameter default. */
         const val DEFAULT_BRUSH_RADIUS = 0.02f
 
-        /** Smallest brush: a 0.8% diameter, enough for a single small object. */
-        const val MIN_BRUSH_RADIUS = 0.004f
+        /**
+         * Smallest radius the canvas accepts.
+         *
+         * The panel owns the user-facing `8..1200 px` range and converts it against the true source
+         * width; this floor only guards an absurdly thin stroke on a huge source.
+         */
+        const val MIN_BRUSH_RADIUS = 1e-5f
 
-        /** Largest brush: a 16% diameter; larger strokes would inevitably be tiled. */
-        const val MAX_BRUSH_RADIUS = 0.08f
+        /** Largest radius: half the image width, i.e. a stroke as wide as the source itself. */
+        const val MAX_BRUSH_RADIUS = 0.5f
 
         private const val TWO_FINGERS = 2
         private const val MIN_SAMPLE_DISTANCE_DP = 1.5f

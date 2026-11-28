@@ -3,13 +3,29 @@
     <!-- P2 inpainting brush, panel and progress copy; kept in its own file to avoid merge churn. -->
     <string name="editor_inpaint_mode_paint">涂抹</string>
     <string name="editor_inpaint_mode_erase">橡皮</string>
+    <string name="editor_inpaint_quality_fine">精细</string>
+    <string name="editor_inpaint_quality_fast">快速</string>
     <string name="editor_inpaint_brush_size">笔刷大小</string>
-    <string name="editor_inpaint_brush_value_fmt">%1$d%%</string>
+    <string name="editor_inpaint_brush_value_fmt">%1$d px</string>
+    <string name="editor_inpaint_brush_preset_label">快捷尺寸</string>
+    <string name="editor_inpaint_brush_small">小 24</string>
+    <string name="editor_inpaint_brush_medium">中 64</string>
+    <string name="editor_inpaint_brush_large">大 160</string>
+    <string name="editor_inpaint_workload_fmt">预计 %1$d 块 · 约 %2$d 秒</string>
+    <string name="editor_inpaint_workload_tiles_fmt">预计 %1$d 块</string>
+    <string name="editor_inpaint_workload_note">将分批处理，可随时停止</string>
     <string name="editor_inpaint_clear">清空笔迹</string>
     <string name="editor_inpaint_confirm">确认消除</string>
     <string name="editor_inpaint_empty_hint">在画面上涂抹要消除的杂物</string>
-    <string name="editor_inpaint_oversize_warning">涂抹范围较大（%1$d × %2$d px），建议分 %3$d 次小面积涂抹</string>
     <string name="editor_inpaint_inference_running">正在智能消除…</string>
+    <string name="editor_inpaint_batch_progress">第 %1$d/%2$d 批</string>
+    <string name="editor_inpaint_batch_failed">第 %1$d/%2$d 批失败：%3$s，已完成部分已保留</string>
+    <string name="editor_inpaint_batch_failed_retry">第 %1$d/%2$d 批失败：%3$s，已完成部分已保留，可重试剩余部分</string>
+    <string name="editor_inpaint_reason_out_of_memory">内存不足</string>
+    <string name="editor_inpaint_reason_runtime">推理运行时出错</string>
+    <string name="editor_inpaint_reason_encode">结果保存失败</string>
+    <string name="editor_inpaint_reason_incompatible">模型不兼容</string>
+    <string name="editor_inpaint_reason_unknown">未知原因</string>
     <string name="editor_inpaint_failed">消除失败，请重试；首次使用请先下载 MI-GAN 模型</string>
     <string name="editor_inpaint_no_strokes">请先涂抹要消除的区域</string>
     <!-- Tool chip labels of the AI group -->

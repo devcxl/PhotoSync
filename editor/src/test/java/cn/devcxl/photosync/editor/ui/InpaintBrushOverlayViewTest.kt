@@ -5,7 +5,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.widget.TextView
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -15,14 +14,17 @@ import org.robolectric.annotation.Config
 
 import cn.devcxl.photosync.editor.R
 import cn.devcxl.photosync.editor.domain.InpaintStroke
+import cn.devcxl.photosync.editor.domain.InpaintTileEta
+import cn.devcxl.photosync.editor.settings.InpaintQualityMode
 import cn.devcxl.photosync.editor.ui.gesture.CanvasTransform
 import cn.devcxl.photosync.editor.ui.widgets.InpaintBrushOverlayView
 import cn.devcxl.photosync.editor.ui.widgets.InpaintPanelView
+import cn.devcxl.photosync.editor.vision.DeviceMemoryTier
 
 /**
  * Seam under test: the two P2 brush views. Robolectric dispatches real `MotionEvent`s so the
- * two-finger preemption and the >256 px advice are verified against the actual touch code rather
- * than a fake.
+ * two-finger preemption is verified against the actual touch code, and drives the real panel to
+ * check the source-pixel brush, quick presets, quality chips and the workload line.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
@@ -55,11 +57,10 @@ class InpaintBrushOverlayViewTest {
         assertEquals(1, overlay.strokeLayer.strokeCount)
         val bbox = checkNotNull(listener.lastBbox())
         assertTrue("dab must be ~40 px wide, got ${bbox.first}", bbox.first in 38..42)
-        assertFalse(bbox.third)
     }
 
     @Test
-    fun shouldReportOversize_whenThePaintedStrokeExceeds256Px() {
+    fun shouldKeepAPaintedStroke_whenTheBboxExceedsTheOld256PxAdvice() {
         val overlay = createOverlay()
         val listener = RecordingListener()
         overlay.listener = listener
@@ -70,7 +71,7 @@ class InpaintBrushOverlayViewTest {
 
         val bbox = checkNotNull(listener.lastBbox())
         assertTrue("bbox width ${bbox.first} must exceed 256", bbox.first > 256)
-        assertTrue(bbox.third)
+        assertEquals(1, overlay.strokeLayer.strokeCount)
     }
 
     @Test
@@ -88,22 +89,58 @@ class InpaintBrushOverlayViewTest {
     }
 
     @Test
-    fun shouldExposeTheAmberWarningAndMode_whenThePanelIsDriven() {
+    fun shouldReplaceStrokesAndNotKeepTheInFlightOne_whenTheControllerShrinksThem() {
+        val overlay = createOverlay()
+        overlay.dispatchTouchEvent(single(overlay, MotionEvent.ACTION_DOWN, 500f, 500f))
+        overlay.dispatchTouchEvent(single(overlay, MotionEvent.ACTION_UP, 500f, 500f))
+        overlay.dispatchTouchEvent(single(overlay, MotionEvent.ACTION_DOWN, 700f, 500f))
+
+        overlay.replaceStrokes(emptyList())
+
+        assertTrue(overlay.strokeLayer.isEmpty)
+    }
+
+    @Test
+    fun shouldExposePixelDiameterQuickSizesQualityAndWorkload_whenThePanelIsDriven() {
         val panel = InpaintPanelView(RuntimeEnvironment.getApplication())
-        panel.layout(0, 0, 1080, 320)
-        val warning = panel.findViewById<TextView>(R.id.inpaintOversizeWarning)
+        panel.layout(0, 0, 1080, 480)
+        val listener = RecordingPanelListener()
+        panel.listener = listener
+        val value = panel.findViewById<TextView>(R.id.inpaintBrushValue)
+        val hint = panel.findViewById<TextView>(R.id.inpaintWorkloadHint)
+        val note = panel.findViewById<TextView>(R.id.inpaintWorkloadNote)
 
-        panel.showOversizeWarning(320, 180, 2)
+        panel.setBrushDiameterPx(64)
+        assertEquals("64 px", value.text.toString())
 
-        assertEquals(View.VISIBLE, warning.visibility)
-        assertTrue(warning.text.toString().contains("320"))
-        assertTrue(warning.text.toString().contains("180"))
+        panel.findViewById<TextView>(R.id.inpaintBrushLargeChip).performClick()
+        assertEquals(InpaintBrushSize.LARGE_PRESET_PX, listener.diameterPx)
+        assertEquals(InpaintBrushSize.LARGE_PRESET_PX, panel.brushDiameterPx)
+        assertEquals("160 px", value.text.toString())
 
-        panel.setBrushMode(InpaintBrushMode.ERASE)
-        assertEquals(InpaintBrushMode.ERASE, panel.brushMode)
+        panel.findViewById<TextView>(R.id.inpaintBrushMediumChip).performClick()
+        assertEquals(InpaintBrushSize.MEDIUM_PRESET_PX, panel.brushDiameterPx)
 
-        panel.hideOversizeWarning()
-        assertEquals(View.GONE, warning.visibility)
+        panel.setQualityMode(InpaintQualityMode.FINE)
+        panel.findViewById<TextView>(R.id.inpaintQualityFastChip).performClick()
+        assertEquals(InpaintQualityMode.FAST, listener.qualityMode)
+        assertEquals(InpaintQualityMode.FAST, panel.qualityMode)
+
+        panel.setBrushDiameterPx(InpaintBrushSize.MAX_DIAMETER_PX + 400)
+        assertEquals(InpaintBrushSize.MAX_DIAMETER_PX, panel.brushDiameterPx)
+        assertEquals("1200 px", value.text.toString())
+
+        panel.setWorkload(InpaintTileEta.of(12, DeviceMemoryTier.STANDARD, null))
+        assertEquals(View.VISIBLE, hint.visibility)
+        assertTrue(hint.text.toString().contains("12"))
+        assertEquals(View.GONE, note.visibility)
+
+        panel.setWorkload(InpaintTileEta.of(12, DeviceMemoryTier.LOW, null))
+        assertEquals(View.VISIBLE, note.visibility)
+
+        panel.setWorkload(null)
+        assertEquals(View.GONE, hint.visibility)
+        assertEquals(View.GONE, note.visibility)
     }
 
     private fun createOverlay(): InpaintBrushOverlayView =
@@ -190,16 +227,35 @@ class InpaintBrushOverlayViewTest {
             preempted++
         }
 
-        fun lastBbox(): Triple<Int, Int, Boolean>? {
+        fun lastBbox(): Pair<Int, Int>? {
             val bounds = lastStrokes.map { it.bounds(OVERLAY_SIZE, OVERLAY_SIZE) }
                 .filterNot { it.isEmpty }
                 .reduceOrNull { first, second -> first.union(second) }
                 ?: return null
-            return Triple(bounds.width, bounds.height, bounds.width > 256 || bounds.height > 256)
+            return bounds.width to bounds.height
         }
 
         private companion object {
             const val OVERLAY_SIZE = 1000
         }
+    }
+
+    private class RecordingPanelListener : InpaintPanelView.Listener {
+        var diameterPx: Int? = null
+        var qualityMode: InpaintQualityMode? = null
+
+        override fun onInpaintModeChanged(mode: InpaintBrushMode) = Unit
+
+        override fun onInpaintBrushDiameterChanged(diameterPx: Int) {
+            this.diameterPx = diameterPx
+        }
+
+        override fun onInpaintQualityChanged(mode: InpaintQualityMode) {
+            qualityMode = mode
+        }
+
+        override fun onInpaintClearRequested() = Unit
+
+        override fun onInpaintConfirmRequested() = Unit
     }
 }
