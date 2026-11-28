@@ -31,6 +31,9 @@ import cn.devcxl.photosync.editor.domain.SubjectBackgroundMode
 import cn.devcxl.photosync.editor.lut.CubeLutStore
 import cn.devcxl.photosync.editor.render.EditorGlRenderer
 import cn.devcxl.photosync.editor.render.EditorPreviewSession
+import cn.devcxl.photosync.editor.settings.DisplaySettings
+import cn.devcxl.photosync.editor.settings.EditorRenderSettings
+import cn.devcxl.photosync.editor.settings.EditorSettings
 import cn.devcxl.photosync.editor.ui.gesture.CanvasTransform
 import cn.devcxl.photosync.editor.ui.gesture.EditorGroup
 import cn.devcxl.photosync.editor.ui.gesture.EditorTool
@@ -65,7 +68,8 @@ class EditorActivity : AppCompatActivity(),
     private lateinit var aiTools: EditorAiToolHost
     private val modelImport = EditorModelImportLauncher(this)
     private val renderer = EditorGlRenderer()
-    private val undoController = EditorUndoController()
+    private lateinit var renderSettings: EditorRenderSettings
+    private lateinit var undoController: EditorUndoController
     private val mainHandler = Handler(Looper.getMainLooper())
     private val lutStore by lazy { CubeLutStore(filesDir) }
 
@@ -80,6 +84,11 @@ class EditorActivity : AppCompatActivity(),
         super.onCreate(savedInstanceState)
         binding = ActivityEditorBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        applyScreenOnPolicy()
+        // One coherent settings snapshot per editor session: preview resolution, quality and undo
+        // depth all take effect now and stay stable for the lifetime of this activity.
+        renderSettings = EditorRenderSettings.from(EditorSettings(this))
+        undoController = EditorUndoController(maxDepth = renderSettings.undoDepth)
 
         photoId = intent.getLongExtra(EXTRA_PHOTO_ID, 0L)
         // Keep the photo's AI assets out of the offline GC sweep for the whole editor session.
@@ -109,7 +118,16 @@ class EditorActivity : AppCompatActivity(),
     private fun initCoordinators() {
         val meshStore = LiquifyMeshStore(filesDir)
         liquifySession = LiquifySession(meshStore)
-        previewSession = EditorPreviewSession(renderer, cacheDir, photoId, lutStore, filesDir)
+        previewSession = EditorPreviewSession(
+            renderer = renderer,
+            cacheDir = cacheDir,
+            photoId = photoId,
+            lutStore = lutStore,
+            filesDir = filesDir,
+            previewMaxEdgePx = renderSettings.previewMaxEdgePx,
+            skyPreviewMaxEdgePx = renderSettings.skyPreviewMaxEdgePx,
+            previewCacheJpegQuality = renderSettings.previewCacheJpegQuality
+        )
         sessionLoader = EditorSessionLoader(photoId, previewSession, liquifySession)
         historyCoordinator = EditorHistoryCoordinator(
             photoId = photoId,
@@ -228,6 +246,7 @@ class EditorActivity : AppCompatActivity(),
 
     override fun onResume() {
         super.onResume()
+        applyScreenOnPolicy()
         binding.glSurfaceView.onResume()
         // The P4 switch may have changed on the settings screen; re-read it so the cloud chip and
         // the cloud panel follow immediately.
@@ -250,6 +269,16 @@ class EditorActivity : AppCompatActivity(),
         // would free the pixels under it. The coordinator recycles once the last reader is done.
         saveCoordinator.releasePreviewSource { mainHandler.post(previewSession::release) }
         super.onDestroy()
+    }
+
+    /**
+     * Applies the shared "keep the screen on" preference to the whole editor window.
+     *
+     * The attribute is no longer hard-coded in `activity_editor.xml`; reading the `:app`-owned key
+     * keeps the gallery and the editor on one switch.
+     */
+    private fun applyScreenOnPolicy() {
+        binding.root.keepScreenOn = DisplaySettings.isKeepScreenOn(this)
     }
 
     override fun onEditorToolChanged(tool: EditorTool) {

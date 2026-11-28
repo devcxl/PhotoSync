@@ -27,6 +27,9 @@ enum class BakeOutputFormat {
  * @property photoId Photo row id used to register the bake in
  *   [cn.devcxl.photosync.editor.domain.ActivePhotoEditRegistry] so an offline AI asset sweep never
  *   deletes payloads this bake is still streaming. `null` disables the registration.
+ * @property jpegQuality Quality of the baseline JPEG; defaults to
+ *   [cn.devcxl.photosync.wrapper.JpegScanlineContract.DEFAULT_QUALITY] and is overridden by the user
+ *   setting. Ignored for [BakeOutputFormat.PNG_RGBA].
  */
 data class BakeRequest(
     val sourcePath: String,
@@ -34,7 +37,8 @@ data class BakeRequest(
     val isRaw: Boolean,
     val graph: EditGraph,
     val outputFormat: BakeOutputFormat = BakeOutputFormat.JPEG,
-    val photoId: Long? = null
+    val photoId: Long? = null,
+    val jpegQuality: Int = cn.devcxl.photosync.wrapper.JpegScanlineContract.DEFAULT_QUALITY
 )
 
 /**

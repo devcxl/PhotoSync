@@ -65,10 +65,10 @@ internal object ProcessMemoryProbe {
 
     val handles: MutableList<TrackedHandle> = mutableListOf()
 
-    override fun create(modelFile: File): OrtSessionHandle {
+    override fun create(modelFile: File, intraOpThreads: Int): OrtSessionHandle {
         val startedAt = SystemClock.elapsedRealtimeNanos()
         try {
-            val handle = TrackedHandle(delegate.create(modelFile))
+            val handle = TrackedHandle(delegate.create(modelFile, intraOpThreads))
             handles += handle
             return handle
         } finally {

@@ -100,7 +100,8 @@ sealed interface TetheredIngestResult {
  * 2. Decode its graph; a missing or identity preset means "plain import".
  * 3. When the preset carries a non-identity `SubjectOps`, optionally run the on-device MODNet
  *    preparation once. A low-memory device or a missing model degrades silently to the traditional
- *    grade — the USB queue never blocks and never drops the photo.
+ *    grade — the USB queue never blocks and never drops the photo. The `tether_live_preset_apply_ai`
+ *    master switch skips both the subject and sky preparers and keeps only the traditional grade.
  * 4. Render the preview JPEG into an isolated per-ingest staging directory *before* the row exists.
  * 5. Commit the row, the edit and the staged subject mask together in one transaction.
  * 6. Clean up the staging directory and announce the photo id.
@@ -116,7 +117,8 @@ class TetheredPhotoIngestor(
     private val skyPreparer: TetheredSkyPresetPreparer? = null,
     private val renderPreviewWithAi:
         (suspend (String, Boolean, EditGraph, SubjectMask?, SkyMask?, File) -> File?)? = null,
-    private val onIngested: (TetheredIngestResult) -> Unit = {}
+    private val onIngested: (TetheredIngestResult) -> Unit = {},
+    private val livePresetApplyAi: () -> Boolean = { true }
 ) {
 
     /**
@@ -312,6 +314,20 @@ class TetheredPhotoIngestor(
             subject = decoded.subject.copy(maskRef = ""),
             sky = decoded.sky.copy(maskRef = "")
         )
+        if (!livePresetApplyAi()) {
+            // The master switch is off: never run a preparer and never publish subject/sky ops.
+            // The stored graph keeps every traditional axis and drops both AI groups.
+            val traditional = degradeAi(cleared)
+            Timber.i("LiveTetherPreset AI parameters are disabled; applying the traditional grade")
+            return PreparedPreset(
+                graphJson = EditGraphJsonCodec.encode(traditional),
+                fallbackGraphJson = EditGraphJsonCodec.encode(traditional),
+                subjectMask = null,
+                subjectMaskPayload = null,
+                skyMask = null,
+                skyMaskPayload = null
+            )
+        }
         val subject = prepareSubject(file, isRaw, cleared)
         val sky = prepareSky(file, isRaw, subject.graph)
         return PreparedPreset(

@@ -32,7 +32,7 @@ internal object BakeStripWriter {
     ) {
         when (request.outputFormat) {
             BakeOutputFormat.JPEG -> writeJpeg(
-                output, graph, chain, source, frame, outWidth, outHeight, isActive
+                output, request, graph, chain, source, frame, outWidth, outHeight, isActive
             )
             BakeOutputFormat.PNG_RGBA -> writePng(
                 output, request, graph, chain, source, frame, outWidth, outHeight, isActive
@@ -42,6 +42,7 @@ internal object BakeStripWriter {
 
     private fun writeJpeg(
         output: OutputStream,
+        request: BakeRequest,
         graph: EditGraph,
         chain: BakePassChain,
         source: BakeSourceTextures,
@@ -50,7 +51,7 @@ internal object BakeStripWriter {
         outHeight: Int,
         isActive: () -> Boolean
     ) {
-        JpegStreamWriter(output, outWidth, outHeight).use { jpeg ->
+        JpegStreamWriter(output, outWidth, outHeight, request.jpegQuality).use { jpeg ->
             encodeBands(chain, source, JpegStripSink(jpeg), frame, graph, outWidth, outHeight, isActive)
             jpeg.finish()
         }

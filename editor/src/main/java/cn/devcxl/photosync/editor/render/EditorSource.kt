@@ -59,7 +59,8 @@ internal sealed interface EditorSource {
  */
 internal object EditorSourceLoader {
 
-    private const val LINEAR_PREVIEW_MAX_EDGE_PX = 2048
+    /** Historical linear-preview long edge; the code default when no setting overrides it. */
+    internal const val LINEAR_PREVIEW_MAX_EDGE_PX = 2048
 
     /** Longest edge of the drag proxy derived from the linear preview. */
     internal const val LINEAR_PROXY_MAX_EDGE_PX = 1024
@@ -69,7 +70,9 @@ internal object EditorSourceLoader {
      * preview/proxy caps above and the matching 2048/1024px caps in `EditorBitmapLoader`.
      *
      * [RecentEditorSourceCache] includes it in its key, so bump this string whenever one of those
-     * caps changes; otherwise a source decoded with the old caps could be reused.
+     * default caps changes; otherwise a source decoded with the old caps could be reused. The editor
+     * session passes its user-selected preview edge explicitly and never caches through this
+     * process-wide profile, so a setting change cannot hit a stale entry.
      */
     internal const val DECODE_PROFILE_ID = "preview-2048-linear-2048-proxy-1024-v1"
 
@@ -79,11 +82,21 @@ internal object EditorSourceLoader {
      *
      * The proxy is derived from the full linear buffer instead of running a second LibRaw
      * demosaic, which halves RAW open latency without a visible quality change at 1024px.
+     *
+     * @param previewMaxEdgePx Long-edge cap of the full preview; the proxy follows at
+     *   `min(1024, previewMaxEdgePx)` so a 1024px preview never allocates a second, equal copy.
      */
-    fun load(sourcePath: String, isRaw: Boolean, preferLinear: Boolean): EditorSource? {
+    fun load(
+        sourcePath: String,
+        isRaw: Boolean,
+        preferLinear: Boolean,
+        previewMaxEdgePx: Int = LINEAR_PREVIEW_MAX_EDGE_PX
+    ): EditorSource? {
+        val previewCap = previewMaxEdgePx.coerceAtLeast(1)
+        val proxyCap = minOf(LINEAR_PROXY_MAX_EDGE_PX, previewCap)
         if (isRaw && preferLinear) {
             val linear = try {
-                RawWrapper.decodeToLinearRgba16F(sourcePath, LINEAR_PREVIEW_MAX_EDGE_PX)
+                RawWrapper.decodeToLinearRgba16F(sourcePath, previewCap)
             } catch (oom: OutOfMemoryError) {
                 Timber.e(oom, "OOM while decoding the linear RAW preview")
                 null
@@ -91,15 +104,16 @@ internal object EditorSourceLoader {
             if (linear != null) {
                 return EditorSource.LinearRawSource(
                     full = linear,
-                    proxy = linear.downscaledTo(LINEAR_PROXY_MAX_EDGE_PX)
+                    proxy = linear.downscaledTo(proxyCap)
                 )
             }
             Timber.w("Linear RAW decode unavailable; falling back to the 8-bit preview path")
         }
-        val full = EditorBitmapLoader.loadUprightPreviewBitmap(sourcePath, isRaw) ?: return null
+        val full = EditorBitmapLoader.loadUprightPreviewBitmap(sourcePath, isRaw, previewCap)
+            ?: return null
         return EditorSource.BitmapSource(
             full = full,
-            proxy = EditorBitmapLoader.createProxyBitmap(full)
+            proxy = EditorBitmapLoader.createProxyBitmap(full, proxyCap)
         )
     }
 }

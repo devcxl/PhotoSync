@@ -40,6 +40,40 @@ class OrtSessionUnavailableException(
 ) : Exception("ORT session unavailable: $reason", cause)
 
 /**
+ * Runtime policy of the ORT session owner, re-read before every inference.
+ *
+ * The settings page may change any of these while the process is alive; reading them per call is what
+ * lets a thread-count or idle-policy change apply to the next AI action without restarting the app.
+ *
+ * @property tier Effective memory tier; [DeviceMemoryTier.LOW] always releases after inference.
+ * @property intraOpThreads ORT/XNNPACK intra-op thread count, clamped to
+ *   [MIN_INTRA_OP_THREADS]..[MAX_INTRA_OP_THREADS].
+ * @property idleTimeoutMs Idle lifetime of a warm session, or `null` to release right after inference.
+ */
+data class OrtSessionRuntimeConfig(
+    val tier: DeviceMemoryTier = DeviceMemoryTier.STANDARD,
+    val intraOpThreads: Int = DEFAULT_INTRA_OP_THREADS,
+    val idleTimeoutMs: Long? = STANDARD_IDLE_TIMEOUT_MS
+) {
+
+    /** True when the session must be closed as soon as [OrtSessionManager.withSession] returns. */
+    val releasesImmediately: Boolean
+        get() = tier == DeviceMemoryTier.LOW || idleTimeoutMs == null
+
+    companion object {
+
+        const val MIN_INTRA_OP_THREADS = 1
+        const val MAX_INTRA_OP_THREADS = 4
+
+        /** Default thread count that keeps one inference from starving the UI thread. */
+        const val DEFAULT_INTRA_OP_THREADS = 2
+
+        /** Idle lifetime of a warm session on [DeviceMemoryTier.STANDARD] devices. */
+        const val STANDARD_IDLE_TIMEOUT_MS: Long = 30_000L
+    }
+}
+
+/**
  * One loaded native inference session.
  *
  * The interface deliberately hides `ai.onnxruntime.OrtSession` so the lifecycle manager is
@@ -58,10 +92,12 @@ fun interface OrtSessionFactory {
     /**
      * Loads [modelFile] into an inference session.
      *
+     * @param intraOpThreads Thread count the session must use; callers pass the value read from
+     *   [OrtSessionRuntimeConfig] so a settings change can rebuild the session.
      * @throws OrtException when the runtime rejects the model.
      * @throws OutOfMemoryError when the native allocation cannot be satisfied.
      */
-    fun create(modelFile: File): OrtSessionHandle
+    fun create(modelFile: File, intraOpThreads: Int): OrtSessionHandle
 }
 
 /** Runs a delayed release task; injectable so tests can advance the idle timeout deterministically. */
@@ -121,23 +157,33 @@ class ExecutorIdleReleaseScheduler(
  *   native session is resident and two AI tools can never hold sessions at the same time.
  * - **Switch model = close first**: asking for a different model file closes the previous session
  *   before the new one is created.
- * - **Tiered release**: [DeviceMemoryTier.LOW] closes the session as soon as [withSession] returns;
- *   [DeviceMemoryTier.STANDARD] keeps it for [idleTimeoutMs] and then closes it, and
- *   [onMemoryPressure] closes immediately on both tiers.
+ * - **Settings-aware rebuild**: the thread count is re-read through [runtimePolicy] before every
+ *   call; when it changed since the resident session was created, that session is closed and
+ *   rebuilt with the new thread count.
+ * - **Tiered release**: [OrtSessionRuntimeConfig.releasesImmediately] (a low tier or `immediate`)
+ *   closes the session as soon as [withSession] returns; otherwise it stays warm for the configured
+ *   idle timeout. [onMemoryPressure] closes immediately in every policy.
  * - **Recoverable failure**: `OutOfMemoryError` and [OrtException] are caught, the session is
  *   closed, and the caller receives a failed [Result] carrying [OrtSessionUnavailableException].
  *
  * The manager uses CPU/XNNPACK only. NNAPI and QNN are deliberately not enabled: NNAPI is
  * deprecated from Android 15 and QNN's license is not open source. Sessions are created without
- * ORT's cross-run caches (see [OrtSessionCachePolicy]); the manager still keeps a warm session on
- * [DeviceMemoryTier.STANDARD], but the native buffers behind it are not pre-reserved.
+ * ORT's cross-run caches (see [OrtSessionCachePolicy]); the manager still keeps a warm session when
+ * the policy allows it, but the native buffers behind it are not pre-reserved.
  */
 class OrtSessionManager(
     private val tier: DeviceMemoryTier,
     private val sessionFactory: OrtSessionFactory = OnnxRuntimeSessionFactory(),
-    private val idleTimeoutMs: Long = STANDARD_IDLE_TIMEOUT_MS,
+    private val idleTimeoutMs: Long = OrtSessionRuntimeConfig.STANDARD_IDLE_TIMEOUT_MS,
     private val scheduler: IdleReleaseScheduler = ExecutorIdleReleaseScheduler(),
-    private val clock: () -> Long = System::currentTimeMillis
+    private val clock: () -> Long = System::currentTimeMillis,
+    private val runtimePolicy: () -> OrtSessionRuntimeConfig = {
+        OrtSessionRuntimeConfig(
+            tier = tier,
+            intraOpThreads = OrtSessionRuntimeConfig.DEFAULT_INTRA_OP_THREADS,
+            idleTimeoutMs = idleTimeoutMs
+        )
+    }
 ) {
 
     private val lock = ReentrantLock()
@@ -150,7 +196,7 @@ class OrtSessionManager(
         get() = lock.withLock { if (activeSession == null) 0 else 1 }
 
     /**
-     * Runs [block] against a session for [modelFile], creating or reusing it as the tier allows.
+     * Runs [block] against a session for [modelFile], creating or reusing it as the policy allows.
      *
      * @param modelFile Verified `.onnx` file; a missing file fails without touching the runtime.
      * @param block Inference body. It runs while the manager lock is held, which is what serializes
@@ -163,14 +209,20 @@ class OrtSessionManager(
                 OrtSessionUnavailableException(OrtSessionFailureReason.MODEL_MISSING)
             )
         }
+        val policy = runtimePolicy()
+        val threads = policy.intraOpThreads.coerceIn(
+            OrtSessionRuntimeConfig.MIN_INTRA_OP_THREADS,
+            OrtSessionRuntimeConfig.MAX_INTRA_OP_THREADS
+        )
         lock.lock()
         try {
             scheduler.cancel()
             val modelPath = modelFile.absolutePath
-            if (activeSession?.modelPath != modelPath) {
+            val resident = activeSession
+            if (resident?.modelPath != modelPath || resident.intraOpThreads != threads) {
                 closeActiveSessionLocked()
                 val handle = try {
-                    sessionFactory.create(modelFile)
+                    sessionFactory.create(modelFile, threads)
                 } catch (e: OutOfMemoryError) {
                     Timber.e(e, "Not enough memory to load the ORT session")
                     return Result.failure(
@@ -182,7 +234,7 @@ class OrtSessionManager(
                         OrtSessionUnavailableException(OrtSessionFailureReason.RUNTIME_ERROR, e)
                     )
                 }
-                activeSession = ActiveSession(modelPath, handle)
+                activeSession = ActiveSession(modelPath, threads, handle)
             }
             val session = activeSession
                 ?: return Result.failure(
@@ -205,10 +257,10 @@ class OrtSessionManager(
             )
         } finally {
             if (activeSession != null) {
-                if (tier == DeviceMemoryTier.LOW) {
+                if (policy.releasesImmediately) {
                     closeActiveSessionLocked()
                 } else {
-                    scheduleIdleReleaseLocked()
+                    scheduleIdleReleaseLocked(checkNotNull(policy.idleTimeoutMs))
                 }
             }
             lock.unlock()
@@ -241,32 +293,35 @@ class OrtSessionManager(
         }
     }
 
-    private fun scheduleIdleReleaseLocked() {
+    private fun scheduleIdleReleaseLocked(timeoutMs: Long) {
         scheduler.cancel()
-        scheduler.schedule(idleTimeoutMs) { releaseIfIdleAfterTimeout() }
+        scheduler.schedule(timeoutMs) { releaseIfIdleAfterTimeout(timeoutMs) }
     }
 
-    private fun releaseIfIdleAfterTimeout() {
+    private fun releaseIfIdleAfterTimeout(timeoutMs: Long) {
         lock.withLock {
             if (activeSession == null) return
             val idleForMillis = (clock() - lastUsedAtMillis).coerceAtLeast(0L)
-            if (idleForMillis >= idleTimeoutMs) {
+            if (idleForMillis >= timeoutMs) {
                 Timber.d("Releasing the ORT session after %d ms idle", idleForMillis)
                 closeActiveSessionLocked()
             } else {
-                scheduler.schedule(idleTimeoutMs - idleForMillis) { releaseIfIdleAfterTimeout() }
+                scheduler.schedule(timeoutMs - idleForMillis) {
+                    releaseIfIdleAfterTimeout(timeoutMs)
+                }
             }
         }
     }
 
     private class ActiveSession(
         val modelPath: String,
+        val intraOpThreads: Int,
         val handle: OrtSessionHandle
     )
 
     companion object {
 
         /** Idle lifetime of a warm session on [DeviceMemoryTier.STANDARD] devices. */
-        const val STANDARD_IDLE_TIMEOUT_MS: Long = 30_000L
+        const val STANDARD_IDLE_TIMEOUT_MS: Long = OrtSessionRuntimeConfig.STANDARD_IDLE_TIMEOUT_MS
     }
 }

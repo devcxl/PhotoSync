@@ -67,6 +67,7 @@ import cn.devcxl.photosync.adapter.PhotoViewerMode
 import cn.devcxl.photosync.data.AppDatabase
 import cn.devcxl.photosync.data.PhotoDao
 import cn.devcxl.photosync.data.entity.PhotoEntity
+import cn.devcxl.photosync.data.settings.AppSettings
 import cn.devcxl.photosync.databinding.ActivityMainBinding
 import cn.devcxl.photosync.editor.contract.EditorHostRegistry
 import cn.devcxl.photosync.editor.contract.EditorLaunchArgs
@@ -80,6 +81,7 @@ import cn.devcxl.photosync.editor.export.BakeOutputNaming
 import cn.devcxl.photosync.editor.export.BakeRequest
 import cn.devcxl.photosync.editor.export.BakeResult
 import cn.devcxl.photosync.editor.export.ExifCopier
+import cn.devcxl.photosync.editor.settings.EditorSettings
 import cn.devcxl.photosync.editor.ui.EditorActivity
 import cn.devcxl.photosync.export.MediaStoreGallerySink
 import cn.devcxl.photosync.ptp.manager.UsbPtpConnectionState
@@ -97,6 +99,12 @@ class MainActivity : AppCompatActivity() {
         MediaStoreGallerySink(contentResolver)
     }
 
+    /** Typed tether/gallery settings; the only writer of the shared settings file's app keys. */
+    private val appSettings by lazy { AppSettings(this) }
+
+    /** Typed editor/AI settings, read for the export quality of the gallery's RAW save path. */
+    private val editorSettings by lazy { EditorSettings(this) }
+
     companion object {
         private const val REQ_WRITE_STORAGE = 2001
         private const val THUMBNAIL_MAX_EDGE_PX = 512
@@ -104,9 +112,7 @@ class MainActivity : AppCompatActivity() {
         private const val FULL_PREVIEW_SCALE_FACTOR = 2
         private const val FULL_PREVIEW_MAX_EDGE_PX = 4096
         private const val JPEG_MIME = GallerySink.JPEG_MIME
-        private const val JPEG_EXPORT_QUALITY = 95
         private const val PREFS_NAME = "photosync_prefs"
-        private const val PREF_DELETE_ON_CAMERA = "delete_on_camera"
         private const val MENU_EXPORT_BAKED = 1
         private const val MENU_EXPORT_ORIGINAL = 2
         private const val EXPORT_OVERLAY_FADE_MS = 180L
@@ -179,6 +185,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        applyGalleryRuntimeSettings()
         setupWindowInsets()
         setupDao()
         setupAdapter()
@@ -340,9 +347,27 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        // The settings page may have changed the auto-follow switch or the screen-on policy while
+        // this activity was stopped; re-read both so they apply without a restart.
+        applyGalleryRuntimeSettings()
         // Attach broadcasts can be missed while the app is not running; the button state
         // is derived from what is actually plugged in.
         connectionController.refreshAvailableCameras()
+    }
+
+    /**
+     * Applies the tether/gallery settings that affect the current window.
+     *
+     * The auto-follow switch is also mirrored in the top bar toggle, so an external change must
+     * repaint that toggle instead of silently disagreeing with the stored value.
+     */
+    private fun applyGalleryRuntimeSettings() {
+        val followed = appSettings.autoFollowEnabled
+        if (followed != autoFollowEnabled) {
+            autoFollowEnabled = followed
+            if (::binding.isInitialized) updateAutoFollowAppearance()
+        }
+        binding.root.keepScreenOn = appSettings.keepScreenOn
     }
 
     override fun onPause() {
@@ -933,6 +958,7 @@ class MainActivity : AppCompatActivity() {
         }
         binding.autoFollowToggleButton.setOnClickListener {
             autoFollowEnabled = !autoFollowEnabled
+            appSettings.autoFollowEnabled = autoFollowEnabled
             updateAutoFollowAppearance()
             val msgRes = if (autoFollowEnabled) {
                 R.string.feedback_auto_follow_on
@@ -1489,7 +1515,8 @@ class MainActivity : AppCompatActivity() {
                         isRaw = isRawPath(entity.path),
                         graph = graph,
                         outputFormat = outputFormat,
-                        photoId = entity.id
+                        photoId = entity.id,
+                        jpegQuality = editorSettings.exportJpegQuality
                     )
                 )
                 when (result) {
@@ -1641,7 +1668,7 @@ class MainActivity : AppCompatActivity() {
             displayName = displayName,
             mime = JPEG_MIME,
             write = { out ->
-                if (!bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_EXPORT_QUALITY, out)) {
+                if (!bitmap.compress(Bitmap.CompressFormat.JPEG, editorSettings.exportJpegQuality, out)) {
                     throw IOException("JPEG compress failed")
                 }
             },
@@ -1701,9 +1728,8 @@ class MainActivity : AppCompatActivity() {
         val cameraDeleteBox = dialogView.findViewById<View>(R.id.cameraDeleteBox)
         val deleteOnCameraCheck = dialogView.findViewById<CheckBox>(R.id.deleteOnCameraCheck)
         val blockerHint = dialogView.findViewById<TextView>(R.id.cameraDeleteHint)
-        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         val canDeleteOnCamera = blocker == null
-        val rememberedDeleteOnCamera = prefs.getBoolean(PREF_DELETE_ON_CAMERA, false)
+        val rememberedDeleteOnCamera = appSettings.deleteOnCamera
         deleteOnCameraCheck.isChecked = initialDeleteOnCameraChecked(
             canDeleteOnCamera = canDeleteOnCamera,
             rememberedDeleteOnCamera = rememberedDeleteOnCamera
@@ -1727,9 +1753,7 @@ class MainActivity : AppCompatActivity() {
             .setView(dialogView)
             .setPositiveButton(getString(R.string.dialog_delete_confirm)) { _, _ ->
                 if (canDeleteOnCamera) {
-                    prefs.edit()
-                        .putBoolean(PREF_DELETE_ON_CAMERA, deleteOnCameraCheck.isChecked)
-                        .apply()
+                    appSettings.deleteOnCamera = deleteOnCameraCheck.isChecked
                 }
                 deleteCurrent(index, deleteOnCameraCheck.isChecked)
             }

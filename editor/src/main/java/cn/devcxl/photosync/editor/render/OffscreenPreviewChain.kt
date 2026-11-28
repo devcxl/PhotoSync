@@ -214,7 +214,7 @@ internal class OffscreenPreviewChain(
             val argb = passes.readFrame(outWidth, outHeight) ?: return null
             // Last chance to abandon before a published file exists.
             if (!checkpoint(guard)) return null
-            return encode(argb, outWidth, outHeight, request.outDir)
+            return encode(argb, outWidth, outHeight, request.outDir, request.jpegQuality)
         } finally {
             EditorTextureUploader.releaseTexture(fullTexture)
             EditorTextureUploader.releaseTexture(proxyTexture)
@@ -259,7 +259,7 @@ internal class OffscreenPreviewChain(
         return false
     }
 
-    private fun encode(argb: IntArray, width: Int, height: Int, outDir: File): File? {
+    private fun encode(argb: IntArray, width: Int, height: Int, outDir: File, jpegQuality: Int): File? {
         val bitmap = try {
             Bitmap.createBitmap(argb, width, height, Bitmap.Config.ARGB_8888)
         } catch (oom: OutOfMemoryError) {
@@ -269,7 +269,11 @@ internal class OffscreenPreviewChain(
         return try {
             try {
                 PreviewFileWriter.write(outDir) { stream ->
-                    bitmap.compress(Bitmap.CompressFormat.JPEG, PREVIEW_JPEG_QUALITY, stream)
+                    bitmap.compress(
+                        Bitmap.CompressFormat.JPEG,
+                        jpegQuality.coerceIn(MIN_JPEG_QUALITY, MAX_JPEG_QUALITY),
+                        stream
+                    )
                 }?.let(::File)
             } catch (io: IOException) {
                 // A full or evicted cache directory is a preview failure, not a crash.
@@ -282,6 +286,7 @@ internal class OffscreenPreviewChain(
     }
 
     private companion object {
-        const val PREVIEW_JPEG_QUALITY = 92
+        private const val MIN_JPEG_QUALITY = 1
+        private const val MAX_JPEG_QUALITY = 100
     }
 }

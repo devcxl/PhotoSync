@@ -20,7 +20,7 @@ internal class RecordingSessionFactory : OrtSessionFactory {
     /** Throwable the next `create` throws; `null` lets the factory succeed. */
     var failure: Throwable? = null
 
-    override fun create(modelFile: File): OrtSessionHandle {
+    override fun create(modelFile: File, intraOpThreads: Int): OrtSessionHandle {
         failure?.let { throw it }
         return FakeSessionHandle(modelFile.absolutePath).also { created += it }
     }

@@ -11,6 +11,7 @@ import timber.log.Timber
 
 import cn.devcxl.photosync.editor.domain.AiAssetStore
 import cn.devcxl.photosync.editor.domain.EditGraph
+import cn.devcxl.photosync.editor.settings.EditorSettings
 import cn.devcxl.photosync.editor.vision.AiModelCatalog
 import cn.devcxl.photosync.editor.vision.AiModelDownloadManager
 import cn.devcxl.photosync.editor.vision.DeviceMemoryTier
@@ -65,12 +66,16 @@ class ModnetTetheredSubjectPresetPreparer(
     private val tier: DeviceMemoryTier
 ) : TetheredSubjectPresetPreparer {
 
-    /** Production constructor: classifies the device from its total RAM once. */
+    /** Production constructor: classifies the device from total RAM, honoring the user override. */
     constructor(
         context: Context,
         filesDir: File,
         sessions: OrtSessionManager
-    ) : this(filesDir, sessions, DeviceMemoryTier.detect(context))
+    ) : this(
+        filesDir,
+        sessions,
+        EditorSettings(context).resolveMemoryTier(context)
+    )
 
     private val rootDir: File = filesDir
     private val downloads = AiModelDownloadManager(File(rootDir, AiModelCatalog.MODELS_DIR_NAME))

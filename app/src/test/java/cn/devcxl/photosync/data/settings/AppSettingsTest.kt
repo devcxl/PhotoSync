@@ -185,4 +185,16 @@ class AppSettingsTest {
             AppSettings.ALL_KEYS.none { EditorSettings.isMeasuredTileMsKey(it) }
         )
     }
+
+    @Test
+    fun shouldShareTheScreenOnKeyName_whenTheEditorReadsItDirectly() {
+        assertEquals(
+            AppSettings.KEY_KEEP_SCREEN_ON,
+            cn.devcxl.photosync.editor.settings.DisplaySettings.KEY_KEEP_SCREEN_ON
+        )
+        assertEquals(
+            AppSettings.DEFAULT_KEEP_SCREEN_ON,
+            cn.devcxl.photosync.editor.settings.DisplaySettings.DEFAULT_KEEP_SCREEN_ON
+        )
+    }
 }

@@ -16,6 +16,7 @@ import cn.devcxl.photosync.editor.domain.PresetSubjectGate
 import cn.devcxl.photosync.editor.domain.SubjectBackgroundMode
 import cn.devcxl.photosync.editor.domain.SubjectOps
 import cn.devcxl.photosync.editor.render.SubjectComposite
+import cn.devcxl.photosync.editor.settings.EditorSettings
 import cn.devcxl.photosync.editor.vision.DeviceMemoryTier
 
 /**
@@ -74,7 +75,7 @@ internal class SubjectMaskWorkflow(
         val graph = undoController.currentGraph
         if (!PresetSubjectGate.needsMask(graph)) return
         if (job?.isActive == true || awaitingMask) return
-        if (DeviceMemoryTier.detect(context) != DeviceMemoryTier.STANDARD) {
+        if (EditorSettings(context).resolveMemoryTier(context) != DeviceMemoryTier.STANDARD) {
             Timber.i("Subject preset mask skipped: the device is in the low-memory tier")
             return
         }

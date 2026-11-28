@@ -28,6 +28,7 @@ import cn.devcxl.photosync.data.RoomEditStore
 import cn.devcxl.photosync.data.RoomTetheredPhotoCommitter
 import cn.devcxl.photosync.data.TetheredIngestResult
 import cn.devcxl.photosync.data.TetheredPhotoIngestor
+import cn.devcxl.photosync.data.settings.AppSettings
 import cn.devcxl.photosync.editor.R as EditorR
 import cn.devcxl.photosync.editor.contract.EditorHostRegistry
 import cn.devcxl.photosync.editor.domain.ActivePhotoEditRegistry
@@ -36,15 +37,16 @@ import cn.devcxl.photosync.editor.domain.BuiltinPresets
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.EditGraphJsonCodec
 import cn.devcxl.photosync.editor.render.BackgroundPreviewRenderer
-import cn.devcxl.photosync.editor.render.RecentEditorSourceCache
-import cn.devcxl.photosync.editor.vision.DeviceMemoryTier
 import cn.devcxl.photosync.editor.render.ClassicTetheredSkyPresetPreparer
 import cn.devcxl.photosync.editor.render.ModnetTetheredSubjectPresetPreparer
+import cn.devcxl.photosync.editor.render.RecentEditorSourceCache
 import cn.devcxl.photosync.editor.render.TetheredSkyPresetPreparer
+import cn.devcxl.photosync.editor.render.TetheredSubjectPresetPreparer
+import cn.devcxl.photosync.editor.settings.EditorSettings
 import cn.devcxl.photosync.editor.vision.OrtSessionManager
+import cn.devcxl.photosync.editor.vision.OrtSessionRuntimeConfig
 import cn.devcxl.photosync.editor.vision.SkyMask
 import cn.devcxl.photosync.editor.vision.SubjectMask
-import cn.devcxl.photosync.editor.render.TetheredSubjectPresetPreparer
 import cn.devcxl.photosync.export.MediaStoreGallerySink
 import cn.devcxl.photosync.ptp.manager.UsbPtpConnectionController
 import cn.devcxl.photosync.receiver.UsbPermissionReceiver
@@ -103,15 +105,33 @@ class App : Application() {
         UsbPtpConnectionController(this)
     }
 
+    /** Typed tether/gallery settings, shared by the ingest pipeline and the gallery. */
+    private val appSettings by lazy { AppSettings(this) }
+
+    /** Typed editor/AI settings; the single resolver for every AI runtime policy. */
+    private val editorSettings by lazy { EditorSettings(this) }
+
     /**
      * Process-wide ORT session owner shared with `:editor`.
      *
      * Construction is deliberately cheap: no model is loaded and no scheduler thread is started
      * until the first AI tool calls `withSession`. `App.onCreate` injects the instance into
      * [EditorHostRegistry] so every editor tool reuses one manager instead of creating its own.
+     *
+     * The policy closure re-reads [EditorSettings] before every inference, so a tier override,
+     * thread-count or idle-release change applies to the next AI action without a restart.
      */
     val ortSessionManager: OrtSessionManager by lazy {
-        OrtSessionManager(tier = DeviceMemoryTier.detect(this))
+        OrtSessionManager(
+            tier = editorSettings.resolveMemoryTier(this),
+            runtimePolicy = {
+                OrtSessionRuntimeConfig(
+                    tier = editorSettings.resolveMemoryTier(this),
+                    intraOpThreads = editorSettings.intraOpThreads,
+                    idleTimeoutMs = editorSettings.idleRelease.timeoutMs
+                )
+            }
+        )
     }
 
     /**
@@ -166,7 +186,8 @@ class App : Application() {
             builtinNameResolver = ::resolveBuiltinPresetName,
             onClearPhotoExternalAssets = { photoId ->
                 AiAssetStore(filesDir).deletePhotoAssets(photoId)
-            }
+            },
+            livePresetEnabled = { appSettings.livePresetEnabled }
         )
         EditorHostRegistry.editStore = editStore
         EditorHostRegistry.gallerySink = MediaStoreGallerySink(contentResolver)
@@ -295,7 +316,8 @@ class App : Application() {
             skyPreparer = tetheredSkyPreparer,
             renderPreviewWithAi = { sourcePath, isRaw, graph, subjectMask, skyMask, outDir ->
                 renderTetheredPreview(sourcePath, isRaw, graph, outDir, subjectMask, skyMask)
-            }
+            },
+            livePresetApplyAi = { appSettings.livePresetApplyAi }
         )
 
     private suspend fun renderTetheredPreview(

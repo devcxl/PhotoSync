@@ -26,7 +26,15 @@ import cn.devcxl.photosync.editor.contract.UserPresetRecord
 import cn.devcxl.photosync.editor.domain.BuiltinPresets
 import cn.devcxl.photosync.editor.domain.EditGraph
 import cn.devcxl.photosync.editor.domain.EditGraphJsonCodec
+import cn.devcxl.photosync.editor.domain.SkyAssetType
+import cn.devcxl.photosync.editor.domain.SkyOps
+import cn.devcxl.photosync.editor.domain.SubjectBackgroundMode
+import cn.devcxl.photosync.editor.domain.SubjectOps
 import cn.devcxl.photosync.editor.domain.ToneOps
+import cn.devcxl.photosync.editor.render.TetheredSkyPreparation
+import cn.devcxl.photosync.editor.render.TetheredSkyPresetPreparer
+import cn.devcxl.photosync.editor.render.TetheredSubjectPreparation
+import cn.devcxl.photosync.editor.render.TetheredSubjectPresetPreparer
 
 /**
  * Seam under test: [TetheredPhotoIngestor] — the `LiveTetherPreset` auto-apply and single-transaction
@@ -333,6 +341,77 @@ class TetheredPhotoIngestorTest {
             }
         }
         assertTrue(jobDir?.exists() == false)
+    }
+
+    @Test
+    fun shouldSkipBothAiPreparers_whenLivePresetApplyAiIsDisabled() = runBlocking {
+        val presetGraph = EditGraph(
+            tone = ToneOps(contrast = 12, glow = 4),
+            subject = SubjectOps(bgMode = SubjectBackgroundMode.SOLID),
+            sky = SkyOps(assetType = SkyAssetType.PROCEDURAL, assetIdOrRelPath = "builtin-sunset")
+        )
+        val store = FakeEditStore(
+            presets = mapOf("p1" to preset("p1", presetGraph)),
+            activePresetId = "p1"
+        )
+        var subjectCalls = 0
+        var skyCalls = 0
+        var aiRenderCalls = 0
+        var traditionalRenderCalls = 0
+        val staged = File(temporaryFolder.root, "preview_traditional.jpg").apply { createNewFile() }
+        val committer = RecordingCommitter()
+        val ingestor = TetheredPhotoIngestor(
+            editStore = store,
+            committer = committer,
+            stagingDir = temporaryFolder.root,
+            renderPreview = { _, _, _, _ ->
+                traditionalRenderCalls++
+                staged
+            },
+            subjectPreparer = object : TetheredSubjectPresetPreparer {
+                override suspend fun prepare(
+                    sourcePath: String,
+                    isRaw: Boolean,
+                    graph: EditGraph
+                ): TetheredSubjectPreparation? {
+                    subjectCalls++
+                    return null
+                }
+            },
+            skyPreparer = object : TetheredSkyPresetPreparer {
+                override suspend fun prepare(
+                    sourcePath: String,
+                    isRaw: Boolean,
+                    graph: EditGraph
+                ): TetheredSkyPreparation? {
+                    skyCalls++
+                    return null
+                }
+            },
+            renderPreviewWithAi = { _, _, _, _, _, _ ->
+                aiRenderCalls++
+                staged
+            },
+            livePresetApplyAi = { false }
+        )
+
+        val result = ingestor.onFileDownloaded(
+            sourceFile(),
+            objectHandle = CAMERA_HANDLE,
+            isRaw = true,
+            isJpeg = false
+        )
+
+        val ingested = result as TetheredIngestResult.Ingested
+        assertEquals("p1", ingested.presetId)
+        assertEquals(0, subjectCalls)
+        assertEquals(0, skyCalls)
+        assertEquals(0, aiRenderCalls)
+        assertEquals(1, traditionalRenderCalls)
+        val committed = checkNotNull(EditGraphJsonCodec.decode(committer.commits.single().graphJson ?: ""))
+        assertEquals("the traditional tone axes must survive", 12, committed.tone.contrast)
+        assertEquals(SubjectOps(), committed.subject)
+        assertEquals(SkyOps(), committed.sky)
     }
 
     @Test

@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.SharedPreferences
 
 import cn.devcxl.photosync.editor.vision.DeviceMemoryTier
+import cn.devcxl.photosync.editor.vision.OrtSessionRuntimeConfig
 
 /** Editor preview long edge presets, with the sky preview edge derived from the same choice. */
 enum class PreviewMaxEdge(val maxEdgePx: Int, val skyPreviewMaxEdgePx: Int) {
@@ -370,9 +371,9 @@ class EditorSettings(private val preferences: SharedPreferences) {
         const val MAX_UNDO_DEPTH = 200
         const val DEFAULT_UNDO_DEPTH = 50
 
-        const val MIN_INTRA_OP_THREADS = 1
-        const val MAX_INTRA_OP_THREADS = 4
-        const val DEFAULT_INTRA_OP_THREADS = 2
+        const val MIN_INTRA_OP_THREADS = OrtSessionRuntimeConfig.MIN_INTRA_OP_THREADS
+        const val MAX_INTRA_OP_THREADS = OrtSessionRuntimeConfig.MAX_INTRA_OP_THREADS
+        const val DEFAULT_INTRA_OP_THREADS = OrtSessionRuntimeConfig.DEFAULT_INTRA_OP_THREADS
 
         const val MIN_INPAINT_BRUSH_PX = 8
         const val MAX_INPAINT_BRUSH_PX = 1200
