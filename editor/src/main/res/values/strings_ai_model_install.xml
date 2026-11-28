@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Shared install failure copy for the AI settings page and the editor install prompt. -->
+    <string name="editor_ai_model_reason_not_available">该模型尚未发布</string>
+    <string name="editor_ai_model_reason_source_gone">模型源已下线，可能已迁移</string>
+    <string name="editor_ai_model_reason_source_denied">模型源拒绝访问</string>
+    <string name="editor_ai_model_reason_transport">传输中断，已保留断点</string>
+    <string name="editor_ai_model_reason_size_mismatch">文件不完整或被截断</string>
+    <string name="editor_ai_model_reason_checksum_mismatch">文件校验失败，可能被篡改</string>
+    <string name="editor_ai_model_reason_incompatible">模型格式与当前版本不匹配</string>
+    <string name="editor_ai_model_reason_storage_failure">存储空间不足或目录不可写</string>
+    <string name="editor_ai_model_cancelled">下载已取消，已保留断点，可继续下载</string>
+</resources>

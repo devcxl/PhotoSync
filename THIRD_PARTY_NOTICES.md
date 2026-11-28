@@ -57,22 +57,30 @@ LGPL-2.1 第 6 条要求：把该库组合进非 LGPL 应用分发二进制时�
 - **版本**：ONNX FP32 导出（`Xenova/modnet`，512×512）
 - **源码**：https://github.com/ZHKKKe/MODNet
 - **许可**：Apache-2.0（代码与权重）
-- **分发方式**：**不内置于安装包**。设置页「AI 模型管理」按需下载（GitHub Releases 主源 →
-  HuggingFace → `hf-mirror.com` 镜像回退），或由用户通过 SAF 导入本地 `.onnx` 文件；两种
-  路径都先校验固化的精确字节数与 SHA-256 才会启用模型。
+- **分发方式**：**不内置于安装包**。设置页「AI 模型管理」按需下载（HuggingFace 上游 →
+  `hf-mirror.com` 镜像回退），或由用户通过 SAF 导入本地 `.onnx` 文件；两种路径都先校验固化
+  的精确字节数与 SHA-256 才会启用模型。旧的 GitHub Releases 主源（`ai-models-v1`）已返回
+  404，不再作为镜像。
 - **用途**：生成人像主体蒙版，用于主体虚化与透明 PNG 导出。
 
 ## MI-GAN
 
-- **版本**：MI-GAN-512 生成器-only ONNX 导出（`migan_generator_512_v1.onnx`，28,026,303 B）
+- **版本**：MI-GAN-512 pipeline ONNX 导出（`migan_pipeline_512_v1.onnx`，28,079,181 B）
 - **源码**：https://github.com/Picsart-AI-Research/MI-GAN
-- **许可**：MIT（代码 `LICENSE` 与权重 `LICENSE-WEIGHTS` 均为 MIT）
-- **权重来源**：官方发布的 `migan_512_places2.pt` 检查点，导出脚本按上游
-  `scripts/create_onnx_pipeline.py` 的裁切前逻辑取生成器子图，未修改任何权重数值。
-- **分发方式**：**不内置于安装包**。设置页「AI 模型管理」按需下载（GitHub Releases 主源），
-  或由用户通过 SAF 导入本地 `.onnx` 文件；两条路径都先校验固化的精确字节数与 SHA-256
-  （`522048b4fc3fae7adff3af48859cd8d19412d02a8a9420614f3d4474a0901bfe`）才会启用模型。
-- **用途**：涂抹区域内容感知修复（智能消除），生成器输出由应用侧的预处理/回贴与 `clamp` 完成。
+- **导出来源**：上游社区导出的 pipeline 变体（`andraniksargsyan/migan` 的
+  `migan_pipeline_v2.onnx`），由上游仓库发布，**非本仓库自产**；输入为 uint8 `image` + uint8
+  `mask`（H/W 动态），输出为 uint8 RGB，掩码语义为 `255 = 保留 / 0 = 待修复`。
+- **许可**：MIT（代码 `LICENSE` 与权重 `LICENSE-WEIGHTS` 均为 MIT）；上游模型卡标注
+  `license: mit`。第三方镜像 `anyisalin/migan-onnx` 与主源字节一致，但没有许可元数据，因此
+  只作为第三兜底，不作首选。
+- **分发方式**：**不内置于安装包**。设置页「AI 模型管理」按需下载（HuggingFace 上游 →
+  `hf-mirror.com` 同域镜像 → 字节一致的第三方镜像），或由用户通过 SAF 导入本地 `.onnx`
+  文件；两条路径都先校验固化的精确字节数与 SHA-256
+  （`6f1f3530a1a2324b19752018ce756088b07973cda8d7d890034ace5c8a48c40b`）才会启用模型。
+- **兼容识别**：旧的生成器-only 导出（`migan_generator_512_v1.onnx`，28,026,303 B /
+  `522048b4fc3fae7adff3af48859cd8d19412d02a8a9420614f3d4474a0901bfe`）从未发布，但仍保留为
+  只读目录条目，供本地导入识别与运行时变体探测使用；它不出现在下载按钮上。
+- **用途**：涂抹区域内容感知修复（智能消除）。
 - **合规说明**：仓库自身以 MIT 分发，随应用分发的声明保留在上游仓库
   `LICENSE-WEIGHTS` 与本文件；若上游权重许可发生变化，删除该按需模型即可，不影响安装包其余部分。
 

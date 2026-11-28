@@ -33,7 +33,11 @@ import cn.devcxl.photosync.editor.ui.gesture.CanvasTransform
 import cn.devcxl.photosync.editor.ui.panels.AiInferenceBarController
 import cn.devcxl.photosync.editor.ui.panels.InpaintBrushController
 import cn.devcxl.photosync.editor.vision.AiModelCatalog
+import cn.devcxl.photosync.editor.vision.AiModelDownloadCancellation
 import cn.devcxl.photosync.editor.vision.AiModelDownloadManager
+import cn.devcxl.photosync.editor.vision.AiModelFailureUiCopy
+import cn.devcxl.photosync.editor.vision.AiModelInstallException
+import cn.devcxl.photosync.editor.vision.AiModelInstallUi
 import cn.devcxl.photosync.editor.vision.DeviceMemoryTier
 import cn.devcxl.photosync.editor.vision.MiGanFailureReason
 import cn.devcxl.photosync.editor.vision.MiGanInpaintException
@@ -93,6 +97,7 @@ internal class EditorInpaintController(
     private val inpainter = MiGanInpainter(sessions, downloads, assets)
 
     private var installJob: Job? = null
+    private var installCancellation: AiModelDownloadCancellation? = null
 
     /** The executor the brush controller drives; adapts [MiGanInpainter]. */
     fun executor(): InpaintBrushController.InpaintExecutor =
@@ -111,8 +116,8 @@ internal class EditorInpaintController(
 
     /** Stops a model download/import; an in-flight inference is owned by the brush controller. */
     fun cancel() {
-        installJob?.cancel()
-        installJob = null
+        val cancellation = installCancellation
+        if (cancellation != null) cancellation.cancel() else installJob?.cancel()
     }
 
     /**
@@ -129,12 +134,16 @@ internal class EditorInpaintController(
     fun importModel(input: InputStream) {
         launchWork {
             inferenceBar.show(context.getString(R.string.editor_inpaint_model_importing))
-            val result = downloads.importLocal(AiModelCatalog.MI_GAN_GENERATOR, input)
+            val result = downloads.importLocalAny(
+                candidates = AiModelCatalog.importCandidates(AiModelCatalog.MI_GAN_PIPELINE),
+                input = input
+            )
             inferenceBar.dismiss()
             result.fold(
                 onSuccess = { confirmPendingRun() },
                 onFailure = { error ->
                     Timber.e(error, "The local MI-GAN model was rejected")
+                    showInstallFailure(error)
                     promptModelInstall()
                 }
             )
@@ -250,27 +259,39 @@ internal class EditorInpaintController(
 
     private fun promptModelInstall() {
         inferenceBar.dismiss()
+        val spec = AiModelCatalog.MI_GAN_PIPELINE
+        val state = AiModelInstallUi.idle(
+            spec = spec,
+            installed = downloads.isInstalled(spec),
+            partialBytes = downloads.partFile(spec).takeIf { it.isFile }?.length() ?: 0L,
+            lastProbe = downloads.lastProbeResult(spec)
+        )
         AiModelPromptDialog.show(
             context = context,
-            spec = AiModelCatalog.MI_GAN_GENERATOR,
+            spec = spec,
             onDownload = ::downloadModel,
-            onImport = onImportRequested
+            onImport = onImportRequested,
+            state = state
         )
     }
 
     private fun downloadModel() {
         launchWork {
+            val spec = AiModelCatalog.MI_GAN_PIPELINE
+            val token = AiModelDownloadCancellation()
+            installCancellation = token
             inferenceBar.show(context.getString(R.string.editor_inpaint_model_downloading))
-            val result = downloads.download(AiModelCatalog.MI_GAN_GENERATOR) { progress ->
+            val result = downloads.download(spec, onProgress = { progress ->
                 val percent = (progress * PROGRESS_SCALE).toInt().coerceIn(0, 100)
                 scope.launch { inferenceBar.updateProgress(percent) }
-            }
+            }, cancellation = token)
+            installCancellation = null
             inferenceBar.dismiss()
             result.fold(
                 onSuccess = { confirmPendingRun() },
                 onFailure = { error ->
                     Timber.e(error, "The MI-GAN model download failed")
-                    showToast(R.string.editor_subject_model_unavailable)
+                    showInstallFailure(error)
                     promptModelInstall()
                 }
             )
@@ -289,6 +310,11 @@ internal class EditorInpaintController(
 
     private fun failure(message: String): Result<List<InpaintPatchRef>> =
         Result.failure(MiGanInpaintException(MiGanFailureReason.INVALID_INPUT, message))
+
+    private fun showInstallFailure(error: Throwable) {
+        val reason = (error as? AiModelInstallException)?.reason
+        showToast(AiModelFailureUiCopy.of(reason).messageRes)
+    }
 
     private fun showToast(messageRes: Int) {
         Toast.makeText(context, messageRes, Toast.LENGTH_SHORT).show()

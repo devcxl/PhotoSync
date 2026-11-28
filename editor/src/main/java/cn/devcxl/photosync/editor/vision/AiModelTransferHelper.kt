@@ -5,6 +5,8 @@ import java.io.FileOutputStream
 import java.io.InputStream
 import java.security.MessageDigest
 
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import timber.log.Timber
 
 /**
@@ -15,13 +17,23 @@ import timber.log.Timber
  */
 internal object AiModelTransferHelper {
 
+    /** Result of one bounded body write. */
+    enum class WriteOutcome {
+
+        /** The stream ended (or the pinned size was reached) and the bytes were flushed. */
+        COMPLETE,
+
+        /** The caller paused the transfer; the bytes written so far stay in the `.part` file. */
+        CANCELLED
+    }
+
     /**
      * Copies [input] into [output] while refusing to exceed the pinned model size.
      *
      * @return [AiModelFailureReason.SIZE_MISMATCH] when the source is larger than the catalog entry,
      *   `null` when the copy ended at or below the pinned size.
      */
-    fun copyBounded(
+    suspend fun copyBounded(
         spec: AiModelSpec,
         input: InputStream,
         output: FileOutputStream,
@@ -30,6 +42,7 @@ internal object AiModelTransferHelper {
         val buffer = ByteArray(BUFFER_BYTES)
         var written = 0L
         while (true) {
+            currentCoroutineContext().ensureActive()
             val read = input.read(buffer)
             if (read <= 0) break
             if (written + read > spec.byteSize) {
@@ -47,20 +60,35 @@ internal object AiModelTransferHelper {
     /**
      * Writes [body] into [partFile], appending when [alreadyWritten] bytes were already accepted
      * through a `Range` resume. Never writes past the pinned model size.
+     *
+     * [cancellation] is polled between 64 KB buffers so a user pause keeps the bytes received so
+     * far; the file is flushed before [WriteOutcome.CANCELLED] is returned.
      */
-    fun writeBody(
+    suspend fun writeBody(
         spec: AiModelSpec,
         partFile: File,
         body: InputStream,
         alreadyWritten: Long,
-        onProgress: (Float) -> Unit
-    ) {
+        onProgress: (Float) -> Unit,
+        cancellation: AiModelDownloadCancellation? = null
+    ): WriteOutcome {
         FileOutputStream(partFile, alreadyWritten > 0L).use { output ->
             val buffer = ByteArray(BUFFER_BYTES)
             var written = alreadyWritten
             while (written < spec.byteSize) {
+                currentCoroutineContext().ensureActive()
+                if (cancellation?.isCancelled == true) {
+                    output.flush()
+                    return WriteOutcome.CANCELLED
+                }
                 val read = body.read(buffer)
-                if (read <= 0) break
+                if (read <= 0) {
+                    if (cancellation?.isCancelled == true) {
+                        output.flush()
+                        return WriteOutcome.CANCELLED
+                    }
+                    break
+                }
                 val allowed = minOf(read.toLong(), spec.byteSize - written).toInt()
                 output.write(buffer, 0, allowed)
                 written += allowed
@@ -68,6 +96,7 @@ internal object AiModelTransferHelper {
             }
             output.flush()
         }
+        return WriteOutcome.COMPLETE
     }
 
     /** Bytes occupied by [directory] or [file] on disk. */

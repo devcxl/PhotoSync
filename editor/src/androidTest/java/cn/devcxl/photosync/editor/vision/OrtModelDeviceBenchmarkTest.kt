@@ -93,7 +93,7 @@ class OrtModelDeviceBenchmarkTest {
      */
     private fun benchmarkSequence(profile: CacheProfile) {
         val modnet = stageModel(AiModelCatalog.MODNET_PORTRAIT, MODNET_SOURCE)
-        val migan = stageModel(AiModelCatalog.MI_GAN_GENERATOR, MIGAN_SOURCE)
+        val migan = stageModel(AiModelCatalog.MI_GAN_GENERATOR_LEGACY, MIGAN_SOURCE)
         assumeTrue(
             "push ${MODNET_SOURCE} and/or ${MIGAN_SOURCE} to one of ${sourceDirsHint()}",
             modnet != null || migan != null
@@ -177,7 +177,7 @@ class OrtModelDeviceBenchmarkTest {
 
     @Test
     fun shouldReleaseTheMiganGeneratorSessionImmediately_whenTheLowTierRunsInference() {
-        val model = stageModel(AiModelCatalog.MI_GAN_GENERATOR, MIGAN_SOURCE)
+        val model = stageModel(AiModelCatalog.MI_GAN_GENERATOR_LEGACY, MIGAN_SOURCE)
         assumeTrue("push $MIGAN_SOURCE to one of ${sourceDirsHint()}", model != null)
         val modelFile = model ?: return
 

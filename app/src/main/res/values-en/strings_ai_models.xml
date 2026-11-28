@@ -25,14 +25,22 @@
     <string name="ai_models_status_installed">Installed</string>
     <string name="ai_models_status_not_installed">Not downloaded</string>
     <string name="ai_models_status_partial">%1$d%% cached</string>
-    <string name="ai_models_status_pending">Not released (waiting for the P0 gate to pin bytes and SHA-256)</string>
-    <string name="ai_models_status_downloading">Downloading %1$d%%</string>
+    <string name="ai_models_status_downloading_bytes">Downloading %1$s of %2$s (%3$d%%)</string>
     <string name="ai_models_status_importing">Verifying the local file…</string>
+    <string name="ai_models_status_failed">Last attempt failed: %1$s</string>
+    <string name="ai_models_status_cancelling">Cancelling…</string>
 
     <!-- Model actions -->
     <string name="ai_models_download">Download</string>
     <string name="ai_models_continue_download">Resume download</string>
     <string name="ai_models_redownload">Download again</string>
+    <string name="ai_models_download_may_fail">Download (may be unavailable)</string>
+    <string name="ai_models_retry_download">Retry download</string>
+    <string name="ai_models_import_primary">Import local</string>
+    <string name="ai_models_redownload_title">Download the model again</string>
+    <string name="ai_models_redownload_message">“%1$s” will be downloaded and verified again. The installed file
+        is not deleted until the new copy passes verification. Continue?</string>
+    <string name="ai_models_redownload_confirm">Download again</string>
     <string name="ai_models_import">Import local</string>
     <string name="ai_models_delete">Delete</string>
     <string name="ai_models_download_success">Model downloaded and verified with SHA-256</string>
@@ -51,11 +59,4 @@
     <string name="ai_models_clear_all_confirm">Clear all</string>
     <string name="ai_models_clear_all_done">All models deleted and storage freed</string>
     <string name="ai_models_clear_all_failed">Some models could not be deleted; try again later</string>
-
-    <!-- Recoverable failure reasons -->
-    <string name="ai_models_reason_not_available">This model has not been released yet</string>
-    <string name="ai_models_reason_download_failed">All mirrors failed; check the network and retry</string>
-    <string name="ai_models_reason_size_mismatch">The file size does not match the pinned value</string>
-    <string name="ai_models_reason_checksum_mismatch">SHA-256 mismatch; the file may be corrupted or tampered with</string>
-    <string name="ai_models_reason_storage_failure">Could not write the model directory; check free storage</string>
 </resources>

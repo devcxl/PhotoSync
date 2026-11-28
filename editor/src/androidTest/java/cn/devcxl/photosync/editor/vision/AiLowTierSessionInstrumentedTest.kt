@@ -59,7 +59,7 @@ class AiLowTierSessionInstrumentedTest {
         stagedDir.deleteRecursively()
         // Only the test app's own model directory is touched: this is not the user's app install.
         downloads.delete(AiModelCatalog.MODNET_PORTRAIT)
-        downloads.delete(AiModelCatalog.MI_GAN_GENERATOR)
+        downloads.delete(AiModelCatalog.MI_GAN_GENERATOR_LEGACY)
         AiAssetStore(context.filesDir).deletePhotoAssets(PHOTO_ID)
     }
 
@@ -84,7 +84,7 @@ class AiLowTierSessionInstrumentedTest {
 
     @Test
     fun shouldLeaveNoSessionResident_whenMiGanRunsOnTheLowTier() {
-        installOrSkip(AiModelCatalog.MI_GAN_GENERATOR, MIGAN_SOURCE)
+        installOrSkip(AiModelCatalog.MI_GAN_GENERATOR_LEGACY, MIGAN_SOURCE)
         val inpainter = MiGanInpainter(
             sessionManager = manager,
             downloadManager = downloads,

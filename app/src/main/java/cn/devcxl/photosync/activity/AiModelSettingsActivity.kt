@@ -24,16 +24,26 @@ import cn.devcxl.photosync.R
 import cn.devcxl.photosync.databinding.ActivityAiModelSettingsBinding
 import cn.devcxl.photosync.databinding.ItemAiModelBinding
 import cn.devcxl.photosync.editor.vision.AiModelCatalog
+import cn.devcxl.photosync.editor.vision.AiModelDownloadCancellation
 import cn.devcxl.photosync.editor.vision.AiModelDownloadManager
+import cn.devcxl.photosync.editor.vision.AiModelFailureReason
+import cn.devcxl.photosync.editor.vision.AiModelFailureUiCopy
+import cn.devcxl.photosync.editor.vision.AiModelInstallException
+import cn.devcxl.photosync.editor.vision.AiModelInstallPhase
+import cn.devcxl.photosync.editor.vision.AiModelInstallUi
+import cn.devcxl.photosync.editor.vision.AiModelInstallUiState
 import cn.devcxl.photosync.editor.vision.AiModelSpec
+import cn.devcxl.photosync.editor.vision.AiModelUiAction
 import cn.devcxl.photosync.editor.vision.isOnnxModelFileName
 
 /**
  * Settings page that lists every on-demand AI model with its size, license and install state.
  *
- * Actions delegate to [AiModelDownloadManager]: download (with ordered mirror fallback), SAF import
- * of a local `.onnx` file, delete and re-download, plus the spec-mandated clear-all sweep. Deleting a
- * model only removes model files, never the edit records stored in Room.
+ * Every row is rendered from the shared [AiModelInstallUi] state machine: the phase and the
+ * available actions are the same ones the editor's first-install prompt uses, and the failure
+ * sentence comes from [AiModelFailureUiCopy]. A download can be cancelled without losing the
+ * `.part`, and "download again" only starts after a confirmation that promises the installed file
+ * is kept until the replacement passes verification.
  */
 class AiModelSettingsActivity : AppCompatActivity() {
 
@@ -45,6 +55,8 @@ class AiModelSettingsActivity : AppCompatActivity() {
     private val rows = linkedMapOf<String, ItemAiModelBinding>()
     private var pendingImportSpec: AiModelSpec? = null
     private var busyModelId: String? = null
+    private var busyState: AiModelInstallUiState? = null
+    private var activeCancellation: AiModelDownloadCancellation? = null
 
     private val importLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -72,9 +84,10 @@ class AiModelSettingsActivity : AppCompatActivity() {
             val row = ItemAiModelBinding.inflate(layoutInflater, binding.aiModelsList, true)
             rows[spec.id] = row
             bindStaticContent(spec, row)
-            row.modelDownloadButton.setOnClickListener { startDownload(spec) }
+            row.modelDownloadButton.setOnClickListener { requestDownload(spec) }
             row.modelImportButton.setOnClickListener { pickLocalModel(spec) }
             row.modelDeleteButton.setOnClickListener { confirmDelete(spec) }
+            row.modelCancelButton.setOnClickListener { cancelActiveDownload() }
         }
     }
 
@@ -107,70 +120,164 @@ class AiModelSettingsActivity : AppCompatActivity() {
     private fun applyStates(snapshot: AiModelUsageSnapshot) {
         for (spec in AiModelCatalog.onDemandModels) {
             val row = rows[spec.id] ?: continue
-            val state = snapshot.models[spec.id] ?: continue
-            row.modelProgressBar.isVisible = false
-            if (!spec.isPinned) {
-                row.modelStatusText.setText(R.string.ai_models_status_pending)
-                bindButtons(row, showDownload = false, showImport = false, showDelete = false)
-                continue
+            val state = busyState?.takeIf { it.spec.id == spec.id }
+                ?: snapshot.models[spec.id]?.let { disk ->
+                    AiModelInstallUi.idle(spec, disk.installed, disk.partialBytes, disk.lastProbe)
+                }
+                ?: continue
+            renderState(spec, row, state)
+        }
+    }
+
+    private fun renderState(spec: AiModelSpec, row: ItemAiModelBinding, state: AiModelInstallUiState) {
+        row.modelProgressBar.isVisible = state.isBusy
+        row.modelProgressBar.progress = state.percent
+        row.modelCancelButton.isVisible = state.canCancel
+        row.modelCancelButton.isEnabled = state.canCancel
+
+        when (state.phase) {
+            AiModelInstallPhase.NOT_INSTALLED -> row.modelStatusText.setText(
+                R.string.ai_models_status_not_installed
+            )
+            AiModelInstallPhase.PARTIAL -> row.modelStatusText.text = getString(
+                R.string.ai_models_status_partial,
+                state.percent
+            )
+            AiModelInstallPhase.INSTALLED -> row.modelStatusText.setText(
+                R.string.ai_models_status_installed
+            )
+            AiModelInstallPhase.SOURCE_GONE -> row.modelStatusText.text =
+                getString(AiModelFailureUiCopy.of(AiModelFailureReason.SOURCE_GONE).messageRes)
+            AiModelInstallPhase.FAILED -> row.modelStatusText.text = getString(
+                R.string.ai_models_status_failed,
+                getString(AiModelFailureUiCopy.of(state.failureReason).messageRes)
+            )
+            AiModelInstallPhase.DOWNLOADING -> row.modelStatusText.text = getString(
+                R.string.ai_models_status_downloading_bytes,
+                AiModelSettingsText.formatBytes(this, state.downloadedBytes),
+                AiModelSettingsText.formatBytes(this, state.totalBytes),
+                state.percent
+            )
+            AiModelInstallPhase.IMPORTING -> row.modelStatusText.setText(
+                R.string.ai_models_status_importing
+            )
+        }
+
+        val downloadLabel = downloadLabelRes(state)
+        row.modelDownloadButton.isVisible = downloadLabel != null
+        row.modelDownloadButton.isEnabled = downloadLabel != null
+        if (downloadLabel != null) row.modelDownloadButton.setText(downloadLabel)
+
+        val showImport = state.offers(AiModelUiAction.IMPORT_LOCAL)
+        row.modelImportButton.isVisible = showImport
+        row.modelImportButton.isEnabled = showImport && !state.isBusy
+        row.modelImportButton.setText(
+            if (state.importIsPrimary) R.string.ai_models_import_primary
+            else R.string.ai_models_import
+        )
+
+        val showDelete = state.offers(AiModelUiAction.DELETE)
+        row.modelDeleteButton.isVisible = showDelete
+        row.modelDeleteButton.isEnabled = showDelete && !state.isBusy
+    }
+
+    /** Download button label for [state], or `null` when downloading is not an offered action. */
+    private fun downloadLabelRes(state: AiModelInstallUiState): Int? {
+        if (!state.offersDownload || state.isBusy) return null
+        return when (state.phase) {
+            AiModelInstallPhase.INSTALLED -> R.string.ai_models_redownload
+            AiModelInstallPhase.PARTIAL -> R.string.ai_models_continue_download
+            AiModelInstallPhase.SOURCE_GONE -> R.string.ai_models_download_may_fail
+            AiModelInstallPhase.FAILED -> when (state.failureReason) {
+                AiModelFailureReason.SIZE_MISMATCH,
+                AiModelFailureReason.CHECKSUM_MISMATCH -> R.string.ai_models_redownload
+                AiModelFailureReason.STORAGE_FAILURE -> R.string.ai_models_download
+                else -> R.string.ai_models_retry_download
             }
-            when {
-                state.installed -> {
-                    row.modelStatusText.setText(R.string.ai_models_status_installed)
-                    row.modelDownloadButton.setText(R.string.ai_models_redownload)
-                    bindButtons(row, showDownload = true, showImport = false, showDelete = true)
-                }
-                state.partialBytes > 0L -> {
-                    val percent = ((state.partialBytes * 100L) / spec.byteSize).toInt()
-                    row.modelStatusText.text = getString(R.string.ai_models_status_partial, percent)
-                    row.modelDownloadButton.setText(R.string.ai_models_continue_download)
-                    bindButtons(row, showDownload = true, showImport = true, showDelete = true)
-                }
-                else -> {
-                    row.modelStatusText.setText(R.string.ai_models_status_not_installed)
-                    row.modelDownloadButton.setText(R.string.ai_models_download)
-                    bindButtons(row, showDownload = true, showImport = true, showDelete = false)
-                }
+            else -> R.string.ai_models_download
+        }
+    }
+
+    private fun requestDownload(spec: AiModelSpec) {
+        if (busyModelId != null) return
+        if (AiModelInstallUi.requiresRedownloadConfirmation(downloadManager.isInstalled(spec))) {
+            confirmRedownload(spec)
+        } else {
+            startDownload(spec, forceRedownload = false)
+        }
+    }
+
+    /**
+     * Asks before replacing an installed model. Nothing is deleted here or in the manager before the
+     * replacement passed both the byte-count and SHA-256 checks.
+     */
+    private fun confirmRedownload(spec: AiModelSpec) {
+        if (busyModelId != null) return
+        AlertDialog.Builder(this)
+            .setTitle(R.string.ai_models_redownload_title)
+            .setMessage(
+                getString(
+                    R.string.ai_models_redownload_message,
+                    getString(AiModelSettingsText.nameRes(spec))
+                )
+            )
+            .setPositiveButton(R.string.ai_models_redownload_confirm) { _, _ ->
+                startDownload(spec, forceRedownload = true)
             }
-            if (busyModelId == spec.id) {
-                bindButtons(row, showDownload = false, showImport = false, showDelete = false)
+            .setNegativeButton(R.string.dialog_cancel, null)
+            .show()
+    }
+
+    private fun startDownload(spec: AiModelSpec, forceRedownload: Boolean) {
+        val row = beginBusy(spec) ?: return
+        val cancellation = AiModelDownloadCancellation()
+        activeCancellation = cancellation
+        val initialBytes = downloadManager.partFile(spec).takeIf { it.isFile }?.length() ?: 0L
+        busyState = AiModelInstallUi.downloading(spec, initialBytes)
+        renderState(spec, row, checkNotNull(busyState))
+        lifecycleScope.launch {
+            try {
+                val result = downloadManager.download(
+                    spec = spec,
+                    onProgress = { ratio ->
+                        val bytes = (ratio * spec.byteSize).toLong()
+                        val state = AiModelInstallUi.downloading(spec, bytes)
+                        busyState = state
+                        runOnUiThread { renderState(spec, row, state) }
+                    },
+                    forceRedownload = forceRedownload,
+                    cancellation = cancellation
+                )
+                reportDownloadResult(spec, result, cancellation)
+            } catch (e: IOException) {
+                Timber.e(e, "Model download failed before the manager could report it")
+                toastFailure(AiModelFailureReason.STORAGE_FAILURE)
+            } catch (e: SecurityException) {
+                Timber.e(e, "The platform denied access to the model directory")
+                toastFailure(AiModelFailureReason.STORAGE_FAILURE)
+            } finally {
+                finishBusy()
             }
         }
     }
 
-    private fun bindButtons(
-        row: ItemAiModelBinding,
-        showDownload: Boolean,
-        showImport: Boolean,
-        showDelete: Boolean
-    ) {
-        row.modelDownloadButton.isVisible = showDownload
-        row.modelImportButton.isVisible = showImport
-        row.modelDeleteButton.isVisible = showDelete
-        row.modelDownloadButton.isEnabled = showDownload
-        row.modelImportButton.isEnabled = showImport
-        row.modelDeleteButton.isEnabled = showDelete
+    private fun cancelActiveDownload() {
+        val cancellation = activeCancellation ?: return
+        cancellation.cancel()
+        val row = busyModelId?.let(rows::get) ?: return
+        row.modelStatusText.setText(R.string.ai_models_status_cancelling)
+        row.modelCancelButton.isEnabled = false
     }
 
-    private fun startDownload(spec: AiModelSpec) {
-        val row = beginBusy(spec) ?: return
-        lifecycleScope.launch {
-            try {
-                withContext(Dispatchers.IO) {
-                    if (downloadManager.isInstalled(spec)) downloadManager.delete(spec)
-                }
-                val progress = progressReporter(row, R.string.ai_models_status_downloading)
-                val result = downloadManager.download(spec, progress)
-                reportResult(result, R.string.ai_models_download_success, R.string.ai_models_download_failed)
-            } catch (e: IOException) {
-                Timber.e(e, "Model download failed before the manager could report it")
-                toastStorageFailure(R.string.ai_models_download_failed)
-            } catch (e: SecurityException) {
-                Timber.e(e, "The platform denied access to the model directory")
-                toastStorageFailure(R.string.ai_models_download_failed)
-            } finally {
-                finishBusy()
-            }
+    private fun reportDownloadResult(
+        spec: AiModelSpec,
+        result: Result<*>,
+        cancellation: AiModelDownloadCancellation
+    ) {
+        when {
+            result.isSuccess -> toast(R.string.ai_models_download_success)
+            cancellation.isCancelled -> toast(getString(AiModelFailureUiCopy.cancelled().messageRes))
+            else -> toast(getString(R.string.ai_models_download_failed, failureMessage(result)))
         }
     }
 
@@ -187,25 +294,39 @@ class AiModelSettingsActivity : AppCompatActivity() {
             return
         }
         val row = beginBusy(spec) ?: return
-        row.modelStatusText.setText(R.string.ai_models_status_importing)
+        busyState = AiModelInstallUi.importing(spec)
+        renderState(spec, row, checkNotNull(busyState))
         lifecycleScope.launch {
             try {
                 val result = withContext(Dispatchers.IO) {
                     contentResolver.openInputStream(uri)?.use { stream ->
-                        downloadManager.importLocal(spec, stream, progressReporter(row))
+                        downloadManager.importLocalAny(
+                            candidates = AiModelCatalog.importCandidates(spec),
+                            input = stream,
+                            onProgress = { ratio ->
+                                val state = AiModelInstallUi.importing(
+                                    spec,
+                                    (ratio * spec.byteSize).toLong()
+                                )
+                                busyState = state
+                                runOnUiThread { renderState(spec, row, state) }
+                            }
+                        )
                     }
                 }
                 if (result == null) {
-                    toastStorageFailure(R.string.ai_models_import_failed)
+                    toastFailure(AiModelFailureReason.STORAGE_FAILURE)
+                } else if (result.isSuccess) {
+                    toast(R.string.ai_models_import_success)
                 } else {
-                    reportResult(result, R.string.ai_models_import_success, R.string.ai_models_import_failed)
+                    toast(getString(R.string.ai_models_import_failed, failureMessage(result)))
                 }
             } catch (e: IOException) {
                 Timber.e(e, "The selected ONNX document could not be opened")
-                toastStorageFailure(R.string.ai_models_import_failed)
+                toastFailure(AiModelFailureReason.STORAGE_FAILURE)
             } catch (e: SecurityException) {
                 Timber.e(e, "The platform denied reading the selected ONNX document")
-                toastStorageFailure(R.string.ai_models_import_failed)
+                toastFailure(AiModelFailureReason.STORAGE_FAILURE)
             } finally {
                 finishBusy()
             }
@@ -217,45 +338,20 @@ class AiModelSettingsActivity : AppCompatActivity() {
         if (busyModelId != null) return null
         val row = rows[spec.id] ?: return null
         busyModelId = spec.id
-        row.modelProgressBar.isVisible = true
-        row.modelProgressBar.progress = 0
-        bindButtons(row, showDownload = false, showImport = false, showDelete = false)
+        bindStaticContent(spec, row)
         return row
     }
 
     private fun finishBusy() {
         busyModelId = null
+        busyState = null
+        activeCancellation = null
         refreshUsageAndStates()
     }
 
-    /**
-     * Coalesces progress callbacks to whole percentages and posts them to the UI thread; when
-     * [statusRes] is set the status line also shows the percentage.
-     */
-    private fun progressReporter(
-        row: ItemAiModelBinding,
-        statusRes: Int? = null
-    ): (Float) -> Unit {
-        var lastPercent = -1
-        return { ratio ->
-            val percent = (ratio * 100).toInt().coerceIn(0, 100)
-            if (percent != lastPercent) {
-                lastPercent = percent
-                runOnUiThread {
-                    statusRes?.let { row.modelStatusText.text = getString(it, percent) }
-                    row.modelProgressBar.progress = percent
-                }
-            }
-        }
-    }
-
-    private fun reportResult(result: Result<*>, successRes: Int, failureRes: Int) {
-        if (result.isSuccess) {
-            toast(successRes)
-        } else {
-            toast(getString(failureRes, AiModelSettingsText.failureMessage(this, result)))
-        }
-    }
+    private fun failureMessage(result: Result<*>): String =
+        (result.exceptionOrNull() as? AiModelInstallException)?.reason
+            .let { getString(AiModelFailureUiCopy.of(it).messageRes) }
 
     private fun confirmDelete(spec: AiModelSpec) {
         if (busyModelId != null) return
@@ -316,16 +412,16 @@ class AiModelSettingsActivity : AppCompatActivity() {
         null
     }
 
+    private fun toastFailure(reason: AiModelFailureReason) {
+        toast(getString(R.string.ai_models_download_failed, getString(AiModelFailureUiCopy.of(reason).messageRes)))
+    }
+
     private fun toast(messageRes: Int) {
         Toast.makeText(this, messageRes, Toast.LENGTH_SHORT).show()
     }
 
     private fun toast(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
-    }
-
-    private fun toastStorageFailure(prefixRes: Int) {
-        toast(getString(prefixRes, getString(R.string.ai_models_reason_storage_failure)))
     }
 
     private companion object {

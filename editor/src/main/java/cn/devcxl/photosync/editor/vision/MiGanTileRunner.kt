@@ -28,8 +28,8 @@ fun interface MiGanTileRunner {
 /**
  * [MiGanTileRunner] backed by the native generator session.
  *
- * Tensor names and shapes are the ones pinned in `AiModelCatalog.MI_GAN_GENERATOR`: `input` is
- * float32 `[1,4,512,512]` and `output` is float32 `[1,3,512,512]`. The runner validates both
+ * Tensor names and shapes are the ones pinned in `AiModelCatalog.MI_GAN_GENERATOR_LEGACY`: `input`
+ * is float32 `[1,4,512,512]` and `output` is float32 `[1,3,512,512]`. The runner validates both
  * buffers so a catalog/file mismatch fails with a clear error instead of corrupting a patch.
  */
 class OnnxMiGanTileRunner : MiGanTileRunner {

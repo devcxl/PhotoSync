@@ -25,14 +25,21 @@
     <string name="ai_models_status_installed">已安装</string>
     <string name="ai_models_status_not_installed">未下载</string>
     <string name="ai_models_status_partial">已缓存 %1$d%%</string>
-    <string name="ai_models_status_pending">待发布（等待 P0 门禁固化字节数与 SHA-256）</string>
-    <string name="ai_models_status_downloading">正在下载 %1$d%%</string>
+    <string name="ai_models_status_downloading_bytes">正在下载 %1$s / %2$s（%3$d%%）</string>
     <string name="ai_models_status_importing">正在校验本地文件…</string>
+    <string name="ai_models_status_failed">上次失败：%1$s</string>
+    <string name="ai_models_status_cancelling">正在取消…</string>
 
     <!-- Model actions -->
     <string name="ai_models_download">下载</string>
     <string name="ai_models_continue_download">继续下载</string>
     <string name="ai_models_redownload">重新下载</string>
+    <string name="ai_models_download_may_fail">下载（可能不可用）</string>
+    <string name="ai_models_retry_download">重试下载</string>
+    <string name="ai_models_import_primary">本地导入</string>
+    <string name="ai_models_redownload_title">重新下载模型</string>
+    <string name="ai_models_redownload_message">将重新下载「%1$s」并再次校验；在下载通过校验前，已安装的文件不会被删除。是否继续？</string>
+    <string name="ai_models_redownload_confirm">重新下载</string>
     <string name="ai_models_import">本地导入</string>
     <string name="ai_models_delete">删除</string>
     <string name="ai_models_download_success">模型下载完成并通过 SHA-256 校验</string>
@@ -51,11 +58,4 @@
     <string name="ai_models_clear_all_confirm">全部清理</string>
     <string name="ai_models_clear_all_done">已清理全部模型，占用空间已释放</string>
     <string name="ai_models_clear_all_failed">部分模型删除失败，请稍后重试</string>
-
-    <!-- Recoverable failure reasons -->
-    <string name="ai_models_reason_not_available">该模型尚未发布</string>
-    <string name="ai_models_reason_download_failed">所有镜像均不可用，请检查网络后重试</string>
-    <string name="ai_models_reason_size_mismatch">文件大小与固化值不一致</string>
-    <string name="ai_models_reason_checksum_mismatch">SHA-256 校验失败，文件可能已损坏或被篡改</string>
-    <string name="ai_models_reason_storage_failure">无法写入模型目录，请检查存储空间</string>
 </resources>

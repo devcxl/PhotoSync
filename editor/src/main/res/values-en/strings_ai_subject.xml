@@ -22,6 +22,7 @@
     <string name="editor_subject_model_dialog_title">Download an on-device AI model</string>
     <string name="editor_subject_model_dialog_message">%1$s\nAbout %2$.1f MB, tried against %3$d mirrors and verified by SHA-256. You can also pick an already downloaded .onnx file.</string>
     <string name="editor_subject_model_download">Download</string>
+    <string name="editor_subject_model_download_may_fail">Download (may be unavailable)</string>
     <string name="editor_subject_model_import">Import local</string>
     <string name="editor_subject_model_cancel">Cancel</string>
     <string name="editor_subject_model_downloading">Downloading the model…</string>

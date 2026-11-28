@@ -23,6 +23,7 @@
     <string name="editor_subject_model_dialog_title">下载端侧 AI 模型</string>
     <string name="editor_subject_model_dialog_message">%1$s\n体积约 %2$.1f MB，将从 %3$d 个镜像依次尝试，下载后按 SHA-256 校验。也可以从本地选择已下载的 .onnx 文件。</string>
     <string name="editor_subject_model_download">下载</string>
+    <string name="editor_subject_model_download_may_fail">下载（可能不可用）</string>
     <string name="editor_subject_model_import">本地导入</string>
     <string name="editor_subject_model_cancel">取消</string>
     <string name="editor_subject_model_downloading">正在下载模型…</string>

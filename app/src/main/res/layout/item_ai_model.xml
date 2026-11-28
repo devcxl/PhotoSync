@@ -85,6 +85,24 @@
         android:orientation="horizontal">
 
         <Button
+            android:id="@+id/modelCancelButton"
+            android:layout_width="wrap_content"
+            android:layout_height="34dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/bg_glass_pill"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:text="@string/dialog_cancel"
+            android:textAllCaps="false"
+            android:textColor="@color/darkroom_text_primary"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:visibility="gone"
+            tools:visibility="visible"/>
+
+        <Button
             android:id="@+id/modelImportButton"
             android:layout_width="wrap_content"
             android:layout_height="34dp"

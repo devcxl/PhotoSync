@@ -62,8 +62,9 @@ class MiGanInpaintException(
  * - [onProgress] receives `0..100` on the dispatcher the call runs on; the UI posts it to the main
  *   thread itself.
  *
- * @param modelSpec Model to run. Production keeps the default [AiModelCatalog.MI_GAN_GENERATOR];
- *   the parameter exists so JVM tests can install a tiny pinned artifact.
+ * @param modelSpec Model to run. Production keeps the default [AiModelCatalog.MI_GAN_PIPELINE];
+ *   the parameter exists so JVM tests can install a tiny pinned artifact. E1 adds the runtime
+ *   variant detector and the uint8 pipeline runner that execute this artifact.
  */
 class MiGanInpainter(
     private val sessionManager: OrtSessionManager,
@@ -72,7 +73,7 @@ class MiGanInpainter(
     private val encoder: InpaintPatchEncoder = BitmapInpaintPatchCodec,
     private val blender: InpaintCropBlender = InpaintCropBlender(),
     private val tileRunner: MiGanTileRunner = OnnxMiGanTileRunner(),
-    private val modelSpec: AiModelSpec = AiModelCatalog.MI_GAN_GENERATOR
+    private val modelSpec: AiModelSpec = AiModelCatalog.MI_GAN_PIPELINE
 ) {
 
     /**
