@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Unified settings page chrome -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_back">Back</string>
+    <string name="settings_entry">Settings</string>
+    <string name="settings_intro">All settings live here. Items that apply next launch only take effect after the matching page is reopened.</string>
+    <string name="settings_chevron">›</string>
+    <string name="settings_dialog_confirm">OK</string>
+
+    <!-- Settings groups -->
+    <string name="settings_group_tether">Tethering &amp; Gallery</string>
+    <string name="settings_group_editor">Editor</string>
+    <string name="settings_group_ai">AI Tools</string>
+    <string name="settings_group_cloud">Cloud Enhancement</string>
+    <string name="settings_group_storage">Storage &amp; Cache</string>
+    <string name="settings_group_about">About &amp; Diagnostics</string>
+
+    <!-- Tethering and gallery -->
+    <string name="settings_auto_follow">Auto-advance to new photos</string>
+    <string name="settings_auto_follow_hint">Jumps to the newest frame after ingest; it never interrupts a zoomed-in view.</string>
+    <string name="settings_delete_on_camera">Also delete the camera original</string>
+    <string name="settings_delete_on_camera_hint">Kept in sync with the delete dialog checkbox; falls back to local-only when the camera cannot delete.</string>
+    <string name="settings_keep_screen_on">Keep the screen on while browsing</string>
+    <string name="settings_keep_screen_on_hint">Only affects screen-on policy in the gallery and editor, never the exported pixels.</string>
+    <string name="settings_live_preset_enabled">Apply live tether presets automatically</string>
+    <string name="settings_live_preset_enabled_hint">When off, the selected preset is remembered but no longer applied to new photos.</string>
+
+    <!-- Editor -->
+    <string name="settings_preview_resolution">Preview resolution</string>
+    <string name="settings_preview_resolution_hint">Applies the next time the editor opens; the sky preview follows at the same ratio.</string>
+    <string name="settings_export_quality">Export JPEG quality</string>
+    <string name="settings_export_quality_hint">Applies to the next export; range 85–100.</string>
+    <string name="settings_undo_depth">Undo depth</string>
+    <string name="settings_undo_depth_hint">Applies the next time the editor opens; range 20–200 steps.</string>
+    <string name="settings_lut_library">LUT library</string>
+    <string name="settings_lut_library_hint">Import, delete and usage all live in Storage &amp; Cache.</string>
+
+    <!-- AI tools -->
+    <string name="settings_ai_models">AI model management</string>
+    <string name="settings_ai_models_hint">On-demand download, local import and verification status.</string>
+    <string name="settings_sky_assets">Sky assets</string>
+    <string name="settings_sky_assets_hint">Import, delete and usage all live in Storage &amp; Cache.</string>
+    <string name="settings_tier_override">Device tier override</string>
+    <string name="settings_tier_override_hint">Only affects AI runtime policy and memory budget, never pixel output.</string>
+    <string name="settings_intra_threads">Inference threads</string>
+    <string name="settings_intra_threads_hint">Applies the next time a model loads; range 1–4.</string>
+    <string name="settings_idle_release">Idle session release</string>
+    <string name="settings_idle_release_hint">Low-tier devices always release the session right after inference.</string>
+    <string name="settings_inpaint_mode">Default inpaint quality</string>
+    <string name="settings_inpaint_mode_hint">Fine keeps more detail but takes longer; applies when the inpaint panel next opens.</string>
+    <string name="settings_inpaint_brush">Default inpaint brush diameter</string>
+    <string name="settings_inpaint_brush_hint">In pixels, range 8–1200; applies when the inpaint panel next opens.</string>
+    <string name="settings_live_preset_apply_ai">Apply AI parameters in live presets</string>
+    <string name="settings_live_preset_apply_ai_hint">Controls whether ingest prep carries subject and sky parameters; off shortens the wait after a shot.</string>
+
+    <!-- Cloud -->
+    <string name="settings_cloud_status">Cloud master switch</string>
+    <string name="settings_cloud_status_hint">Read-only mirror; toggle it in the cloud page so keys and state stay in sync.</string>
+    <string name="settings_cloud_enabled">Enabled</string>
+    <string name="settings_cloud_disabled">Disabled (default)</string>
+    <string name="settings_cloud_entry">Cloud configuration</string>
+    <string name="settings_cloud_entry_hint">Profiles · connection test · ComfyUI workflow import.</string>
+
+    <!-- Storage and cache -->
+    <string name="settings_storage_models">Models</string>
+    <string name="settings_storage_ai_edits">AI edit assets</string>
+    <string name="settings_storage_preview_cache">Preview cache</string>
+    <string name="settings_storage_lut">LUTs</string>
+    <string name="settings_storage_sky">Sky assets</string>
+    <string name="settings_storage_unknown">—</string>
+    <string name="settings_storage_hint">Per-category usage and cleanup will arrive with storage management; the five folders are listed here.</string>
+    <string name="settings_storage_clear_all">Clear all</string>
+
+    <!-- About and diagnostics -->
+    <string name="settings_about_version">App version</string>
+    <string name="settings_about_ram_tier">Device RAM tier</string>
+    <string name="settings_about_effective">Effective settings</string>
+    <string name="settings_about_version_unknown">Unknown</string>
+    <string name="settings_ram_tier_value">%1$s (%2$s)</string>
+    <string name="settings_ram_tier_auto">auto-detected</string>
+    <string name="settings_ram_tier_manual">manual override</string>
+    <string name="settings_effective_preview">Preview %1$d px · export %2$d · cache %3$d</string>
+    <string name="settings_effective_undo">Undo depth %1$d · threads %2$d</string>
+    <string name="settings_effective_ai">Idle release %1$s · default inpaint %2$s</string>
+    <string name="settings_effective_brush">Default inpaint brush %1$d px</string>
+    <string name="settings_effective_tether">Auto-advance %1$s · camera delete %2$s · screen on %3$s</string>
+
+    <!-- Shared value formatting -->
+    <string name="settings_value_on">On</string>
+    <string name="settings_value_off">Off</string>
+    <string name="settings_value_number">%1$d</string>
+    <string name="settings_value_auto">Auto</string>
+    <string name="settings_value_low">Low tier</string>
+    <string name="settings_value_standard">Standard</string>
+    <string name="settings_value_immediate">Immediately</string>
+    <string name="settings_value_seconds">%1$d s</string>
+    <string name="settings_value_px">%1$d px</string>
+    <string name="settings_value_fine">Fine</string>
+    <string name="settings_value_fast">Fast</string>
+</resources>
