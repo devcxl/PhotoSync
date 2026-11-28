@@ -30,7 +30,9 @@ import cn.devcxl.photosync.editor.domain.EditValidator
  *
  * The active `LiveTetherPreset` lives in [liveTetherPrefs] rather than a table: it is a single
  * process-wide choice, and reading it must be synchronous because the USB download callback decides
- * whether to render a preview before it commits a row.
+ * whether to render a preview before it commits a row. [livePresetEnabled] is the master switch:
+ * while it is off the id stays stored (so re-enabling restores it) but is never handed to the ingest
+ * path.
  */
 class RoomEditStore(
     private val photoEditDao: PhotoEditDao,
@@ -38,7 +40,8 @@ class RoomEditStore(
     private val liveTetherPrefs: SharedPreferences,
     private val onClearPhotoEditCache: (Long) -> Unit,
     private val builtinNameResolver: (String) -> String = { it },
-    private val onClearPhotoExternalAssets: (Long) -> Unit = {}
+    private val onClearPhotoExternalAssets: (Long) -> Unit = {},
+    private val livePresetEnabled: () -> Boolean = { true }
 ) : EditStore {
 
     private val liveTetherPresetId = MutableStateFlow(readLiveTetherPresetId())
@@ -139,7 +142,15 @@ class RoomEditStore(
         }
     }
 
-    override fun getLiveTetherPresetId(): String? = liveTetherPresetId.value
+    /**
+     * The remembered `LiveTetherPreset` id, or `null` while the master switch is off.
+     *
+     * Disabling the switch only hides the id from the ingest path and the preset strip; the stored
+     * preference keeps its value, so enabling it again restores the exact same preset without the
+     * user having to pick it again.
+     */
+    override fun getLiveTetherPresetId(): String? =
+        liveTetherPresetId.value.takeIf { livePresetEnabled() }
 
     override fun setLiveTetherPresetId(presetId: String?) {
         val sanitized = presetId?.takeIf { it.isNotBlank() }
@@ -147,7 +158,9 @@ class RoomEditStore(
         liveTetherPresetId.value = sanitized
     }
 
-    override fun observeLiveTetherPresetId(): Flow<String?> = liveTetherPresetId.asStateFlow()
+    /** Mirrors [getLiveTetherPresetId]: a disabled switch emits `null`, never a stale preset. */
+    override fun observeLiveTetherPresetId(): Flow<String?> =
+        liveTetherPresetId.asStateFlow().map { id -> id.takeIf { livePresetEnabled() } }
 
     /**
      * Seeds the curated [BuiltinPresets] library and refreshes localized names on existing rows.

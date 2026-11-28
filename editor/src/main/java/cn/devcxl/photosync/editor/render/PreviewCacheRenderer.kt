@@ -23,7 +23,8 @@ internal class PreviewCacheRenderer(
     private val cacheDir: File,
     private val photoId: Long,
     private val lutStore: CubeLutStore,
-    private val filesDir: File
+    private val filesDir: File,
+    private val jpegQuality: Int = PreviewCacheWriter.DEFAULT_PREVIEW_JPEG_QUALITY
 ) {
 
     /**
@@ -76,7 +77,8 @@ internal class PreviewCacheRenderer(
             subject = subject,
             inpaint = inpaint,
             cloudAssets = AiAssetStore(filesDir),
-            sky = sky
+            sky = sky,
+            jpegQuality = jpegQuality
         )
     )
 
@@ -101,7 +103,8 @@ internal class PreviewCacheRenderer(
             subject = subject,
             inpaint = inpaint,
             cloudAssets = AiAssetStore(filesDir),
-            sky = sky
+            sky = sky,
+            jpegQuality = jpegQuality
         )
         is EditorSource.BitmapSource -> PreviewCacheWriter.writePreviewCache(
             source = current.full,
@@ -114,7 +117,8 @@ internal class PreviewCacheRenderer(
             subject = subject,
             inpaint = inpaint,
             cloudAssets = AiAssetStore(filesDir),
-            sky = sky
+            sky = sky,
+            jpegQuality = jpegQuality
         )
     }
 

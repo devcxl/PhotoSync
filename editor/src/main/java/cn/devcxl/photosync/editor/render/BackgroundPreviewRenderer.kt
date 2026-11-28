@@ -24,6 +24,7 @@ import cn.devcxl.photosync.editor.domain.Lut3dSamples
 import cn.devcxl.photosync.editor.export.BakeConcurrencyGate
 import cn.devcxl.photosync.editor.export.BakePortraitSupport
 import cn.devcxl.photosync.editor.lut.CubeLutStore
+import cn.devcxl.photosync.editor.settings.EditorSettings
 import cn.devcxl.photosync.editor.vision.PortraitPreviewCache
 import cn.devcxl.photosync.editor.vision.SkyMask
 import cn.devcxl.photosync.editor.vision.SubjectMask
@@ -403,7 +404,8 @@ object BackgroundPreviewRenderer {
             subject = subject,
             inpaint = inpaint,
             cloudAssets = AiAssetStore(filesDir),
-            sky = sky
+            sky = sky,
+            jpegQuality = EditorSettings(context).previewCacheJpegQuality
         )
     }
 
@@ -424,7 +426,8 @@ object BackgroundPreviewRenderer {
                 subject = request.subject,
                 inpaint = request.inpaint,
                 cloudAssets = request.cloudAssets,
-                sky = request.sky
+                sky = request.sky,
+                jpegQuality = request.jpegQuality
             )
             is EditorSource.BitmapSource -> PreviewCacheWriter.writeBitmapPreviewTo(
                 source = source.full,
@@ -436,7 +439,8 @@ object BackgroundPreviewRenderer {
                 subject = request.subject,
                 inpaint = request.inpaint,
                 cloudAssets = request.cloudAssets,
-                sky = request.sky
+                sky = request.sky,
+                jpegQuality = request.jpegQuality
             )
         }
         written?.let(::File)

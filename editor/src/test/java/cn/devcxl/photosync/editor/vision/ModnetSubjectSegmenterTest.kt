@@ -99,7 +99,7 @@ class ModnetSubjectSegmenterTest {
     private fun sessions(): OrtSessionManager =
         OrtSessionManager(
             tier = DeviceMemoryTier.LOW,
-            sessionFactory = OrtSessionFactory { file -> FakeHandle(file.absolutePath) }
+            sessionFactory = OrtSessionFactory { file, _ -> FakeHandle(file.absolutePath) }
         )
 
     private fun twoByTwoImage(): SubjectImage = SubjectImage(

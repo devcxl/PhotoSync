@@ -14,19 +14,31 @@ import cn.devcxl.photosync.editor.domain.SkyCustomAssetStore
 /**
  * Re-encodes a user-selected SAF sky image into the content-addressed custom store.
  *
- * The payload is bounded before decode, sampled down to [MAX_EDGE_PX] and re-encoded as JPEG so the
- * stored file carries no EXIF, no alpha and no multi-megabyte source overhead. Keeping the pipeline
- * out of the UI controller makes it testable without an Activity or an `AlertDialog`.
+ * The payload is bounded before decode, sampled down to [SkyCustomAssetStore.MAX_EDGE_PX] and
+ * re-encoded as JPEG so the stored file carries no EXIF, no alpha and no multi-megabyte source
+ * overhead. Keeping the pipeline out of the UI controller makes it testable without an Activity or an
+ * `AlertDialog`, and lets the settings page reuse the exact same import path.
  */
-internal object SkyImportPipeline {
+object SkyImportPipeline {
 
     private const val MAX_IMPORT_EDGE_PX = 4096
     private const val MAX_IMPORT_BYTES = 32 * 1024 * 1024
     private const val BUFFER_BYTES = 16 * 1024
-    private const val JPEG_QUALITY = 92
 
-    /** Imports [input] into [store], or returns `null` for an unreadable/non-JPEG image. */
-    fun import(input: InputStream, store: SkyCustomAssetStore): SkyCustomAsset? {
+    /** Historical import quality; callers may pass the preview-cache quality setting instead. */
+    const val DEFAULT_JPEG_QUALITY = 92
+
+    /**
+     * Imports [input] into [store], or returns `null` for an unreadable/non-JPEG image.
+     *
+     * @param jpegQuality Quality used for the stored JPEG; the preview-cache quality setting is the
+     *   intended source, with [DEFAULT_JPEG_QUALITY] as the code default.
+     */
+    fun import(
+        input: InputStream,
+        store: SkyCustomAssetStore,
+        jpegQuality: Int = DEFAULT_JPEG_QUALITY
+    ): SkyCustomAsset? {
         val payload = try {
             readBounded(input, MAX_IMPORT_BYTES) ?: return null
         } catch (io: IOException) {
@@ -44,7 +56,11 @@ internal object SkyImportPipeline {
             val scaled = scaleToMaxEdge(decoded, SkyCustomAssetStore.MAX_EDGE_PX)
             try {
                 val jpeg = ByteArrayOutputStream().use { stream ->
-                    scaled.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, stream)
+                    scaled.compress(
+                        Bitmap.CompressFormat.JPEG,
+                        jpegQuality.coerceIn(MIN_JPEG_QUALITY, MAX_JPEG_QUALITY),
+                        stream
+                    )
                     stream.toByteArray()
                 }
                 store.importJpeg(jpeg, scaled.width, scaled.height)
@@ -90,4 +106,7 @@ internal object SkyImportPipeline {
         }
         return output.toByteArray()
     }
+
+    private const val MIN_JPEG_QUALITY = 1
+    private const val MAX_JPEG_QUALITY = 100
 }

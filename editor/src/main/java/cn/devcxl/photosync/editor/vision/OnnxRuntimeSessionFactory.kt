@@ -35,35 +35,46 @@ data class OrtSessionCachePolicy(
  * The environment is a process-wide singleton owned by the library; this factory only borrows it.
  * NNAPI and QNN are never registered (see [OrtSessionManager]).
  *
- * @param intraOpThreads Thread count for both ORT and XNNPACK; defaults to two, which keeps a
- *   single inference from starving the UI thread on big.LITTLE phones.
  * @param cachePolicy Cross-run caches ORT may keep; defaults to [OrtSessionCachePolicy.DISABLED]
  *   because peak/retained RSS is the binding constraint for on-device inpainting.
  */
 class OnnxRuntimeSessionFactory(
-    private val intraOpThreads: Int = DEFAULT_INTRA_OP_THREADS,
     internal val cachePolicy: OrtSessionCachePolicy = OrtSessionCachePolicy.DISABLED
 ) : OrtSessionFactory {
 
-    override fun create(modelFile: File): OrtSessionHandle {
+    override fun create(modelFile: File, intraOpThreads: Int): OrtSessionHandle {
+        val threads = intraOpThreads.coerceIn(
+            OrtSessionRuntimeConfig.MIN_INTRA_OP_THREADS,
+            OrtSessionRuntimeConfig.MAX_INTRA_OP_THREADS
+        )
         val environment = OrtEnvironment.getEnvironment()
         val options = OrtSession.SessionOptions()
         try {
             options.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
-            options.setIntraOpNumThreads(intraOpThreads)
+            options.setIntraOpNumThreads(threads)
             options.setCPUArenaAllocator(cachePolicy.cpuMemArena)
             options.setMemoryPatternOptimization(cachePolicy.memoryPattern)
-            options.addXnnpack(mapOf("intra_op_num_threads" to intraOpThreads.toString()))
+            options.addXnnpack(mapOf("intra_op_num_threads" to threads.toString()))
             val session = environment.createSession(modelFile.absolutePath, options)
             return OnnxRuntimeSessionHandle(modelFile.absolutePath, session)
         } finally {
             options.close()
         }
     }
+}
 
-    private companion object {
-        const val DEFAULT_INTRA_OP_THREADS = 2
-    }
+/**
+ * The ONNX Runtime version shipped in this build.
+ *
+ * The AAR exposes no version constant that can be read without creating an
+ * [ai.onnxruntime.OrtEnvironment], and the diagnostics page must never initialize the native runtime
+ * just to display a number. Keep [VERSION] in sync with `onnxruntime-android` in
+ * `gradle/libs.versions.toml`; `OnnxRuntimeInfoTest` fails when the two drift apart.
+ */
+object OnnxRuntimeInfo {
+
+    /** Pinned ONNX Runtime version; see `gradle/libs.versions.toml`. */
+    const val VERSION = "1.22.0"
 }
 
 /**

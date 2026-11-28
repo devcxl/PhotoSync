@@ -6,8 +6,7 @@
     android:id="@+id/editorRoot"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/editor_bg"
-    android:keepScreenOn="true">
+    android:background="@color/editor_bg">
 
     <!-- Central GLES 3.0 preview canvas -->
     <android.opengl.GLSurfaceView

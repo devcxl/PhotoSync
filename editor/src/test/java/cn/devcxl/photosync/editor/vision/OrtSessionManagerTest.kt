@@ -95,6 +95,79 @@ class OrtSessionManagerTest {
     }
 
     @Test
+    fun shouldRebuildTheSession_whenTheRuntimeThreadCountChanges() {
+        val factory = FakeSessionFactory()
+        var policy = OrtSessionRuntimeConfig(DeviceMemoryTier.STANDARD, 2, 30_000L)
+        val manager = managerWithPolicy(factory) { policy }
+
+        val first = manager.withSession(modelA) { it }.getOrThrow() as FakeSessionHandle
+        policy = policy.copy(intraOpThreads = 4)
+        val second = manager.withSession(modelA) { it }.getOrThrow() as FakeSessionHandle
+
+        assertEquals(listOf(2, 4), factory.createdThreads)
+        assertTrue("the previous session must close before the rebuild", first.closed)
+        assertFalse(second.closed)
+        assertEquals(1, manager.activeSessionCount)
+    }
+
+    @Test
+    fun shouldClampTheRuntimeThreadCount_whenTheSettingIsOutOfRange() {
+        val factory = FakeSessionFactory()
+        val manager = managerWithPolicy(factory) {
+            OrtSessionRuntimeConfig(DeviceMemoryTier.STANDARD, 9, 30_000L)
+        }
+
+        manager.withSession(modelA) { 1 }
+
+        assertEquals(
+            OrtSessionRuntimeConfig.MAX_INTRA_OP_THREADS,
+            factory.createdThreads.single()
+        )
+    }
+
+    @Test
+    fun shouldReleaseImmediately_whenTheRuntimePolicyIsImmediate() {
+        val factory = FakeSessionFactory()
+        val manager = managerWithPolicy(factory) {
+            OrtSessionRuntimeConfig(DeviceMemoryTier.STANDARD, 2, idleTimeoutMs = null)
+        }
+
+        val handle = manager.withSession(modelA) { it }.getOrThrow() as FakeSessionHandle
+
+        assertTrue(handle.closed)
+        assertEquals(0, manager.activeSessionCount)
+        assertNull(scheduler.scheduledDelayMillis)
+    }
+
+    @Test
+    fun shouldReleaseImmediately_whenTheRuntimeTierIsLow() {
+        val factory = FakeSessionFactory()
+        val manager = managerWithPolicy(factory) {
+            OrtSessionRuntimeConfig(DeviceMemoryTier.LOW, 2, 60_000L)
+        }
+
+        val handle = manager.withSession(modelA) { it }.getOrThrow() as FakeSessionHandle
+
+        assertTrue(handle.closed)
+        assertNull(scheduler.scheduledDelayMillis)
+    }
+
+    @Test
+    fun shouldUseTheConfiguredIdleTimeout_whenThePolicyIsTenSeconds() {
+        val factory = FakeSessionFactory()
+        val manager = managerWithPolicy(factory) {
+            OrtSessionRuntimeConfig(DeviceMemoryTier.STANDARD, 2, 10_000L)
+        }
+        val handle = manager.withSession(modelA) { it }.getOrThrow() as FakeSessionHandle
+
+        nowMillis += 10_000L
+        scheduler.runPending()
+
+        assertTrue(handle.closed)
+        assertEquals(0, manager.activeSessionCount)
+    }
+
+    @Test
     fun shouldKeepTheSession_whenTheIdleCheckRunsBeforeTheTimeout() {
         val factory = FakeSessionFactory()
         val manager = manager(DeviceMemoryTier.STANDARD, factory)
@@ -236,16 +309,29 @@ class OrtSessionManagerTest {
             clock = { nowMillis }
         )
 
+    private fun managerWithPolicy(
+        factory: OrtSessionFactory,
+        policy: () -> OrtSessionRuntimeConfig
+    ): OrtSessionManager = OrtSessionManager(
+        tier = DeviceMemoryTier.STANDARD,
+        sessionFactory = factory,
+        scheduler = scheduler,
+        clock = { nowMillis },
+        runtimePolicy = policy
+    )
+
     private fun reasonOf(result: Result<*>): OrtSessionFailureReason? =
         (result.exceptionOrNull() as? OrtSessionUnavailableException)?.reason
 
     private class FakeSessionFactory : OrtSessionFactory {
 
         val created = mutableListOf<FakeSessionHandle>()
+        val createdThreads = mutableListOf<Int>()
         var failure: Throwable? = null
 
-        override fun create(modelFile: File): OrtSessionHandle {
+        override fun create(modelFile: File, intraOpThreads: Int): OrtSessionHandle {
             failure?.let { throw it }
+            createdThreads += intraOpThreads
             return FakeSessionHandle(modelFile.absolutePath).also { created += it }
         }
     }

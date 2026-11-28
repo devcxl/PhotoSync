@@ -257,7 +257,7 @@ class MiGanInpainterTest {
 
     private class FakeSessionFactory : OrtSessionFactory {
         val created = mutableListOf<FakeHandle>()
-        override fun create(modelFile: File): OrtSessionHandle =
+        override fun create(modelFile: File, intraOpThreads: Int): OrtSessionHandle =
             FakeHandle(modelFile.absolutePath).also { created.add(it) }
     }
 

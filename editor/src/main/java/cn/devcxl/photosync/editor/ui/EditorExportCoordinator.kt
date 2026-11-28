@@ -16,6 +16,7 @@ import cn.devcxl.photosync.editor.export.BakeOutputFormat
 import cn.devcxl.photosync.editor.export.BakeOutputNaming
 import cn.devcxl.photosync.editor.export.BakeRequest
 import cn.devcxl.photosync.editor.export.BakeResult
+import cn.devcxl.photosync.editor.settings.EditorSettings
 
 /**
  * Runs the top-bar "导出" action: a full-resolution [BakeExporter] bake of the current graph,
@@ -63,7 +64,8 @@ internal class EditorExportCoordinator(
                     isRaw = isRaw,
                     graph = graph,
                     outputFormat = outputFormat,
-                    photoId = photoId
+                    photoId = photoId,
+                    jpegQuality = EditorSettings(context).exportJpegQuality
                 )
             )
             onExportingChanged(false)

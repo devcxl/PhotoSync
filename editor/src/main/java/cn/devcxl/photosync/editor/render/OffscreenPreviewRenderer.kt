@@ -34,6 +34,8 @@ import cn.devcxl.photosync.editor.export.SurfacelessEglContext
  * @property lut Imported 3D LUT samples referenced by [graph], or `null` when none.
  * @property outDir Directory that receives one new, uniquely named JPEG.
  * @property inpaint Pre-Pass A overlay composed into a private copy of [source], or `null`.
+ * @property jpegQuality JPEG quality of the published preview; defaults to
+ *   [PreviewCacheWriter.DEFAULT_PREVIEW_JPEG_QUALITY] and is overridden by the user setting.
  */
 internal data class OffscreenPreviewRequest(
     val source: EditorSource,
@@ -49,7 +51,9 @@ internal data class OffscreenPreviewRequest(
     /** Asset store the Post-Pass A cloud layer is read from; `null` disables the cloud stage. */
     val cloudAssets: AiAssetStore? = null,
     /** Decoded P3 sky layer, or `null` to render the original sky. */
-    val sky: SkyLayerPixels? = null
+    val sky: SkyLayerPixels? = null,
+    /** JPEG quality of the published cache file. */
+    val jpegQuality: Int = PreviewCacheWriter.DEFAULT_PREVIEW_JPEG_QUALITY
 )
 
 /**

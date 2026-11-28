@@ -47,7 +47,10 @@ import cn.devcxl.photosync.wrapper.LinearRawBuffer
  */
 internal object PreviewCacheWriter {
 
-    private const val PREVIEW_JPEG_QUALITY = 92
+    /** Code default of the preview-cache JPEG quality; the settings value may override it. */
+    internal const val DEFAULT_PREVIEW_JPEG_QUALITY = 92
+    private const val MIN_JPEG_QUALITY = 1
+    private const val MAX_JPEG_QUALITY = 100
     private const val PREVIEW_MAX_EDGE_PX = 1280
     private const val CHANNELS_RGB = 3
 
@@ -63,12 +66,13 @@ internal object PreviewCacheWriter {
         subject: SubjectComposite? = null,
         inpaint: InpaintOverlay? = null,
         cloudAssets: AiAssetStore? = null,
-        sky: SkyLayerPixels? = null
+        sky: SkyLayerPixels? = null,
+        jpegQuality: Int = DEFAULT_PREVIEW_JPEG_QUALITY
     ): String? {
         val rendered =
             renderBitmapFrame(source, graph, warpField, lut, skinMask, subject, inpaint, cloudAssets, sky)
             ?: return null
-        return compressAndWrite(rendered, cacheDir, photoId)
+        return compressAndWrite(rendered, cacheDir, photoId, jpegQuality)
     }
 
     /** Writes the preview cache for a 16-bit linear RAW [source] buffer. */
@@ -83,12 +87,13 @@ internal object PreviewCacheWriter {
         subject: SubjectComposite? = null,
         inpaint: InpaintOverlay? = null,
         cloudAssets: AiAssetStore? = null,
-        sky: SkyLayerPixels? = null
+        sky: SkyLayerPixels? = null,
+        jpegQuality: Int = DEFAULT_PREVIEW_JPEG_QUALITY
     ): String? {
         val rendered =
             renderLinearFrame(source, graph, warpField, lut, skinMask, subject, inpaint, cloudAssets, sky)
             ?: return null
-        return compressAndWrite(rendered, cacheDir, photoId)
+        return compressAndWrite(rendered, cacheDir, photoId, jpegQuality)
     }
 
     /**
@@ -107,12 +112,13 @@ internal object PreviewCacheWriter {
         subject: SubjectComposite? = null,
         inpaint: InpaintOverlay? = null,
         cloudAssets: AiAssetStore? = null,
-        sky: SkyLayerPixels? = null
+        sky: SkyLayerPixels? = null,
+        jpegQuality: Int = DEFAULT_PREVIEW_JPEG_QUALITY
     ): String? {
         val rendered =
             renderBitmapFrame(source, graph, warpField, lut, skinMask, subject, inpaint, cloudAssets, sky)
             ?: return null
-        return compressAndWriteTo(rendered, outDir)
+        return compressAndWriteTo(rendered, outDir, jpegQuality)
     }
 
     /** Writes the preview of a 16-bit linear [source] straight into [outDir]. */
@@ -126,12 +132,13 @@ internal object PreviewCacheWriter {
         subject: SubjectComposite? = null,
         inpaint: InpaintOverlay? = null,
         cloudAssets: AiAssetStore? = null,
-        sky: SkyLayerPixels? = null
+        sky: SkyLayerPixels? = null,
+        jpegQuality: Int = DEFAULT_PREVIEW_JPEG_QUALITY
     ): String? {
         val rendered =
             renderLinearFrame(source, graph, warpField, lut, skinMask, subject, inpaint, cloudAssets, sky)
             ?: return null
-        return compressAndWriteTo(rendered, outDir)
+        return compressAndWriteTo(rendered, outDir, jpegQuality)
     }
 
     private fun renderLinearFrame(
@@ -467,13 +474,18 @@ internal object PreviewCacheWriter {
         )
     }
 
-    private fun compressAndWrite(rendered: Bitmap, cacheDir: File, photoId: Long): String? {
+    private fun compressAndWrite(
+        rendered: Bitmap,
+        cacheDir: File,
+        photoId: Long,
+        jpegQuality: Int
+    ): String? {
         val editDir = File(cacheDir, EditorCachePaths.photoEditDirName(photoId))
         if (!editDir.isDirectory && !editDir.mkdirs() && !editDir.isDirectory) {
             rendered.recycle()
             return null
         }
-        return compressAndWriteTo(rendered, editDir)
+        return compressAndWriteTo(rendered, editDir, jpegQuality)
     }
 
     /**
@@ -481,14 +493,18 @@ internal object PreviewCacheWriter {
      *
      * The bitmap is recycled on every path, including failures.
      */
-    private fun compressAndWriteTo(rendered: Bitmap, outDir: File): String? {
+    private fun compressAndWriteTo(rendered: Bitmap, outDir: File, jpegQuality: Int): String? {
         if (!outDir.isDirectory && !outDir.mkdirs() && !outDir.isDirectory) {
             rendered.recycle()
             return null
         }
         return try {
             PreviewFileWriter.write(outDir) { stream ->
-                rendered.compress(Bitmap.CompressFormat.JPEG, PREVIEW_JPEG_QUALITY, stream)
+                rendered.compress(
+                    Bitmap.CompressFormat.JPEG,
+                    jpegQuality.coerceIn(MIN_JPEG_QUALITY, MAX_JPEG_QUALITY),
+                    stream
+                )
             }
         } finally {
             rendered.recycle()

@@ -16,10 +16,12 @@ import cn.devcxl.photosync.editor.domain.SubjectBackgroundMode
 import cn.devcxl.photosync.editor.domain.SubjectOps
 import cn.devcxl.photosync.editor.render.EditorPreviewSession
 import cn.devcxl.photosync.editor.render.EditorSource
+import cn.devcxl.photosync.editor.settings.EditorSettings
 import cn.devcxl.photosync.editor.ui.panels.AiInferenceBarController
 import cn.devcxl.photosync.editor.vision.DeviceMemoryTier
 import cn.devcxl.photosync.editor.vision.ModnetSubjectSegmenter
 import cn.devcxl.photosync.editor.vision.OrtSessionManager
+import cn.devcxl.photosync.editor.vision.OrtSessionRuntimeConfig
 import cn.devcxl.photosync.editor.vision.SubjectMask
 
 /**
@@ -59,9 +61,7 @@ internal class EditorSubjectController(
      * single-flight model switch are what keep one native session alive across both AI tools.
      */
     private val sharedSessions = EditorHostRegistry.ortSessionManager
-    private val sessions = sharedSessions ?: OrtSessionManager(
-        tier = DeviceMemoryTier.detect(context)
-    )
+    private val sessions = sharedSessions ?: createFallbackSessionManager(context)
     private val ownsSessions = sharedSessions == null
     private val segmenter = ModnetSubjectSegmenter(sessions, AiAssetStore(filesDir))
     private val installer = SubjectModelInstaller(
@@ -173,5 +173,26 @@ internal class EditorSubjectController(
      */
     fun refreshSourceComposite(graph: EditGraph) {
         composites.refresh(graph)
+    }
+
+    /**
+     * Builds a private ORT owner when the host did not inject the process-wide one.
+     *
+     * The effective tier, thread count and idle policy all come from [EditorSettings], the same
+     * resolver the production `App` manager uses, so a test host cannot silently run with a different
+     * AI policy than the app.
+     */
+    private fun createFallbackSessionManager(context: Context): OrtSessionManager {
+        val settings = EditorSettings(context)
+        return OrtSessionManager(
+            tier = settings.resolveMemoryTier(context),
+            runtimePolicy = {
+                OrtSessionRuntimeConfig(
+                    tier = settings.resolveMemoryTier(context),
+                    intraOpThreads = settings.intraOpThreads,
+                    idleTimeoutMs = settings.idleRelease.timeoutMs
+                )
+            }
+        )
     }
 }

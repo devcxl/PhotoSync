@@ -30,6 +30,7 @@ import cn.devcxl.photosync.editor.domain.SkyOps
 import cn.devcxl.photosync.editor.render.EditorPreviewSession
 import cn.devcxl.photosync.editor.render.EditorSource
 import cn.devcxl.photosync.editor.render.SkySourceProxy
+import cn.devcxl.photosync.editor.settings.EditorSettings
 import cn.devcxl.photosync.editor.ui.panels.AiInferenceBarController
 import cn.devcxl.photosync.editor.vision.ClassicSkySegmenter
 import cn.devcxl.photosync.editor.vision.SkyMask
@@ -166,7 +167,11 @@ internal class EditorSkyController(
         job = scope.launch {
             inferenceBar.show(context.getString(R.string.editor_sky_importing))
             val imported = withContext(Dispatchers.IO) {
-                SkyImportPipeline.import(input, customStore)
+                SkyImportPipeline.import(
+                    input,
+                    customStore,
+                    EditorSettings(context).previewCacheJpegQuality
+                )
             }
             inferenceBar.dismiss()
             if (imported == null) {

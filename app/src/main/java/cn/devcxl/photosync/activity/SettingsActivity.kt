@@ -1,13 +1,11 @@
 package cn.devcxl.photosync.activity
 
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.os.Bundle
 
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
-
-import timber.log.Timber
 
 import cn.devcxl.photosync.R
 import cn.devcxl.photosync.data.settings.AppSettings
@@ -18,18 +16,17 @@ import cn.devcxl.photosync.editor.settings.AiTierOverride
 import cn.devcxl.photosync.editor.settings.EditorSettings
 import cn.devcxl.photosync.editor.settings.InpaintQualityMode
 import cn.devcxl.photosync.editor.settings.PreviewMaxEdge
-import cn.devcxl.photosync.editor.vision.DeviceMemoryTier
 
 /**
  * Unified settings hub, organised into the six user-intent groups from the S1 spec.
  *
- * This activity owns the base skeleton only: it reads and writes the typed settings through
- * [EditorSettings] and [AppSettings], hosts the two former top-level pages as read-only entry rows
- * ([AiModelSettingsActivity] and [CloudSettingsActivity]) and mirrors the cloud master switch. The
- * storage numbers, model verification states and full diagnostics stay placeholders until the
- * storage/diagnostics ticket owns them.
+ * This activity keeps the group cards and the enum/range pickers; storage accounting, library
+ * management and the read-only diagnostics live in [SettingsStorageSection] and
+ * [SettingsDiagnosticsSection]. Every value only selects runtime defaults or policies: nothing here
+ * changes `EditGraph` semantics or the pixels a bake produces.
  *
- * Nothing here changes pixel output: every value only selects runtime defaults or policies.
+ * Switches are re-read in [onResume] so a change made on the settings page is reflected both here and
+ * in the gallery/editor without restarting the process.
  */
 class SettingsActivity : AppCompatActivity() {
 
@@ -37,6 +34,16 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var editorSettings: EditorSettings
     private lateinit var appSettings: AppSettings
     private lateinit var cloudStore: CloudProviderConfigStore
+    private lateinit var storageSection: SettingsStorageSection
+    private lateinit var diagnosticsSection: SettingsDiagnosticsSection
+
+    private val lutImportLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri -> uri?.let { storageSection.importLut(it) } }
+
+    private val skyImportLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri -> uri?.let { storageSection.importSky(it) } }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -45,19 +52,30 @@ class SettingsActivity : AppCompatActivity() {
         editorSettings = EditorSettings(this)
         appSettings = AppSettings(this)
         cloudStore = CloudProviderConfigStore(this)
+        storageSection = SettingsStorageSection(
+            activity = this,
+            binding = binding,
+            onLutImportRequested = { lutImportLauncher.launch(arrayOf("*/*")) },
+            onSkyImportRequested = { skyImportLauncher.launch(arrayOf("image/*")) }
+        )
+        diagnosticsSection = SettingsDiagnosticsSection(this, binding, editorSettings, appSettings)
 
         binding.settingsBackButton.setOnClickListener { finish() }
         bindTetherGroup()
         bindEditorGroup()
         bindAiGroup()
         bindCloudGroup()
-        refreshEffectiveSummary()
+        storageSection.bind()
+        diagnosticsSection.refresh()
     }
 
     override fun onResume() {
         super.onResume()
         refreshCloudStatus()
-        refreshEffectiveSummary()
+        bindTetherGroup()
+        bindAiGroup()
+        storageSection.refresh()
+        diagnosticsSection.refresh()
     }
 
     private fun bindTetherGroup() {
@@ -75,6 +93,7 @@ class SettingsActivity : AppCompatActivity() {
         }
         bindSwitch(binding.settingsLivePresetEnabledSwitch, appSettings.livePresetEnabled) {
             appSettings.livePresetEnabled = it
+            refreshEffectiveSummary()
         }
     }
 
@@ -83,7 +102,6 @@ class SettingsActivity : AppCompatActivity() {
         binding.settingsPreviewResolutionRow.setOnClickListener { choosePreviewMaxEdge() }
         binding.settingsExportQualityRow.setOnClickListener { chooseExportQuality() }
         binding.settingsUndoDepthRow.setOnClickListener { chooseUndoDepth() }
-        binding.settingsLutLibraryRow.setOnClickListener { scrollToStorageGroup() }
     }
 
     private fun bindAiGroup() {
@@ -91,7 +109,6 @@ class SettingsActivity : AppCompatActivity() {
         binding.settingsAiModelsRow.setOnClickListener {
             startActivity(Intent(this, AiModelSettingsActivity::class.java))
         }
-        binding.settingsSkyAssetsRow.setOnClickListener { scrollToStorageGroup() }
         binding.settingsTierOverrideRow.setOnClickListener { chooseTierOverride() }
         binding.settingsIntraThreadsRow.setOnClickListener { chooseIntraThreads() }
         binding.settingsIdleReleaseRow.setOnClickListener { chooseIdleRelease() }
@@ -99,6 +116,7 @@ class SettingsActivity : AppCompatActivity() {
         binding.settingsInpaintBrushRow.setOnClickListener { chooseInpaintBrush() }
         bindSwitch(binding.settingsLivePresetApplyAiSwitch, appSettings.livePresetApplyAi) {
             appSettings.livePresetApplyAi = it
+            refreshEffectiveSummary()
         }
     }
 
@@ -254,69 +272,13 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun refreshEffectiveSummary() {
-        val editor = editorSettings.snapshot()
-        val app = appSettings.snapshot()
-        binding.settingsAboutVersionValue.text = resolveVersionName()
-        binding.settingsAboutRamTierValue.text = resolveRamTierLabel()
-        binding.settingsAboutEffectivePreview.text = getString(
-            R.string.settings_effective_preview,
-            editor.previewMaxEdge.maxEdgePx,
-            editor.exportJpegQuality,
-            editor.previewCacheJpegQuality
-        )
-        binding.settingsAboutEffectiveUndo.text = getString(
-            R.string.settings_effective_undo,
-            editor.undoDepth,
-            editor.intraOpThreads
-        )
-        binding.settingsAboutEffectiveAi.text = getString(
-            R.string.settings_effective_ai,
-            SettingsOptionLabels.idleRelease(this, editor.idleRelease),
-            SettingsOptionLabels.inpaintMode(this, editor.inpaintDefaultMode)
-        )
-        binding.settingsAboutEffectiveBrush.text =
-            getString(R.string.settings_effective_brush, editor.inpaintBrushPx)
-        binding.settingsAboutEffectiveTether.text = getString(
-            R.string.settings_effective_tether,
-            SettingsOptionLabels.onOff(this, app.autoFollowEnabled),
-            SettingsOptionLabels.onOff(this, app.deleteOnCamera),
-            SettingsOptionLabels.onOff(this, app.keepScreenOn)
-        )
-    }
-
-    private fun resolveRamTierLabel(): String {
-        val override = editorSettings.tierOverride
-        val effective = editorSettings.resolveMemoryTier(DeviceMemoryTier.detect(this))
-        val tier = getString(
-            if (effective == DeviceMemoryTier.LOW) {
-                R.string.settings_value_low
-            } else {
-                R.string.settings_value_standard
-            }
-        )
-        val mode = getString(
-            if (override == AiTierOverride.AUTO) {
-                R.string.settings_ram_tier_auto
-            } else {
-                R.string.settings_ram_tier_manual
-            }
-        )
-        return getString(R.string.settings_ram_tier_value, tier, mode)
-    }
-
-    private fun resolveVersionName(): String = try {
-        packageManager.getPackageInfo(packageName, 0).versionName?.takeIf { it.isNotBlank() }
-            ?: getString(R.string.settings_about_version_unknown)
-    } catch (e: PackageManager.NameNotFoundException) {
-        Timber.w(e, "Package info unavailable for the settings diagnostics header")
-        getString(R.string.settings_about_version_unknown)
-    }
-
-    private fun scrollToStorageGroup() {
-        binding.settingsScrollView.smoothScrollTo(0, binding.settingsGroupStorageCard.top)
+        diagnosticsSection.refresh()
     }
 
     private fun bindSwitch(view: SwitchCompat, checked: Boolean, onChange: (Boolean) -> Unit) {
+        // The listener is detached while restoring the stored value so a programmatic `isChecked`
+        // can never write a value back during onResume.
+        view.setOnCheckedChangeListener(null)
         view.isChecked = checked
         view.setOnCheckedChangeListener { _, value -> onChange(value) }
     }

@@ -35,14 +35,23 @@ internal class EditorPreviewSession(
     private val cacheDir: File,
     private val photoId: Long,
     private val lutStore: CubeLutStore,
-    private val filesDir: File
+    private val filesDir: File,
+    private val previewMaxEdgePx: Int = EditorBitmapLoader.EDITOR_PREVIEW_MAX_EDGE_PX,
+    private val skyPreviewMaxEdgePx: Int = SKY_PREVIEW_MAX_EDGE_PX,
+    previewCacheJpegQuality: Int = PreviewCacheWriter.DEFAULT_PREVIEW_JPEG_QUALITY
 ) {
 
     /** The source the canvas renders: the untouched decode or its inpaint-composed copy. */
     var source: EditorSource? = null
         private set
 
-    private val cacheRenderer = PreviewCacheRenderer(cacheDir, photoId, lutStore, filesDir)
+    private val cacheRenderer = PreviewCacheRenderer(
+        cacheDir = cacheDir,
+        photoId = photoId,
+        lutStore = lutStore,
+        filesDir = filesDir,
+        jpegQuality = previewCacheJpegQuality
+    )
     private var originalSource: EditorSource? = null
     private var composedSource: EditorSource? = null
     private var appliedInpaint: List<InpaintPatchRef> = emptyList()
@@ -61,7 +70,7 @@ internal class EditorPreviewSession(
      * @return The loaded source, or `null` when the file cannot be decoded.
      */
     fun loadSource(sourcePath: String, isRaw: Boolean, preferLinear: Boolean): EditorSource? {
-        val loaded = EditorSourceLoader.load(sourcePath, isRaw, preferLinear)
+        val loaded = EditorSourceLoader.load(sourcePath, isRaw, preferLinear, previewMaxEdgePx)
         composedSource?.release()
         composedSource = null
         appliedInpaint = emptyList()
@@ -176,9 +185,9 @@ internal class EditorPreviewSession(
         val aspect = GeometryMath.outputAspect(graph.geometry, sourceAspect)
             .takeIf { it.isFinite() && it > 0.0f } ?: 1.0f
         val (width, height) = if (aspect >= 1.0f) {
-            SKY_PREVIEW_MAX_EDGE_PX to (SKY_PREVIEW_MAX_EDGE_PX / aspect).roundToInt().coerceAtLeast(1)
+            skyPreviewMaxEdgePx to (skyPreviewMaxEdgePx / aspect).roundToInt().coerceAtLeast(1)
         } else {
-            (SKY_PREVIEW_MAX_EDGE_PX * aspect).roundToInt().coerceAtLeast(1) to SKY_PREVIEW_MAX_EDGE_PX
+            (skyPreviewMaxEdgePx * aspect).roundToInt().coerceAtLeast(1) to skyPreviewMaxEdgePx
         }
         return SkyPreparer.prepare(current, graph, filesDir, width, height)
     }

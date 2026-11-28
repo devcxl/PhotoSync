@@ -951,7 +951,7 @@
                 </LinearLayout>
             </LinearLayout>
 
-            <!-- Group 5: storage and cache skeleton -->
+            <!-- Group 5: storage and cache -->
             <LinearLayout
                 android:id="@+id/settingsGroupStorageCard"
                 android:layout_width="match_parent"
@@ -999,6 +999,22 @@
                         android:text="@string/settings_storage_unknown"
                         android:textColor="@color/darkroom_text_muted"
                         android:textSize="13sp"/>
+
+                    <TextView
+                        android:id="@+id/settingsStorageModelsClearButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="30dp"
+                        android:layout_marginStart="8dp"
+                        android:background="@drawable/bg_glass_pill"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:gravity="center"
+                        android:paddingStart="10dp"
+                        android:paddingEnd="10dp"
+                        android:text="@string/settings_storage_clear"
+                        android:textColor="@color/darkroom_text_secondary"
+                        android:textSize="11sp"
+                        android:textStyle="bold"/>
                 </LinearLayout>
 
                 <LinearLayout
@@ -1022,6 +1038,22 @@
                         android:text="@string/settings_storage_unknown"
                         android:textColor="@color/darkroom_text_muted"
                         android:textSize="13sp"/>
+
+                    <TextView
+                        android:id="@+id/settingsStorageAiEditsClearButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="30dp"
+                        android:layout_marginStart="8dp"
+                        android:background="@drawable/bg_glass_pill"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:gravity="center"
+                        android:paddingStart="10dp"
+                        android:paddingEnd="10dp"
+                        android:text="@string/settings_storage_clear"
+                        android:textColor="@color/darkroom_text_secondary"
+                        android:textSize="11sp"
+                        android:textStyle="bold"/>
                 </LinearLayout>
 
                 <LinearLayout
@@ -1045,6 +1077,22 @@
                         android:text="@string/settings_storage_unknown"
                         android:textColor="@color/darkroom_text_muted"
                         android:textSize="13sp"/>
+
+                    <TextView
+                        android:id="@+id/settingsStoragePreviewCacheClearButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="30dp"
+                        android:layout_marginStart="8dp"
+                        android:background="@drawable/bg_glass_pill"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:gravity="center"
+                        android:paddingStart="10dp"
+                        android:paddingEnd="10dp"
+                        android:text="@string/settings_storage_clear"
+                        android:textColor="@color/darkroom_text_secondary"
+                        android:textSize="11sp"
+                        android:textStyle="bold"/>
                 </LinearLayout>
 
                 <LinearLayout
@@ -1068,6 +1116,22 @@
                         android:text="@string/settings_storage_unknown"
                         android:textColor="@color/darkroom_text_muted"
                         android:textSize="13sp"/>
+
+                    <TextView
+                        android:id="@+id/settingsStorageLutClearButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="30dp"
+                        android:layout_marginStart="8dp"
+                        android:background="@drawable/bg_glass_pill"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:gravity="center"
+                        android:paddingStart="10dp"
+                        android:paddingEnd="10dp"
+                        android:text="@string/settings_storage_clear"
+                        android:textColor="@color/darkroom_text_secondary"
+                        android:textSize="11sp"
+                        android:textStyle="bold"/>
                 </LinearLayout>
 
                 <LinearLayout
@@ -1091,6 +1155,48 @@
                         android:text="@string/settings_storage_unknown"
                         android:textColor="@color/darkroom_text_muted"
                         android:textSize="13sp"/>
+
+                    <TextView
+                        android:id="@+id/settingsStorageSkyClearButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="30dp"
+                        android:layout_marginStart="8dp"
+                        android:background="@drawable/bg_glass_pill"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:gravity="center"
+                        android:paddingStart="10dp"
+                        android:paddingEnd="10dp"
+                        android:text="@string/settings_storage_clear"
+                        android:textColor="@color/darkroom_text_secondary"
+                        android:textSize="11sp"
+                        android:textStyle="bold"/>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/settings_storage_total"
+                        android:textColor="@color/darkroom_text_primary"
+                        android:textSize="13sp"
+                        android:textStyle="bold"/>
+
+                    <TextView
+                        android:id="@+id/settingsStorageTotalValue"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/settings_storage_unknown"
+                        android:textColor="@color/darkroom_text_primary"
+                        android:textSize="13sp"
+                        android:textStyle="bold"/>
                 </LinearLayout>
 
                 <Button
@@ -1151,7 +1257,30 @@
                         android:layout_height="wrap_content"
                         android:textColor="@color/darkroom_text_primary"
                         android:textSize="13sp"
-                        tools:text="0.3.1"/>
+                        tools:text="0.3.1（4）"/>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/settings_about_ram_total"
+                        android:textColor="@color/darkroom_text_secondary"
+                        android:textSize="13sp"/>
+
+                    <TextView
+                        android:id="@+id/settingsAboutRamTotalValue"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/darkroom_text_primary"
+                        android:textSize="13sp"
+                        tools:text="7.6 GB"/>
                 </LinearLayout>
 
                 <LinearLayout
@@ -1176,6 +1305,145 @@
                         android:textSize="13sp"
                         tools:text="标准（自动判定）"/>
                 </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/settings_about_gles_device"
+                        android:textColor="@color/darkroom_text_secondary"
+                        android:textSize="13sp"/>
+
+                    <TextView
+                        android:id="@+id/settingsAboutGlesDeviceValue"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/darkroom_text_primary"
+                        android:textSize="13sp"
+                        tools:text="OpenGL ES 3.2"/>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/settings_about_gles_renderer"
+                        android:textColor="@color/darkroom_text_secondary"
+                        android:textSize="13sp"/>
+
+                    <TextView
+                        android:id="@+id/settingsAboutGlesRendererValue"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="2"
+                        android:gravity="end"
+                        android:textColor="@color/darkroom_text_primary"
+                        android:textSize="13sp"
+                        tools:text="Adreno 640 · OpenGL ES 3.2 · Tier 1 半浮点目标"/>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/settings_about_ort_version"
+                        android:textColor="@color/darkroom_text_secondary"
+                        android:textSize="13sp"/>
+
+                    <TextView
+                        android:id="@+id/settingsAboutOrtVersionValue"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/darkroom_text_primary"
+                        android:textSize="13sp"
+                        tools:text="1.22.0"/>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/settings_about_gpu_blacklist"
+                        android:textColor="@color/darkroom_text_secondary"
+                        android:textSize="13sp"/>
+
+                    <TextView
+                        android:id="@+id/settingsAboutGpuBlacklistValue"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="2"
+                        android:gravity="end"
+                        android:textColor="@color/darkroom_text_primary"
+                        android:textSize="13sp"
+                        tools:text="未触发降级"/>
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:text="@string/settings_about_models"
+                    android:textColor="@color/darkroom_text_primary"
+                    android:textSize="14sp"
+                    android:textStyle="bold"/>
+
+                <TextView
+                    android:id="@+id/settingsAboutModelsUsage"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:textColor="@color/darkroom_text_secondary"
+                    android:textSize="12sp"
+                    tools:text="模型占用 0 B"/>
+
+                <LinearLayout
+                    android:id="@+id/settingsAboutModelsList"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:orientation="vertical"/>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:text="@string/settings_about_network_title"
+                    android:textColor="@color/darkroom_text_primary"
+                    android:textSize="14sp"
+                    android:textStyle="bold"/>
+
+                <TextView
+                    android:id="@+id/settingsAboutNetworkValue"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:textColor="@color/darkroom_text_secondary"
+                    android:textSize="12sp"
+                    tools:text="已申请 INTERNET / ACCESS_NETWORK_STATE（由 MediaPipe 依赖引入）"/>
 
                 <TextView
                     android:layout_width="match_parent"
@@ -1230,6 +1498,24 @@
                     android:textColor="@color/darkroom_text_secondary"
                     android:textSize="12sp"
                     tools:text="自动跳转 开 · 相机删除联动 关 · 屏幕常亮 开"/>
+
+                <TextView
+                    android:id="@+id/settingsAboutEffectiveTier"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:textColor="@color/darkroom_text_secondary"
+                    android:textSize="12sp"
+                    tools:text="档位覆盖 自动 · 生效档位 标准"/>
+
+                <TextView
+                    android:id="@+id/settingsAboutEffectiveLivePreset"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:textColor="@color/darkroom_text_secondary"
+                    android:textSize="12sp"
+                    tools:text="联机预设 开 · 套用 AI 参数 开"/>
             </LinearLayout>
         </LinearLayout>
     </ScrollView>
