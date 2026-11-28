@@ -1,70 +1,71 @@
 package cn.devcxl.photosync.editor.domain
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+
+import cn.devcxl.photosync.editor.settings.InpaintQualityMode
+import cn.devcxl.photosync.editor.vision.DeviceMemoryTier
 
 /**
  * Seam under test: [InpaintCropBlender] and its planner — the verified MI-GAN crop math.
  *
- * The assertions pin the four numbers the design depends on: 128 px of context, a 512 px minimum
- * crop, 256 px grid cells with 128 px overlap, and the exact pre/post-processing arithmetic that the
- * P0 gate record proved bit-identical to the Python pipeline (MAE = 0).
+ * The assertions pin the numbers the E1 design depends on: 128 px of context, a 320 px minimum
+ * crop, a 640 px fine core with 128 px overlap on a standard-tier device, and the exact
+ * pre/post-processing arithmetic that the P0 gate record proved bit-identical to the Python
+ * pipeline (MAE = 0).
  */
 class InpaintCropBlenderTest {
 
     private val blender = InpaintCropBlender()
 
     @Test
-    fun shouldAdd128PxContextAndKeepASquare512Crop_whenPlanningOneStroke() {
+    fun shouldAdd128PxContextAndKeepA320MinimumCrop_whenPlanningOneSmallStroke() {
         val mask = maskOf(1000, 800, InpaintPixelRect(300, 200, 340, 230))
 
         val plan = blender.plan(mask)
 
+        assertEquals(InpaintCropSpec.of(DeviceMemoryTier.STANDARD, InpaintQualityMode.FINE), plan.spec)
         assertEquals(1, plan.components.size)
         val component = plan.components.single()
         assertEquals(InpaintPixelRect(300, 200, 340, 230), component.maskBounds)
         val tile = component.tiles.single()
-        assertEquals(512, tile.crop.width)
-        assertEquals(512, tile.crop.height)
+        assertEquals(320, tile.cropRect.width)
+        assertEquals(320, tile.cropRect.height)
         val expectedContext = InpaintPixelRect(172, 72, 468, 358)
-        assertTrue(tile.crop.left <= expectedContext.left)
-        assertTrue(tile.crop.top <= expectedContext.top)
-        assertTrue(tile.crop.right >= expectedContext.right)
-        assertTrue(tile.crop.bottom >= expectedContext.bottom)
-        assertEquals(tile.crop, component.patch)
+        assertTrue(tile.cropRect.containsRect(expectedContext))
+        assertEquals(component.maskBounds, tile.coreRect)
+        assertEquals(0, tile.leftOverlapPx + tile.rightOverlapPx + tile.topOverlapPx + tile.bottomOverlapPx)
     }
 
     @Test
-    fun shouldCutA256GridWith128Overlap_whenTheMaskBboxExceeds256() {
-        val mask = maskOf(2000, 2000, InpaintPixelRect(100, 500, 612, 532))
+    fun shouldCutAFineCoreGridWithOverlappingCores_whenTheMaskBboxExceeds640() {
+        val mask = maskOf(2000, 2000, InpaintPixelRect(100, 500, 900, 700))
 
         val plan = blender.plan(mask)
 
         val tiles = plan.components.single().tiles
-        assertEquals(3, tiles.size)
-        assertEquals(listOf(100, 228, 356), tiles.map { it.core.left })
-        assertEquals(256, tiles[0].core.width)
-        assertEquals(256, tiles[1].core.width)
-        assertEquals(256, tiles[2].core.width)
-        assertEquals(128, tiles[0].core.right - tiles[1].core.left)
-        assertEquals(128, tiles[1].core.right - tiles[2].core.left)
-        assertEquals(512, tiles[1].crop.width)
-        assertEquals(512, tiles[1].crop.height)
-        assertEquals(100, tiles[1].crop.left)
+        assertEquals(2, tiles.size)
+        assertEquals(listOf(100, 260), tiles.map { it.coreRect.left })
+        assertEquals(640, tiles[0].coreRect.width)
+        assertEquals(640, tiles[1].coreRect.width)
+        assertEquals(480, tiles[0].rightOverlapPx)
+        assertEquals(480, tiles[1].leftOverlapPx)
+        assertEquals(0, tiles[0].leftOverlapPx)
+        assertEquals(896, tiles[1].cropRect.width)
+        assertEquals(896, tiles[1].cropRect.height)
     }
 
     @Test
-    fun shouldNeverExceedA1024PxCrop_whenTheMaskCoversALargeArea() {
+    fun shouldNeverExceedTheTierCropLimit_whenTheMaskCoversALargeArea() {
         val mask = maskOf(4000, 4000, InpaintPixelRect(1200, 1200, 2700, 2700))
 
         val plan = blender.plan(mask)
 
-        val tiles = plan.components.flatMap { it.tiles }
+        val tiles = plan.tiles
         assertTrue(tiles.size > 1)
-        assertTrue(tiles.all { it.crop.width <= 1024 && it.crop.height <= 1024 })
-        assertTrue(tiles.all { it.crop.width >= 256 && it.crop.height >= 256 })
+        assertTrue(tiles.all { it.cropRect.width <= 1024 && it.cropRect.height <= 1024 })
+        assertTrue(tiles.all { it.cropRect.width >= 320 && it.cropRect.height >= 320 })
     }
 
     @Test
@@ -74,9 +75,13 @@ class InpaintCropBlenderTest {
         val pixels = IntArray(width * height) { 0xFFFF0080.toInt() }
         val hole = InpaintPixelRect(10, 10, 20, 20)
         val mask = maskOf(width, height, hole)
-        val plan = blender.plan(mask)
+        val tile = InpaintTilePlan(
+            index = 0,
+            coreRect = hole,
+            cropRect = InpaintPixelRect(0, 0, width, height)
+        )
 
-        val input = blender.preprocessTile(pixels, width, height, mask, plan.components.single().tiles.single())
+        val input = blender.preprocessTile(pixels, width, height, mask, tile)
 
         assertEquals(InpaintCropBlender.MODEL_INPUT_ELEMENTS, input.size)
         val plane = width * height
@@ -101,55 +106,6 @@ class InpaintCropBlenderTest {
         assertEquals(191, InpaintCropBlender.encodeOutputChannel(0.5f))
         assertEquals(0, InpaintCropBlender.encodeOutputChannel(-4.0f))
         assertEquals(255, InpaintCropBlender.encodeOutputChannel(4.0f))
-    }
-
-    @Test
-    fun shouldFeatherOver3PxAndKeepPixelsOutsideTheMaskByteIdentical_whenBlending() {
-        val width = 512
-        val height = 512
-        val pixels = IntArray(width * height) { 0xFF202020.toInt() }
-        val hole = InpaintPixelRect(236, 236, 276, 276)
-        val mask = maskOf(width, height, hole)
-        val plan = blender.plan(mask)
-        val component = plan.components.single()
-        val builder = blender.beginComponent(plan, mask, component.index, pixels)
-
-        builder.addTile(component.tiles.single(), generatedWhite())
-        val patch = builder.finish()
-
-        val holeCentre = (hole.top + hole.bottom) / 2 - patch.bboxTopPx(plan)
-        val centreX = (hole.left + hole.right) / 2 - patch.bboxLeftPx(plan)
-        val centreAlpha = patch.alphaAt(centreX, holeCentre)
-        assertEquals(255, centreAlpha)
-        val onePxOutsideAlpha = patch.alphaAt(
-            hole.left - 1 - patch.bboxLeftPx(plan),
-            holeCentre
-        )
-        assertTrue("edge must fade, not clip", onePxOutsideAlpha in 1..254)
-        val threePxOutsideAlpha = patch.alphaAt(
-            hole.left - 3 - patch.bboxLeftPx(plan),
-            holeCentre
-        )
-        assertTrue("feather must cover 3 px", threePxOutsideAlpha > 0)
-        val sixPxOutsideAlpha = patch.alphaAt(
-            hole.left - 6 - patch.bboxLeftPx(plan),
-            holeCentre
-        )
-        assertEquals(0, sixPxOutsideAlpha)
-        for (y in 0 until patch.height) {
-            for (x in 0 until patch.width) {
-                if (patch.alphaAt(x, y) == 0) {
-                    assertEquals(
-                        "pixel outside the feather must not change",
-                        pixels[(y + patch.bboxTopPx(plan)) * width + x + patch.bboxLeftPx(plan)],
-                        patch.argb[y * patch.width + x]
-                    )
-                }
-            }
-        }
-        val centre = patch.argb[holeCentre * patch.width + centreX]
-        assertTrue("generated content must replace the source", (centre shr 16 and 0xFF) > 100)
-        assertNotEquals(0xFF202020.toInt(), centre)
     }
 
     @Test
@@ -183,15 +139,6 @@ class InpaintCropBlenderTest {
         assertEquals(1, components.size)
         assertEquals(InpaintPixelRect(5, 5, 7, 7), components.single())
     }
-
-    private fun InpaintBlendPatch.bboxLeftPx(plan: InpaintCropPlan): Int =
-        (bbox.left * plan.sourceWidth + 0.5f).toInt()
-
-    private fun InpaintBlendPatch.bboxTopPx(plan: InpaintCropPlan): Int =
-        (bbox.top * plan.sourceHeight + 0.5f).toInt()
-
-    private fun generatedWhite(): FloatArray =
-        FloatArray(InpaintCropBlender.MODEL_OUTPUT_ELEMENTS) { 1.0f }
 
     private fun maskOf(
         width: Int,

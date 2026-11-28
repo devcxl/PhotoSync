@@ -12,7 +12,6 @@
     <string name="editor_inpaint_inference_running">Removing objects on device…</string>
     <string name="editor_inpaint_failed">Removal failed. Try again, or download the MI-GAN model first.</string>
     <string name="editor_inpaint_no_strokes">Paint the area to remove first</string>
-    <string name="editor_inpaint_plan_too_large">The area is too large; erase it in smaller strokes</string>
     <!-- Tool chip labels of the AI group -->
     <string name="editor_tool_ai_erase">Erase</string>
     <string name="editor_tool_ai_erase_modified">Erase •</string>

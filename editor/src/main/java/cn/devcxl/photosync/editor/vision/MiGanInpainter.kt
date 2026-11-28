@@ -6,78 +6,89 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 
-import cn.devcxl.photosync.editor.domain.AiAssetKind
 import cn.devcxl.photosync.editor.domain.AiAssetStore
-import cn.devcxl.photosync.editor.domain.InpaintComponentBlend
 import cn.devcxl.photosync.editor.domain.InpaintCropBlender
 import cn.devcxl.photosync.editor.domain.InpaintCropPlan
+import cn.devcxl.photosync.editor.domain.InpaintCropSpec
 import cn.devcxl.photosync.editor.domain.InpaintMaskBuffer
-import cn.devcxl.photosync.editor.domain.InpaintPatchRef
-import cn.devcxl.photosync.editor.domain.InpaintPlanTooLargeException
-
-/** Why [MiGanInpainter] could not produce a patch. */
-enum class MiGanFailureReason {
-
-    /** The source buffer, mask or model tensor did not match the pinned shapes. */
-    INVALID_INPUT,
-
-    /** Nothing was painted, so there is no hole to repair. */
-    NO_STROKES,
-
-    /** The MI-GAN artifact is not installed yet; the UI must start the download/import flow. */
-    MODEL_MISSING,
-
-    /** The painted area would need more tiles or a larger patch than the device budget allows. */
-    PLAN_TOO_LARGE,
-
-    /** A patch or mask PNG could not be encoded or persisted. */
-    ENCODING_FAILED,
-
-    /** ONNX Runtime failed for a reason that is retryable after a hint. */
-    RUNTIME_ERROR
-}
+import cn.devcxl.photosync.editor.domain.InpaintTilePlan
+import cn.devcxl.photosync.editor.settings.InpaintQualityMode
 
 /**
- * Recoverable failure raised by [MiGanInpainter].
- *
- * @property reason Machine-readable cause the UI maps to a user-facing hint.
- */
-class MiGanInpaintException(
-    val reason: MiGanFailureReason,
-    message: String,
-    cause: Throwable? = null
-) : Exception(message, cause)
-
-/**
- * Runs the P2 inpainting vertical slice end to end: plan, serial MI-GAN tiles, feather, persist.
+ * Runs the P2 inpainting vertical slice end to end: plan, serial tiles, per-tile patch, persist.
  *
  * ## Contract
- * - The catalog artifact is the pinned **FP32 generator-only** export; an INT8/QDQ model is never
- *   requested or accepted, because the P0 gate record only verified the FP32 bytes.
- * - Tiles run serially through [OrtSessionManager.withSession], which also serializes the tool
- *   against portrait matting and closes the session when the memory tier demands it.
- * - [kotlinx.coroutines.CancellationException] is observed between tiles. A cancelled run persists
- *   no further patch; patches already committed before the cancellation stay valid and simply
- *   become unreferenced (the AI asset GC reclaims them).
- * - [onProgress] receives `0..100` on the dispatcher the call runs on; the UI posts it to the main
- *   thread itself.
+ * - **Variant by signature, not by catalog**: [resolveModel] picks the installed artifact
+ *   (pipeline first, legacy generator second) and asks [InpaintVariantDetector] which execution
+ *   shape its bytes declare. A user who only holds the old generator file still gets a working
+ *   erase tool.
+ * - **Patch granularity is one tile**: every tile becomes its own `InpaintPatchRef` with a crop
+ *   ≤ the tier's maximum crop side. There is no component-wide accumulator, so memory is bounded
+ *   by one tile rather than by the painted area.
+ * - **Alpha is owned by `InpaintTileWeight`**: this class never re-derives blend weights; the
+ *   per-tile executor delegates to `InpaintTilePatch`.
+ * - **Serial inference**: all tiles run through [OrtSessionManager.withSession], which also
+ *   serializes the tool against the other AI models and closes the session per the memory tier.
+ * - **Cancellation is observed between tiles**: a cancelled run keeps the patches it already
+ *   persisted; they are valid and merely uncommitted.
  *
- * @param modelSpec Model to run. Production keeps the default [AiModelCatalog.MI_GAN_PIPELINE];
- *   the parameter exists so JVM tests can install a tiny pinned artifact. E1 adds the runtime
- *   variant detector and the uint8 pipeline runner that execute this artifact.
+ * ## E2 seam
+ * - [plan] returns the full tile list and `spec.batchTiles` before any inference runs.
+ * - [resolveModel] exposes the selected file and variant once.
+ * - [inpaintTiles] executes a caller-chosen tile slice and reports each tile's patch and time,
+ *   so the caller can batch, commit progressively and reuse the measurement for the ETA.
+ *
+ * @param encoder PNG codec; tests inject a fake.
+ * @param generatorRunner `GENERATOR_FIXED_512` executor; tests inject a fake.
+ * @param pipelineRunner `PIPELINE_UINT8` executor; tests inject a fake.
+ * @param variantDetector Signature probe and cache.
+ * @param modelSpec Preferred catalog entry; production keeps [AiModelCatalog.MI_GAN_PIPELINE].
+ * @param memoryTier Device tier that selects the crop budget.
+ * @param qualityMode Fine/fast grid density.
+ * @param clock Millisecond clock used for the per-tile timing.
  */
 class MiGanInpainter(
     private val sessionManager: OrtSessionManager,
     private val downloadManager: AiModelDownloadManager,
     private val assetStore: AiAssetStore,
     private val encoder: InpaintPatchEncoder = BitmapInpaintPatchCodec,
-    private val blender: InpaintCropBlender = InpaintCropBlender(),
-    private val tileRunner: MiGanTileRunner = OnnxMiGanTileRunner(),
-    private val modelSpec: AiModelSpec = AiModelCatalog.MI_GAN_PIPELINE
+    private val generatorRunner: MiGanTileRunner = OnnxMiGanTileRunner(),
+    private val pipelineRunner: MiganPipelineRunner = OnnxMiganPipelineRunner(),
+    private val variantDetector: InpaintVariantDetector = InpaintVariantDetector(),
+    private val modelSpec: AiModelSpec = AiModelCatalog.MI_GAN_PIPELINE,
+    private val memoryTier: DeviceMemoryTier = DeviceMemoryTier.STANDARD,
+    private val qualityMode: InpaintQualityMode = InpaintQualityMode.FINE,
+    private val clock: () -> Long = System::currentTimeMillis
 ) {
 
+    private val cropSpec: InpaintCropSpec = InpaintCropSpec.of(memoryTier, qualityMode)
+    private val blender = InpaintCropBlender(cropSpec)
+    private val resolver = MiGanModelResolver(downloadManager, variantDetector, modelSpec)
+    private val executor = MiGanTileExecutor(
+        encoder = encoder,
+        generatorRunner = generatorRunner,
+        pipelineRunner = pipelineRunner,
+        assetStore = assetStore,
+        blender = blender,
+        clock = clock
+    )
+
+    /** Geometry and batch budget this instance plans with. */
+    fun cropSpec(): InpaintCropSpec = cropSpec
+
+    /** Builds the deterministic tile plan of [mask] without touching the model. */
+    fun plan(mask: InpaintMaskBuffer): InpaintCropPlan = blender.plan(mask)
+
     /**
-     * Repairs every painted hole and persists one ordered [InpaintPatchRef] per component.
+     * Resolves the installed artifact and its variant.
+     *
+     * @return The selected file and variant, or a failure carrying [MiGanInpaintException]
+     *   (`MODEL_MISSING`, `INCOMPATIBLE`, `RUNTIME_ERROR`).
+     */
+    suspend fun resolveModel(): Result<MiGanModelSelection> = resolver.resolve()
+
+    /**
+     * Repairs every painted hole and persists one patch per tile.
      *
      * @param photoId Photo the patches belong to; must be a persisted id.
      * @param sourceArgb Opaque `ARGB_8888` source pixels in pre-crop original space.
@@ -85,7 +96,7 @@ class MiGanInpainter(
      * @param height Source height.
      * @param mask User mask in source pixels; `255` marks a hole.
      * @param onProgress Completion in `0..100`, called after every finished tile.
-     * @return The committed patch references, or a failure carrying [MiGanInpaintException].
+     * @return Per-tile outcomes, or a failure carrying [MiGanInpaintException].
      */
     suspend fun inpaint(
         photoId: Long,
@@ -94,30 +105,117 @@ class MiGanInpainter(
         height: Int,
         mask: InpaintMaskBuffer,
         onProgress: (Int) -> Unit = {}
-    ): Result<List<InpaintPatchRef>> = withContext(Dispatchers.Default) {
+    ): Result<MiGanInpaintOutcome> = withContext(Dispatchers.Default) {
         validateInput(photoId, sourceArgb, width, height, mask)?.let { return@withContext it }
-        val plan = try {
-            blender.plan(mask)
-        } catch (error: InpaintPlanTooLargeException) {
-            Timber.w(error, "Inpaint plan exceeds the device budget")
-            return@withContext failure(MiGanFailureReason.PLAN_TOO_LARGE, error)
-        }
+        val plan = blender.plan(mask)
         if (plan.isEmpty) {
             return@withContext failure(MiGanFailureReason.NO_STROKES)
         }
-        if (!downloadManager.isInstalled(modelSpec)) {
-            return@withContext failure(MiGanFailureReason.MODEL_MISSING)
+        val selection = resolveModel().getOrElse { return@withContext Result.failure(it) }
+        execute(
+            photoId = photoId,
+            sourceArgb = sourceArgb,
+            width = width,
+            height = height,
+            mask = mask,
+            tiles = plan.tiles,
+            selection = selection,
+            scale = plan.spec,
+            onTile = {},
+            onProgress = onProgress
+        )
+    }
+
+    /**
+     * Executes a caller-chosen slice of the plan, one patch per tile.
+     *
+     * This is the E2 batch entry point: a caller splits `plan.tiles` into batches of
+     * `plan.spec.batchTiles`, passes the [selection] it already resolved (optional), commits the
+     * returned [MiGanTileOutcome]s after each batch and persists the measured `elapsedMs` for the
+     * ETA. Tiles do not have to come from the same plan object, but their crop must stay inside
+     * the source and respect the tier limit.
+     *
+     * @param tiles Tiles to execute, in order.
+     * @param selection Reuse of an earlier [resolveModel]; `null` re-resolves and re-probes.
+     * @param onTile Called after each tile is persisted, on the caller's dispatcher.
+     * @param onProgress Batch-local completion in `0..100`.
+     */
+    suspend fun inpaintTiles(
+        photoId: Long,
+        sourceArgb: IntArray,
+        width: Int,
+        height: Int,
+        mask: InpaintMaskBuffer,
+        tiles: List<InpaintTilePlan>,
+        selection: MiGanModelSelection? = null,
+        onTile: (MiGanTileOutcome) -> Unit = {},
+        onProgress: (Int) -> Unit = {}
+    ): Result<MiGanInpaintOutcome> = withContext(Dispatchers.Default) {
+        validateInput(photoId, sourceArgb, width, height, mask)?.let { return@withContext it }
+        validateTiles(tiles, width, height)?.let { return@withContext it }
+        if (tiles.isEmpty()) {
+            return@withContext failure(MiGanFailureReason.NO_STROKES)
         }
+        val resolved = selection ?: resolveModel().getOrElse { return@withContext Result.failure(it) }
+        execute(
+            photoId = photoId,
+            sourceArgb = sourceArgb,
+            width = width,
+            height = height,
+            mask = mask,
+            tiles = tiles,
+            selection = resolved,
+            scale = cropSpec,
+            onTile = onTile,
+            onProgress = onProgress
+        )
+    }
+
+    private suspend fun execute(
+        photoId: Long,
+        sourceArgb: IntArray,
+        width: Int,
+        height: Int,
+        mask: InpaintMaskBuffer,
+        tiles: List<InpaintTilePlan>,
+        selection: MiGanModelSelection,
+        scale: InpaintCropSpec,
+        onTile: (MiGanTileOutcome) -> Unit,
+        onProgress: (Int) -> Unit
+    ): Result<MiGanInpaintOutcome> {
         val coroutineContext = currentCoroutineContext()
         onProgress(0)
-        try {
-            val run = sessionManager.withSession(downloadManager.modelFile(modelSpec)) { handle ->
-                execute(plan, mask, sourceArgb, photoId, handle, coroutineContext, onProgress)
+        return try {
+            val run = sessionManager.withSession(selection.file) { handle ->
+                val outcomes = ArrayList<MiGanTileOutcome>(tiles.size)
+                val total = tiles.size.coerceAtLeast(1)
+                for (tile in tiles) {
+                    coroutineContext.ensureActive()
+                    val outcome = executor.execute(
+                        handle = handle,
+                        variant = selection.variant,
+                        photoId = photoId,
+                        tile = tile,
+                        mask = mask,
+                        sourceArgb = sourceArgb,
+                        width = width,
+                        height = height
+                    )
+                    outcomes.add(outcome)
+                    onTile(outcome)
+                    onProgress(outcomes.size * 100 / total)
+                }
+                outcomes.toList()
             }
             run.fold(
-                onSuccess = { patches ->
-                    onProgress(100)
-                    Result.success(patches)
+                onSuccess = { completed ->
+                    Result.success(
+                        MiGanInpaintOutcome(
+                            selection = selection,
+                            cropSpec = scale,
+                            tiles = completed
+                        )
+                    )
                 },
                 onFailure = { error -> mapSessionFailure(error) }
             )
@@ -130,96 +228,13 @@ class MiGanInpainter(
         }
     }
 
-    private fun execute(
-        plan: InpaintCropPlan,
-        mask: InpaintMaskBuffer,
-        sourceArgb: IntArray,
-        photoId: Long,
-        handle: OrtSessionHandle,
-        coroutineContext: kotlin.coroutines.CoroutineContext,
-        onProgress: (Int) -> Unit
-    ): List<InpaintPatchRef> {
-        val patches = ArrayList<InpaintPatchRef>(plan.components.size)
-        val totalTiles = plan.tileCount.coerceAtLeast(1)
-        var completedTiles = 0
-        for (component in plan.components) {
-            coroutineContext.ensureActive()
-            val builder = blender.beginComponent(plan, mask, component.index, sourceArgb)
-            for (tile in component.tiles) {
-                coroutineContext.ensureActive()
-                val input = blender.preprocessTile(
-                    sourceArgb = sourceArgb,
-                    sourceWidth = plan.sourceWidth,
-                    sourceHeight = plan.sourceHeight,
-                    mask = mask,
-                    tile = tile
-                )
-                if (input.size != InpaintCropBlender.MODEL_INPUT_ELEMENTS) {
-                    throw MiGanInpaintException(
-                        MiGanFailureReason.INVALID_INPUT,
-                        "MI-GAN input tensor has an unexpected size"
-                    )
-                }
-                val output = tileRunner.run(handle, input)
-                if (output.size != InpaintCropBlender.MODEL_OUTPUT_ELEMENTS) {
-                    throw MiGanInpaintException(
-                        MiGanFailureReason.INVALID_INPUT,
-                        "MI-GAN output tensor has an unexpected size"
-                    )
-                }
-                builder.addTile(tile, output)
-                completedTiles++
-                onProgress(completedTiles * 100 / totalTiles)
-            }
-            coroutineContext.ensureActive()
-            patches.add(persist(photoId, builder))
-        }
-        return patches
-    }
-
-    /**
-     * Encodes and stores one component patch.
-     *
-     * `InpaintPatchRef.sha256` carries the patch digest; the mask digest is recoverable from its
-     * content-addressed file name, so the schema needs no second digest field.
-     */
-    private fun persist(photoId: Long, builder: InpaintComponentBlend): InpaintPatchRef {
-        val patch = builder.finish()
-        val patchPng = encoder.encodeRgb(patch.argb, patch.width, patch.height)
-            ?: throw MiGanInpaintException(
-                MiGanFailureReason.ENCODING_FAILED,
-                "Inpaint patch PNG could not be encoded"
-            )
-        val maskPng = encoder.encodeAlpha(patch.alpha, patch.width, patch.height)
-            ?: throw MiGanInpaintException(
-                MiGanFailureReason.ENCODING_FAILED,
-                "Inpaint mask PNG could not be encoded"
-            )
-        val patchRef = assetStore.write(photoId, AiAssetKind.INPAINT_PATCH, patchPng)
-            ?: throw MiGanInpaintException(
-                MiGanFailureReason.ENCODING_FAILED,
-                "Inpaint patch could not be persisted"
-            )
-        val maskRef = assetStore.write(photoId, AiAssetKind.INPAINT_MASK, maskPng)
-            ?: throw MiGanInpaintException(
-                MiGanFailureReason.ENCODING_FAILED,
-                "Inpaint mask could not be persisted"
-            )
-        return InpaintPatchRef(
-            bbox = patch.bbox,
-            patchRelPath = patchRef.relativePath,
-            maskRelPath = maskRef.relativePath,
-            sha256 = patchRef.sha256
-        )
-    }
-
     private fun validateInput(
         photoId: Long,
         sourceArgb: IntArray,
         width: Int,
         height: Int,
         mask: InpaintMaskBuffer
-    ): Result<List<InpaintPatchRef>>? {
+    ): Result<MiGanInpaintOutcome>? {
         if (photoId <= 0L) {
             return invalidInput("Photo id must be positive")
         }
@@ -232,10 +247,27 @@ class MiGanInpainter(
         return null
     }
 
-    private fun invalidInput(message: String): Result<List<InpaintPatchRef>> =
-        Result.failure(MiGanInpaintException(MiGanFailureReason.INVALID_INPUT, message))
+    private fun validateTiles(
+        tiles: List<InpaintTilePlan>,
+        width: Int,
+        height: Int
+    ): Result<MiGanInpaintOutcome>? {
+        for (tile in tiles) {
+            val crop = tile.cropRect
+            if (crop.isEmpty || crop.right > width || crop.bottom > height) {
+                return invalidInput("Inpaint tile crop escapes the source")
+            }
+            if (crop.width > cropSpec.maxCropSidePx || crop.height > cropSpec.maxCropSidePx) {
+                return invalidInput("Inpaint tile crop exceeds the device budget")
+            }
+        }
+        return null
+    }
 
-    private fun mapSessionFailure(error: Throwable): Result<List<InpaintPatchRef>> {
+    private fun invalidInput(message: String): Result<MiGanInpaintOutcome> =
+        failure(MiGanFailureReason.INVALID_INPUT, message = message)
+
+    private fun mapSessionFailure(error: Throwable): Result<MiGanInpaintOutcome> {
         val reason = when ((error as? OrtSessionUnavailableException)?.reason) {
             OrtSessionFailureReason.MODEL_MISSING -> MiGanFailureReason.MODEL_MISSING
             OrtSessionFailureReason.OUT_OF_MEMORY -> MiGanFailureReason.RUNTIME_ERROR
@@ -245,8 +277,9 @@ class MiGanInpainter(
         return failure(reason, error)
     }
 
-    private fun <T> failure(reason: MiGanFailureReason, cause: Throwable? = null): Result<T> {
-        val message = cause?.message ?: reason.name
-        return Result.failure(MiGanInpaintException(reason, message, cause))
-    }
+    private fun <T> failure(
+        reason: MiGanFailureReason,
+        cause: Throwable? = null,
+        message: String = cause?.message ?: reason.name
+    ): Result<T> = Result.failure(MiGanInpaintException(reason, message, cause))
 }

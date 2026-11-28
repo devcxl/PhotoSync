@@ -23,9 +23,9 @@ import kotlin.math.floor
  * The class itself owns no Android types: sampling, planning and blending run in JVM unit tests and
  * on `Dispatchers.Default` in production. PNG codecs and ORT live one layer above.
  */
-class InpaintCropBlender {
+class InpaintCropBlender(private val spec: InpaintCropSpec = InpaintCropSpec.DEFAULT) {
 
-    private val planner = InpaintCropPlanner()
+    private val planner = InpaintCropPlanner(spec)
 
     /** Builds the crop/tile plan of [mask]; an empty mask yields an empty plan. */
     fun plan(mask: InpaintMaskBuffer): InpaintCropPlan = planner.plan(mask)
@@ -48,10 +48,10 @@ class InpaintCropBlender {
         require(mask.width == sourceWidth && mask.height == sourceHeight) {
             "Mask and source dimensions differ"
         }
-        require(tile.crop.width > 0 && tile.crop.height > 0) { "Tile crop must not be empty" }
+        require(tile.cropRect.width > 0 && tile.cropRect.height > 0) { "Tile crop must not be empty" }
         val modelPixels = MODEL_SIDE * MODEL_SIDE
         val input = FloatArray(MODEL_INPUT_CHANNELS * modelPixels)
-        val crop = tile.crop
+        val crop = tile.cropRect
         for (modelY in 0 until MODEL_SIDE) {
             val sourceY = crop.top + ((modelY + 0.5f) * crop.height / MODEL_SIDE) - 0.5f
             val maskY = (crop.top + (modelY * crop.height) / MODEL_SIDE)
@@ -72,36 +72,6 @@ class InpaintCropBlender {
             }
         }
         return input
-    }
-
-    /**
-     * Starts accumulating one component's generated tiles.
-     *
-     * @param plan Plan the component belongs to.
-     * @param mask Source-resolution mask used by the plan.
-     * @param componentIndex Index into [InpaintCropPlan.components].
-     * @param sourceArgb Original pixels; the builder copies only the component patch region.
-     * @throws IllegalArgumentException when the index or the buffers do not match [plan].
-     */
-    fun beginComponent(
-        plan: InpaintCropPlan,
-        mask: InpaintMaskBuffer,
-        componentIndex: Int,
-        sourceArgb: IntArray
-    ): InpaintComponentBlend {
-        require(componentIndex in plan.components.indices) { "Unknown inpaint component index" }
-        require(sourceArgb.size == plan.sourceWidth * plan.sourceHeight) {
-            "Source buffer does not match the plan"
-        }
-        require(mask.width == plan.sourceWidth && mask.height == plan.sourceHeight) {
-            "Mask and plan dimensions differ"
-        }
-        return InpaintComponentBlend(
-            plan = plan,
-            component = plan.components[componentIndex],
-            mask = mask,
-            sourceArgb = sourceArgb
-        )
     }
 
     companion object {

@@ -67,10 +67,13 @@ internal data class InpaintWorkRegion(
         /**
          * Context margin around the painted bbox.
          *
-         * It must cover the planner's largest possible crop shift: a `<= 256 px` blob gets a
-         * `512 px` crop centred on it, which reaches at most `256 px` beyond the bbox on any side.
+         * It must cover the planner's largest possible crop shift. An E1 single-tile crop is a
+         * square of at most 896 px on STANDARD (768 px on LOW), centred on a bbox of up to the tier's
+         * fine core; a thin 640 × 1 stroke therefore reaches 448 px beyond the bbox vertically.
+         * Grid crops only add the 128 px context margin. 512 px covers the worst case with a small
+         * safety margin.
          */
-        const val CONTEXT_MARGIN_PX: Int = 256
+        const val CONTEXT_MARGIN_PX: Int = 512
 
         private const val MIN_RADIUS_NORM = 1e-6f
 

@@ -39,6 +39,7 @@ import cn.devcxl.photosync.editor.vision.AiModelFailureUiCopy
 import cn.devcxl.photosync.editor.vision.AiModelInstallException
 import cn.devcxl.photosync.editor.vision.AiModelInstallUi
 import cn.devcxl.photosync.editor.vision.DeviceMemoryTier
+import cn.devcxl.photosync.editor.vision.InpaintVariantDetector
 import cn.devcxl.photosync.editor.vision.MiGanFailureReason
 import cn.devcxl.photosync.editor.vision.MiGanInpaintException
 import cn.devcxl.photosync.editor.vision.MiGanInpainter
@@ -50,8 +51,9 @@ import cn.devcxl.photosync.editor.vision.OrtSessionManager
  * ## Flow
  * 1. The brush controller collects the visible stroke capsules and asks [executor] to repair them.
  * 2. The strokes are projected through Pass A into pre-crop normalized space, the painted bbox is
- *    expanded by the planner's 256 px context margin, and only that window of the **original**
- *    file is read at 1:1 — never the 2048 px preview upscaled.
+ *    expanded by `InpaintWorkRegion.CONTEXT_MARGIN_PX` (512 px, enough for the planner's
+ *    single-tile square), and only that window of the **original** file is read at 1:1 — never
+ *    the 2048 px preview upscaled.
  * 3. Without the MI-GAN artifact the run fails with [MiGanFailureReason.MODEL_MISSING]; this
  *    controller then shows the shared download/SAF-import sheet and re-runs the same strokes once the
  *    model verified, so nothing the user painted is lost.
@@ -81,7 +83,10 @@ internal class EditorInpaintController(
 ) : InpaintBrushController.Host {
 
     private val assets = AiAssetStore(filesDir)
-    private val downloads = AiModelDownloadManager(File(filesDir, AiModelCatalog.MODELS_DIR_NAME))
+    private val downloads = AiModelDownloadManager(
+        modelsRootDir = File(filesDir, AiModelCatalog.MODELS_DIR_NAME),
+        variantCompatibility = InpaintVariantDetector().compatibility()
+    )
 
     /**
      * The process-wide ORT owner, or a private fallback for hosts that did not inject one.
@@ -94,7 +99,12 @@ internal class EditorInpaintController(
         tier = DeviceMemoryTier.detect(context)
     )
     private val ownsSessions = sharedSessions == null
-    private val inpainter = MiGanInpainter(sessions, downloads, assets)
+    private val inpainter = MiGanInpainter(
+        sessionManager = sessions,
+        downloadManager = downloads,
+        assetStore = assets,
+        memoryTier = DeviceMemoryTier.detect(context)
+    )
 
     private var installJob: Job? = null
     private var installCancellation: AiModelDownloadCancellation? = null
@@ -176,7 +186,6 @@ internal class EditorInpaintController(
     override fun onInpaintFailed(cause: Throwable) {
         when ((cause as? MiGanInpaintException)?.reason) {
             MiGanFailureReason.MODEL_MISSING -> promptModelInstall()
-            MiGanFailureReason.PLAN_TOO_LARGE -> showToast(R.string.editor_inpaint_plan_too_large)
             null -> {
                 Timber.e(cause, "Inpainting failed")
                 showToast(R.string.editor_inpaint_failed)
@@ -233,8 +242,8 @@ internal class EditorInpaintController(
             mask = mask,
             onProgress = onProgress
         )
-        return result.map { patches ->
-            patches.map { patch -> patch.copy(bbox = region.toSourceBBox(patch.bbox)) }
+        return result.map { outcome ->
+            outcome.patches.map { patch -> patch.copy(bbox = region.toSourceBBox(patch.bbox)) }
         }
     }
 

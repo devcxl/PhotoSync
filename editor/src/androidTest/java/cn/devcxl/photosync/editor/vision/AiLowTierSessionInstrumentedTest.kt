@@ -88,7 +88,8 @@ class AiLowTierSessionInstrumentedTest {
         val inpainter = MiGanInpainter(
             sessionManager = manager,
             downloadManager = downloads,
-            assetStore = AiAssetStore(context.filesDir)
+            assetStore = AiAssetStore(context.filesDir),
+            memoryTier = DeviceMemoryTier.LOW
         )
         val width = 640
         val height = 480
@@ -107,7 +108,7 @@ class AiLowTierSessionInstrumentedTest {
             inpainter.inpaint(PHOTO_ID, source, width, height, InpaintMaskBuffer(width, height, coverage))
         }.getOrElse { throw AssertionError("MI-GAN inference failed on the LOW tier", it) }
 
-        assertTrue("the painted stroke must produce a patch", patches.isNotEmpty())
+        assertTrue("the painted stroke must produce a patch", patches.patches.isNotEmpty())
         assertEquals("LOW tier must release the MI-GAN session", 0, manager.activeSessionCount)
     }
 

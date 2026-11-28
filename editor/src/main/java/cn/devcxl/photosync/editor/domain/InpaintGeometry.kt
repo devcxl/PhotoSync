@@ -63,6 +63,10 @@ data class InpaintPixelRect(
 
     /** True when [x], [y] lie inside the half-open rect. */
     fun contains(x: Int, y: Int): Boolean = x in left until right && y in top until bottom
+
+    /** True when [other] lies completely inside this half-open rect. */
+    fun containsRect(other: InpaintPixelRect): Boolean =
+        other.left >= left && other.right <= right && other.top >= top && other.bottom <= bottom
 }
 
 /**

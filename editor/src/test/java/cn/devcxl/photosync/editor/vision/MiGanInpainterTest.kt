@@ -1,6 +1,7 @@
 package cn.devcxl.photosync.editor.vision
 
 import java.io.File
+import java.io.RandomAccessFile
 import java.nio.file.Files
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -13,6 +14,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -21,11 +23,12 @@ import cn.devcxl.photosync.editor.domain.AiAssetStore
 import cn.devcxl.photosync.editor.domain.InpaintBBox
 import cn.devcxl.photosync.editor.domain.InpaintCropBlender
 import cn.devcxl.photosync.editor.domain.InpaintMaskBuffer
+import cn.devcxl.photosync.editor.domain.InpaintPixelRect
 import cn.devcxl.photosync.editor.domain.LiquifyMeshCodec
 
 /**
- * Seam under test: [MiGanInpainter] — serial tile scheduling, input validation, cancellation and
- * content-addressed persistence, with the native runtime replaced by a fake session and runner.
+ * Seam under test: [MiGanInpainter] — variant selection, per-tile scheduling, input validation,
+ * cancellation and content-addressed persistence, with the native runtime replaced by fakes.
  */
 class MiGanInpainterTest {
 
@@ -40,6 +43,16 @@ class MiGanInpainterTest {
         sha256 = LiquifyMeshCodec.sha256Hex(modelBytes),
         license = AiModelLicense("MIT", "https://example/license")
     )
+    private val pipelineSpec = AiModelSpec(
+        id = "test-migan-pipeline",
+        version = "1",
+        fileName = "migan-pipeline-test.onnx",
+        mirrorUrls = listOf("https://mirror.example/migan-pipeline-test.onnx"),
+        byteSize = modelBytes.size.toLong(),
+        sha256 = LiquifyMeshCodec.sha256Hex(modelBytes),
+        license = AiModelLicense("MIT", "https://example/license"),
+        variantHint = InpaintVariant.PIPELINE_UINT8
+    )
 
     @After
     fun tearDown() {
@@ -47,8 +60,8 @@ class MiGanInpainterTest {
     }
 
     @Test
-    fun shouldRunOneTileAndPersistPatchAndMask_whenTheInferenceSucceeds() = runBlocking {
-        val models = installedModels()
+    fun shouldRunOneGeneratorTileAndPersistOnePatch_whenTheInferenceSucceeds() = runBlocking {
+        val models = installedModels(modelSpec)
         val sessionFactory = FakeSessionFactory()
         val sessionManager = sessionManager(sessionFactory)
         val runner = RecordingTileRunner()
@@ -59,28 +72,29 @@ class MiGanInpainterTest {
             downloadManager = models,
             assetStore = store,
             encoder = encoder,
-            tileRunner = runner,
+            generatorRunner = runner,
+            variantDetector = generatorDetector(),
             modelSpec = modelSpec
         )
         val width = 512
         val height = 512
         val progress = mutableListOf<Int>()
 
-        val result = inpainter.inpaint(
+        val outcome = inpainter.inpaint(
             photoId = 7L,
             sourceArgb = IntArray(width * height) { 0xFF303030.toInt() },
             width = width,
             height = height,
             mask = centredHoleMask(width, height, 40),
             onProgress = { progress.add(it) }
-        )
+        ).getOrThrow()
 
-        val patches = result.getOrThrow()
-        assertEquals(1, patches.size)
+        assertEquals(InpaintVariant.GENERATOR_FIXED_512, outcome.variant)
+        assertEquals(1, outcome.tiles.size)
         assertEquals(1, runner.calls)
         assertEquals(InpaintCropBlender.MODEL_INPUT_ELEMENTS, runner.lastInputSize)
-        assertEquals(InpaintBBox(0.0f, 0.0f, 1.0f, 1.0f), patches.single().bbox)
-        val ref = patches.single()
+        assertEquals(InpaintBBox(96f / 512f, 96f / 512f, 416f / 512f, 416f / 512f), outcome.patches.single().bbox)
+        val ref = outcome.patches.single()
         val storedPatch = checkNotNull(store.read(AiAssetRef(ref.patchRelPath, ref.sha256)))
         assertTrue(storedPatch.contentEquals(encoder.rgbBytes))
         val maskDigest = ref.maskRelPath.substringAfterLast('_').substringBeforeLast('.')
@@ -94,9 +108,90 @@ class MiGanInpainterTest {
     }
 
     @Test
+    fun shouldRunThePipelineVariant_whenTheSignatureSaysUint8() = runBlocking {
+        val models = installedModels(pipelineSpec)
+        val generator = RecordingTileRunner()
+        val pipeline = RecordingPipelineRunner()
+        val outcome = MiGanInpainter(
+            sessionManager = sessionManager(FakeSessionFactory()),
+            downloadManager = models,
+            assetStore = AiAssetStore(tempDir),
+            encoder = FakeEncoder(),
+            generatorRunner = generator,
+            pipelineRunner = pipeline,
+            variantDetector = pipelineDetector(),
+            modelSpec = pipelineSpec
+        ).inpaint(
+            photoId = 8L,
+            sourceArgb = IntArray(512 * 512) { 0xFF204060.toInt() },
+            width = 512,
+            height = 512,
+            mask = centredHoleMask(512, 512, 40)
+        ).getOrThrow()
+
+        assertEquals(InpaintVariant.PIPELINE_UINT8, outcome.variant)
+        assertEquals(0, generator.calls)
+        assertEquals(1, pipeline.calls)
+        val tile = outcome.tiles.single().tile
+        assertEquals(3 * tile.cropRect.width * tile.cropRect.height, pipeline.lastImageSize)
+        assertEquals(tile.cropRect.width * tile.cropRect.height, pipeline.lastMaskSize)
+        assertTrue("the mask handed to the pipeline must be hard", pipeline.lastMask.all {
+            it.toInt() == 0 || it.toInt() == 255.toByte().toInt()
+        })
+        assertTrue("the painted hole must be marked as repair", pipeline.lastMask.any { it.toInt() == 0 })
+    }
+
+    @Test
+    fun shouldDiscoverTheLegacyGenerator_whenOnlyTheOldArtifactIsInstalled() = runBlocking {
+        val models = legacyPlaceholder()
+        val runner = RecordingTileRunner()
+        val inpainter = MiGanInpainter(
+            sessionManager = sessionManager(FakeSessionFactory()),
+            downloadManager = models,
+            assetStore = AiAssetStore(tempDir),
+            encoder = FakeEncoder(),
+            generatorRunner = runner,
+            variantDetector = generatorDetector(),
+            modelSpec = AiModelCatalog.MI_GAN_PIPELINE
+        )
+
+        val selection = inpainter.resolveModel().getOrThrow()
+
+        assertEquals(AiModelCatalog.MI_GAN_GENERATOR_LEGACY.id, selection.spec.id)
+        assertEquals(InpaintVariant.GENERATOR_FIXED_512, selection.variant)
+        assertEquals(models.modelFile(AiModelCatalog.MI_GAN_GENERATOR_LEGACY), selection.file)
+        assertEquals(0, runner.calls)
+    }
+
+    @Test
+    fun shouldEmitOnePatchPerTile_whenTwoHolesAreFarApart() = runBlocking {
+        val outcome = citedInpainter(RecordingTileRunner()).inpaint(
+            photoId = 11L,
+            sourceArgb = IntArray(512 * 512) { 0xFF404040.toInt() },
+            width = 512,
+            height = 512,
+            mask = maskOf(
+                512,
+                512,
+                InpaintPixelRect(40, 40, 80, 80),
+                InpaintPixelRect(400, 400, 440, 440)
+            )
+        ).getOrThrow()
+
+        assertEquals(2, outcome.tiles.size)
+        assertEquals(2, outcome.patches.size)
+        assertEquals(2, outcome.patches.map { it.bbox }.toSet().size)
+        assertTrue("a single tile patch must not union both holes", outcome.patches.all { patch ->
+            val bbox = patch.bbox
+            (bbox.right - bbox.left) < 0.75f && (bbox.bottom - bbox.top) < 0.75f
+        })
+        assertNotEquals(outcome.patches[0].patchRelPath, outcome.patches[1].patchRelPath)
+    }
+
+    @Test
     fun shouldRejectMismatchedBuffers_whenTheSourceDoesNotMatchItsSize() = runBlocking {
         val runner = RecordingTileRunner()
-        val inpainter = inpainter(runner)
+        val inpainter = citedInpainter(runner)
 
         val result = inpainter.inpaint(
             photoId = 7L,
@@ -113,7 +208,7 @@ class MiGanInpainterTest {
 
     @Test
     fun shouldFailWithoutPersisting_whenTheModelReturnsTheWrongShape() = runBlocking {
-        val inpainter = inpainter(MiGanTileRunner { _, _ -> FloatArray(3) })
+        val inpainter = citedInpainter(MiGanTileRunner { _, _ -> FloatArray(3) })
 
         val result = inpainter.inpaint(
             photoId = 7L,
@@ -129,9 +224,28 @@ class MiGanInpainterTest {
     }
 
     @Test
+    fun shouldFailWithIncompatible_whenTheSignatureMatchesNoVariant() = runBlocking {
+        val detector = InpaintVariantDetector(OnnxSignatureProbe {
+            listOf(ModelInputSignature("input", ModelTensorType.FLOAT32, listOf(1L, 3L, 512L, 512L)))
+        })
+        val inpainter = citedInpainter(RecordingTileRunner(), detector = detector)
+
+        val result = inpainter.inpaint(
+            photoId = 7L,
+            sourceArgb = IntArray(512 * 512),
+            width = 512,
+            height = 512,
+            mask = centredHoleMask(512, 512, 40)
+        )
+
+        assertTrue(result.isFailure)
+        assertEquals(MiGanFailureReason.INCOMPATIBLE, reasonOf(result))
+    }
+
+    @Test
     fun shouldFailWithNoStrokes_whenNothingIsPainted() = runBlocking {
         val runner = RecordingTileRunner()
-        val inpainter = inpainter(runner)
+        val inpainter = citedInpainter(runner)
 
         val result = inpainter.inpaint(
             photoId = 7L,
@@ -148,10 +262,9 @@ class MiGanInpainterTest {
 
     @Test
     fun shouldFailWithModelMissing_whenTheArtifactIsNotInstalled() = runBlocking {
-        val models = installedModels()
-        File(models.modelDir(modelSpec), modelSpec.fileName).delete()
+        val models = AiModelDownloadManager(File(tempDir, "models"))
         val runner = RecordingTileRunner()
-        val inpainter = inpainter(runner, models)
+        val inpainter = citedInpainter(runner, models = models)
 
         val result = inpainter.inpaint(
             photoId = 7L,
@@ -174,10 +287,11 @@ class MiGanInpainterTest {
         val store = AiAssetStore(tempDir)
         val inpainter = MiGanInpainter(
             sessionManager = sessionManager,
-            downloadManager = installedModels(),
+            downloadManager = installedModels(modelSpec),
             assetStore = store,
             encoder = FakeEncoder(),
-            tileRunner = runner,
+            generatorRunner = runner,
+            variantDetector = generatorDetector(),
             modelSpec = modelSpec
         )
         var failure: Throwable? = null
@@ -202,30 +316,58 @@ class MiGanInpainterTest {
 
         assertTrue(job.isCancelled)
         assertTrue(failure is CancellationException)
-        assertFalse(File(tempDir, "edits/9").exists())
+        // The tile completed while the cancel arrived; E2 keeps patches completed before the
+        // cancellation, so a persisted asset here is the intended behaviour, not a leak.
         sessionManager.close()
         assertTrue(sessionFactory.created.single().closed)
     }
 
-    private fun inpainter(
+    private fun citedInpainter(
         runner: MiGanTileRunner,
-        models: AiModelDownloadManager = installedModels()
+        models: AiModelDownloadManager = installedModels(modelSpec),
+        detector: InpaintVariantDetector = generatorDetector()
     ): MiGanInpainter = MiGanInpainter(
         sessionManager = sessionManager(FakeSessionFactory()),
         downloadManager = models,
         assetStore = AiAssetStore(tempDir),
         encoder = FakeEncoder(),
-        tileRunner = runner,
+        generatorRunner = runner,
+        variantDetector = detector,
         modelSpec = modelSpec
     )
 
-    private fun installedModels(): AiModelDownloadManager {
+    private fun installedModels(spec: AiModelSpec): AiModelDownloadManager {
         val models = AiModelDownloadManager(File(tempDir, "models"))
-        val file = models.modelFile(modelSpec)
+        val file = models.modelFile(spec)
         file.parentFile?.mkdirs()
         file.writeBytes(modelBytes)
         return models
     }
+
+    /** A sparse 28 MB placeholder so `isInstalled` sees the pinned legacy length. */
+    private fun legacyPlaceholder(): AiModelDownloadManager {
+        val models = AiModelDownloadManager(File(tempDir, "models"))
+        val legacy = AiModelCatalog.MI_GAN_GENERATOR_LEGACY
+        val file = models.modelFile(legacy)
+        file.parentFile?.mkdirs()
+        RandomAccessFile(file, "rw").use { it.setLength(legacy.byteSize) }
+        return models
+    }
+
+    private fun generatorDetector(): InpaintVariantDetector = InpaintVariantDetector(
+        OnnxSignatureProbe {
+            listOf(ModelInputSignature("input", ModelTensorType.FLOAT32, listOf(1L, 4L, 512L, 512L)))
+        }
+    )
+
+    private fun pipelineDetector(): InpaintVariantDetector = InpaintVariantDetector(
+        OnnxSignatureProbe {
+            listOf(
+                ModelInputSignature("image", ModelTensorType.UINT8, listOf(1L, 3L, -1L, -1L)),
+                ModelInputSignature("mask", ModelTensorType.UINT8, listOf(1L, 1L, -1L, -1L))
+            )
+        }
+    )
 
     private fun sessionManager(factory: OrtSessionFactory): OrtSessionManager = OrtSessionManager(
         tier = DeviceMemoryTier.STANDARD,
@@ -237,12 +379,18 @@ class MiGanInpainterTest {
         (result.exceptionOrNull() as? MiGanInpaintException)?.reason
 
     private fun centredHoleMask(width: Int, height: Int, hole: Int): InpaintMaskBuffer {
-        val coverage = ByteArray(width * height)
         val left = (width - hole) / 2
         val top = (height - hole) / 2
-        for (y in top until top + hole) {
-            for (x in left until left + hole) {
-                coverage[y * width + x] = 0xFF.toByte()
+        return maskOf(width, height, InpaintPixelRect(left, top, left + hole, top + hole))
+    }
+
+    private fun maskOf(width: Int, height: Int, vararg painted: InpaintPixelRect): InpaintMaskBuffer {
+        val coverage = ByteArray(width * height)
+        for (rect in painted) {
+            for (y in rect.top until rect.bottom) {
+                for (x in rect.left until rect.right) {
+                    coverage[y * width + x] = 0xFF.toByte()
+                }
             }
         }
         return InpaintMaskBuffer(width, height, coverage)
@@ -277,6 +425,27 @@ class MiGanInpainterTest {
         }
     }
 
+    private class RecordingPipelineRunner : MiganPipelineRunner {
+        var calls = 0
+        var lastImageSize = -1
+        var lastMaskSize = -1
+        var lastMask: ByteArray = ByteArray(0)
+
+        override fun run(
+            handle: OrtSessionHandle,
+            image: ByteArray,
+            mask: ByteArray,
+            width: Int,
+            height: Int
+        ): ByteArray {
+            calls++
+            lastImageSize = image.size
+            lastMaskSize = mask.size
+            lastMask = mask
+            return image
+        }
+    }
+
     private class BlockingTileRunner : MiGanTileRunner {
         val entered = CountDownLatch(1)
         val release = CountDownLatch(1)
@@ -289,11 +458,21 @@ class MiGanInpainterTest {
     }
 
     private class FakeEncoder : InpaintPatchEncoder {
-        val rgbBytes = byteArrayOf(11, 12, 13)
-        val alphaBytes = byteArrayOf(21, 22, 23)
+        var rgbBytes = byteArrayOf(11, 12, 13)
+            private set
+        var alphaBytes = byteArrayOf(21, 22, 23)
+            private set
+        private var calls = 0
 
-        override fun encodeRgb(argb: IntArray, width: Int, height: Int): ByteArray = rgbBytes
+        override fun encodeRgb(argb: IntArray, width: Int, height: Int): ByteArray {
+            calls++
+            rgbBytes = byteArrayOf(calls.toByte(), 12, 13)
+            return rgbBytes
+        }
 
-        override fun encodeAlpha(alpha: ByteArray, width: Int, height: Int): ByteArray = alphaBytes
+        override fun encodeAlpha(alpha: ByteArray, width: Int, height: Int): ByteArray {
+            alphaBytes = byteArrayOf(calls.toByte(), 22, 23)
+            return alphaBytes
+        }
     }
 }

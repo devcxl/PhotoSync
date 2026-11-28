@@ -12,7 +12,7 @@ import kotlin.math.min
  * top-left reading order, and are the exact input of [InpaintCropPlanner].
  */
 internal class InpaintComponentExtractor(
-    private val contextMarginPx: Int = InpaintCropPlanner.CONTEXT_MARGIN_PX,
+    private val contextMarginPx: Int = InpaintCropSpec.CONTEXT_MARGIN_PX,
     private val paintedThreshold: Int = PAINTED_THRESHOLD
 ) {
 
