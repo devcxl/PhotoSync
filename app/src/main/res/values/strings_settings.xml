@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Unified settings page chrome -->
+    <string name="settings_title">设置</string>
+    <string name="settings_back">返回</string>
+    <string name="settings_entry">设置</string>
+    <string name="settings_intro">全部设置集中在此。标注「下次生效」的项需要重新打开对应页面后才会应用。</string>
+    <string name="settings_chevron">›</string>
+    <string name="settings_dialog_confirm">确定</string>
+
+    <!-- Settings groups -->
+    <string name="settings_group_tether">联机与相册</string>
+    <string name="settings_group_editor">编辑器</string>
+    <string name="settings_group_ai">AI 工具</string>
+    <string name="settings_group_cloud">云端增强</string>
+    <string name="settings_group_storage">存储与缓存</string>
+    <string name="settings_group_about">关于与诊断</string>
+
+    <!-- Tethering and gallery -->
+    <string name="settings_auto_follow">新照片自动跳转</string>
+    <string name="settings_auto_follow_hint">相机新照片入库后自动切到最新一张；正在放大查看时不会打扰。</string>
+    <string name="settings_delete_on_camera">删除时同步删除相机照片</string>
+    <string name="settings_delete_on_camera_hint">与删除确认框中的勾选保持同步；相机不支持时会自动回退为仅删本机副本。</string>
+    <string name="settings_keep_screen_on">浏览时保持屏幕常亮</string>
+    <string name="settings_keep_screen_on_hint">仅影响主界面与编辑器的亮屏策略，不改变导出结果。</string>
+    <string name="settings_live_preset_enabled">联机预设自动套用</string>
+    <string name="settings_live_preset_enabled_hint">关闭后仍记住已选预设，但新照片不再自动套用。</string>
+
+    <!-- Editor -->
+    <string name="settings_preview_resolution">预览分辨率</string>
+    <string name="settings_preview_resolution_hint">下次打开编辑器生效；天空预览按同比例同步。</string>
+    <string name="settings_export_quality">导出 JPEG 质量</string>
+    <string name="settings_export_quality_hint">下次导出生效；范围 85–100。</string>
+    <string name="settings_undo_depth">撤销深度</string>
+    <string name="settings_undo_depth_hint">下次打开编辑器生效；范围 20–200 步。</string>
+    <string name="settings_lut_library">LUT 库管理</string>
+    <string name="settings_lut_library_hint">导入、删除与占用统一在「存储与缓存」管理。</string>
+
+    <!-- AI tools -->
+    <string name="settings_ai_models">AI 模型管理</string>
+    <string name="settings_ai_models_hint">按需下载、本地导入与校验状态。</string>
+    <string name="settings_sky_assets">天空素材管理</string>
+    <string name="settings_sky_assets_hint">导入、删除与占用统一在「存储与缓存」管理。</string>
+    <string name="settings_tier_override">设备档位覆盖</string>
+    <string name="settings_tier_override_hint">只影响 AI 运行策略与内存预算，不改变像素结果。</string>
+    <string name="settings_intra_threads">推理线程数</string>
+    <string name="settings_intra_threads_hint">下次加载模型生效；范围 1–4。</string>
+    <string name="settings_idle_release">会话闲置释放</string>
+    <string name="settings_idle_release_hint">低端档始终在推理结束后立即释放会话。</string>
+    <string name="settings_inpaint_mode">消除默认档</string>
+    <string name="settings_inpaint_mode_hint">精细档细节更好但耗时更长；下次打开消除面板生效。</string>
+    <string name="settings_inpaint_brush">消除默认笔刷直径</string>
+    <string name="settings_inpaint_brush_hint">单位像素，范围 8–1200；下次打开消除面板生效。</string>
+    <string name="settings_live_preset_apply_ai">联机预设套用 AI 参数</string>
+    <string name="settings_live_preset_apply_ai_hint">决定入库预处理是否携带主体与天空参数；关闭可缩短同步后的等待。</string>
+
+    <!-- Cloud -->
+    <string name="settings_cloud_status">云端总开关</string>
+    <string name="settings_cloud_status_hint">只读镜像，切换请进入云端配置；密钥与状态必须同源。</string>
+    <string name="settings_cloud_enabled">已开启</string>
+    <string name="settings_cloud_disabled">已关闭（默认）</string>
+    <string name="settings_cloud_entry">云端配置</string>
+    <string name="settings_cloud_entry_hint">配置档 · 连接测试 · ComfyUI 工作流导入。</string>
+
+    <!-- Storage and cache -->
+    <string name="settings_storage_models">模型</string>
+    <string name="settings_storage_ai_edits">AI 编辑资产</string>
+    <string name="settings_storage_preview_cache">预览缓存</string>
+    <string name="settings_storage_lut">LUT</string>
+    <string name="settings_storage_sky">天空素材</string>
+    <string name="settings_storage_unknown">—</string>
+    <string name="settings_storage_hint">分类占用与清理将随存储管理开放；此处先列出五类目录。</string>
+    <string name="settings_storage_clear_all">一键清理</string>
+
+    <!-- About and diagnostics -->
+    <string name="settings_about_version">应用版本</string>
+    <string name="settings_about_ram_tier">设备 RAM 档位</string>
+    <string name="settings_about_effective">当前生效设置</string>
+    <string name="settings_about_version_unknown">未知</string>
+    <string name="settings_ram_tier_value">%1$s（%2$s）</string>
+    <string name="settings_ram_tier_auto">自动判定</string>
+    <string name="settings_ram_tier_manual">手动覆盖</string>
+    <string name="settings_effective_preview">预览长边 %1$d px · 导出质量 %2$d · 缓存质量 %3$d</string>
+    <string name="settings_effective_undo">撤销深度 %1$d 步 · 推理线程 %2$d</string>
+    <string name="settings_effective_ai">闲置释放 %1$s · 消除默认档 %2$s</string>
+    <string name="settings_effective_brush">消除默认笔刷 %1$d px</string>
+    <string name="settings_effective_tether">自动跳转 %1$s · 相机删除联动 %2$s · 屏幕常亮 %3$s</string>
+
+    <!-- Shared value formatting -->
+    <string name="settings_value_on">开</string>
+    <string name="settings_value_off">关</string>
+    <string name="settings_value_number">%1$d</string>
+    <string name="settings_value_auto">自动</string>
+    <string name="settings_value_low">低端</string>
+    <string name="settings_value_standard">标准</string>
+    <string name="settings_value_immediate">立即</string>
+    <string name="settings_value_seconds">%1$d 秒</string>
+    <string name="settings_value_px">%1$d px</string>
+    <string name="settings_value_fine">精细</string>
+    <string name="settings_value_fast">快速</string>
+</resources>

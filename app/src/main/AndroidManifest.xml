@@ -33,6 +33,11 @@
                 android:resource="@xml/device_filter"/>
         </activity>
 
+        <activity android:name=".activity.SettingsActivity"
+                  android:exported="false"
+                  android:label="@string/settings_title"
+                  android:theme="@style/Theme.PhotoSync"/>
+
         <activity android:name=".activity.AiModelSettingsActivity"
                   android:exported="false"
                   android:label="@string/ai_models_title"

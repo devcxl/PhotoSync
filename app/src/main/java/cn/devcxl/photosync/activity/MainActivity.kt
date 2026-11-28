@@ -919,8 +919,8 @@ class MainActivity : AppCompatActivity() {
             true
         }
         binding.deleteButton.setOnClickListener { showDeleteConfirmDialog() }
-        binding.aiModelsButton.setOnClickListener {
-            startActivity(Intent(this, AiModelSettingsActivity::class.java))
+        binding.settingsButton.setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
         }
         binding.connectButton.setOnClickListener { onConnectButtonClick() }
         binding.emptyActionButton.setOnClickListener {
